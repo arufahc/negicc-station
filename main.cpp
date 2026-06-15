@@ -8,6 +8,27 @@
 #include "ICrCameraObjectInfo.h"
 #include "raw_processor.h"
 
+std::string format_sdk_code(CrInt32u code) {
+    switch(code) {
+        case 0: return "CrError_None (0x0000): Success";
+        case 0x8200: return "CrError_Connect (0x8200): General connection error";
+        case 0x8208: return "CrError_Connect_TimeOut (0x8208): Connection timed out";
+        case 0x20000: return "CrWarning_Unknown (0x20000): Unknown warning";
+        case 0x20001: return "CrWarning_Connect_Reconnected (0x20001): Connection re-established";
+        case 0x20002: return "CrWarning_Connect_Reconnecting (0x20002): Connection lost, attempting to reconnect";
+        case 0x20011: return "CrWarning_Connect_Already (0x20011): Connection session already opened / active";
+        case 0x20012: return "CrWarning_Connect_OverLimitOfDevice (0x20012): Connection limit exceeded";
+        case 0x8400: return "CrError_Api (0x8400): General API call error";
+        case 0x8800: return "CrError_Device (0x8800): Device error";
+        case 0x8300: return "CrError_Memory (0x8300): Memory or resource error";
+        default: {
+            char buf[64];
+            sprintf(buf, "0x%X", code);
+            return std::string(buf);
+        }
+    }
+}
+
 using namespace SCRSDK;
 
 class MyDeviceCallback : public IDeviceCallback {
@@ -23,7 +44,7 @@ public:
     // Called when the camera device is disconnected
     virtual void OnDisconnected(CrInt32u error) override {
         m_disconnected = true;
-        std::cout << "[Callback] Camera disconnected. Error code: " << error << std::endl;
+        std::cout << "[Callback] Camera disconnected. Code: " << format_sdk_code(error) << std::endl;
     }
 
     // Called when a camera property changes
@@ -48,12 +69,12 @@ public:
 
     // Called for warnings
     virtual void OnWarning(CrInt32u warning) override {
-        std::cout << "[Callback] Warning: 0x" << std::hex << warning << std::dec << std::endl;
+        std::cout << "[Callback] Warning: " << format_sdk_code(warning) << std::endl;
     }
 
     // Called for errors
     virtual void OnError(CrInt32u error) override {
-        std::cerr << "[Callback] Error occurred: 0x" << std::hex << error << std::dec << std::endl;
+        std::cerr << "[Callback] Error occurred: " << format_sdk_code(error) << std::endl;
     }
 
     bool isConnected() const { return m_connected; }
@@ -218,6 +239,30 @@ int main() {
         return -1;
     }
 
+    // Print rich debug details for all found cameras
+    std::cout << "\n=== Discovered Cameras Info ===" << std::endl;
+    for (CrInt32u i = 0; i < cameraList->GetCount(); i++) {
+        const ICrCameraObjectInfo* info = cameraList->GetCameraObjectInfo(i);
+        std::cout << "Camera #" << i << ":" << std::endl;
+        std::cout << "  Model:               " << (info->GetModel() ? info->GetModel() : "N/A") << std::endl;
+        std::cout << "  Name:                " << (info->GetName() ? info->GetName() : "N/A") << std::endl;
+        std::cout << "  Connection Type:     " << (info->GetConnectionTypeName() ? info->GetConnectionTypeName() : "N/A") << std::endl;
+        std::cout << "  Adaptor Name:        " << (info->GetAdaptorName() ? info->GetAdaptorName() : "N/A") << std::endl;
+        std::cout << "  USB PID:             0x" << std::hex << info->GetUsbPid() << std::dec << std::endl;
+        std::cout << "  Connection Status:   " << info->GetConnectionStatus() << std::endl;
+        std::cout << "  Pairing Necessity:   " << (info->GetPairingNecessity() ? info->GetPairingNecessity() : "N/A") << std::endl;
+        std::cout << "  Authentication State:" << info->GetAuthenticationState() << std::endl;
+        std::cout << "  SSH Support:         " << info->GetSSHsupport() << std::endl;
+        std::cout << "  ID size/type:        " << info->GetIdSize() << " / " << info->GetIdType() << std::endl;
+        if (info->GetIPAddressChar()) {
+            std::cout << "  IP Address:          " << info->GetIPAddressChar() << std::endl;
+        }
+        if (info->GetMACAddressChar()) {
+            std::cout << "  MAC Address:         " << info->GetMACAddressChar() << std::endl;
+        }
+    }
+    std::cout << "===============================\n" << std::endl;
+
     // 3. Get the first camera info object
     ICrCameraObjectInfo* cameraInfo = const_cast<ICrCameraObjectInfo*>(cameraList->GetCameraObjectInfo(0));
     if (cameraInfo == nullptr) {
@@ -235,7 +280,7 @@ int main() {
 
     err = Connect(cameraInfo, &callback, &deviceHandle, CrSdkControlMode_Remote, CrReconnecting_ON);
     if (err != CrError_None) {
-        std::cerr << "ERROR: Connect call failed. Code: " << err << std::endl;
+        std::cerr << "ERROR: Connect call failed. Code: " << format_sdk_code(err) << std::endl;
         cameraList->Release();
         Release();
         return -1;
@@ -250,7 +295,9 @@ int main() {
     }
 
     if (!callback.isConnected() || deviceHandle == 0) {
-        std::cerr << "ERROR: Camera connection timed out." << std::endl;
+        std::cerr << "ERROR: Camera connection timed out or failed. Callback connection state: " 
+                  << (callback.isConnected() ? "CONNECTED" : "DISCONNECTED") 
+                  << ", Handle: " << deviceHandle << std::endl;
         cameraList->Release();
         Release();
         return -1;
@@ -263,7 +310,18 @@ int main() {
     std::cout << "Configuring save info to local directory..." << std::endl;
     err = SetSaveInfo(deviceHandle, const_cast<char*>("./"), const_cast<char*>("test_capture"), 1);
     if (err != CrError_None) {
-        std::cerr << "WARNING: SetSaveInfo failed. Code: " << err << std::endl;
+        std::cerr << "WARNING: SetSaveInfo failed. Code: " << format_sdk_code(err) << std::endl;
+    }
+
+    // Force save destination to Host PC to ensure OnCompleteDownload callback is triggered
+    std::cout << "Setting Still Image Store Destination to Host PC..." << std::endl;
+    CrDeviceProperty destProp;
+    destProp.SetCode(CrDeviceProperty_StillImageStoreDestination);
+    destProp.SetValueType(CrDataType_UInt16);
+    destProp.SetCurrentValue(CrStillImageStoreDestination_HostPC);
+    err = SetDeviceProperty(deviceHandle, &destProp);
+    if (err != CrError_None) {
+        std::cerr << "WARNING: Failed to set Save Destination to Host PC. Code: " << format_sdk_code(err) << std::endl;
     }
 
     // Set camera ISO to 100
@@ -274,7 +332,7 @@ int main() {
     isoProp.SetCurrentValue(100);
     err = SetDeviceProperty(deviceHandle, &isoProp);
     if (err != CrError_None) {
-        std::cerr << "WARNING: Failed to set ISO to 100. Code: " << err << std::endl;
+        std::cerr << "WARNING: Failed to set ISO to 100. Code: " << format_sdk_code(err) << std::endl;
     }
 
     bool testSuccess = true;
