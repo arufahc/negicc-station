@@ -4,3 +4,10 @@
 
 # Compiled test target
 capture_test
+
+# Local symlinks for testing
+CrAdapter
+libCr_Core.so
+libmonitor_protocol.so
+libmonitor_protocol_pf.so
+

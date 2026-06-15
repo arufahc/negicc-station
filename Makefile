@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -I3rd_party/CrSDK/include
+CXXFLAGS = -std=c++17 -Wall -Wextra -fsigned-char -I3rd_party/CrSDK/include
 LDFLAGS = -L3rd_party/CrSDK/lib -lCr_Core -Wl,-rpath,'$$ORIGIN/3rd_party/CrSDK/lib' -lpthread
 
 TARGET = capture_test

@@ -2,6 +2,8 @@
 #include <chrono>
 #include <thread>
 #include "CameraRemote_SDK.h"
+#include "IDeviceCallback.h"
+#include "ICrCameraObjectInfo.h"
 
 using namespace SCRSDK;
 
@@ -10,7 +12,7 @@ public:
     MyDeviceCallback() : m_connected(false), m_disconnected(false) {}
 
     // Called when the camera device connection is successfully established
-    virtual void OnConnected(DeviceConnectionVersion version) override {
+    virtual void OnConnected(DeviceConnectionVersioin version) override {
         m_connected = true;
         std::cout << "[Callback] Camera connected. Connection version: " << version << std::endl;
     }
@@ -77,7 +79,7 @@ int main() {
     std::cout << "Found " << count << " camera(s)." << std::endl;
 
     // 3. Get the first camera info object
-    ICrCameraObjectInfo* cameraInfo = cameraList->GetCameraObjectInfo(0);
+    ICrCameraObjectInfo* cameraInfo = const_cast<ICrCameraObjectInfo*>(cameraList->GetCameraObjectInfo(0));
     if (cameraInfo == nullptr) {
         std::cerr << "ERROR: Failed to retrieve camera information." << std::endl;
         cameraList->Release();
@@ -89,7 +91,7 @@ int main() {
 
     // 4. Connect to the camera
     MyDeviceCallback callback;
-    CrDeviceHandle deviceHandle = nullptr;
+    CrDeviceHandle deviceHandle = 0;
 
     err = Connect(cameraInfo, &callback, &deviceHandle, CrSdkControlMode_Remote, CrReconnecting_ON);
     if (err != CrError_None) {
@@ -107,7 +109,7 @@ int main() {
         waitSeconds++;
     }
 
-    if (!callback.isConnected() || deviceHandle == nullptr) {
+    if (!callback.isConnected() || deviceHandle == 0) {
         std::cerr << "ERROR: Camera connection timed out or handle is invalid." << std::endl;
         cameraList->Release();
         Release();
