@@ -7,6 +7,79 @@
 #include "IDeviceCallback.h"
 #include "ICrCameraObjectInfo.h"
 #include "raw_processor.h"
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#include <dirent.h>
+#include <fstream>
+#include <cstring>
+#include <cerrno>
+
+bool reset_sony_camera_usb() {
+    std::string devices_dir = "/sys/bus/usb/devices/";
+    DIR* dir = opendir(devices_dir.c_str());
+    if (!dir) {
+        std::cerr << "[USB Reset] Cannot open /sys/bus/usb/devices/" << std::endl;
+        return false;
+    }
+
+    bool reset_done = false;
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != nullptr) {
+        std::string name = entry->d_name;
+        if (name == "." || name == "..") continue;
+
+        std::string vendor_path = devices_dir + name + "/idVendor";
+        std::ifstream vendor_file(vendor_path);
+        if (!vendor_file.is_open()) continue;
+
+        std::string vendor;
+        vendor_file >> vendor;
+        vendor_file.close();
+
+        if (vendor == "054c") {
+            std::string bus_path = devices_dir + name + "/busnum";
+            std::string dev_path = devices_dir + name + "/devnum";
+            
+            std::ifstream bus_file(bus_path);
+            std::ifstream dev_file(dev_path);
+            
+            if (bus_file.is_open() && dev_file.is_open()) {
+                int busnum = 0, devnum = 0;
+                bus_file >> busnum;
+                dev_file >> devnum;
+                
+                bus_file.close();
+                dev_file.close();
+
+                char dev_node_path[128];
+                sprintf(dev_node_path, "/dev/bus/usb/%03d/%03d", busnum, devnum);
+                std::cout << "[USB Reset] Found Sony device at " << dev_node_path << ". Resetting..." << std::endl;
+
+                int fd = open(dev_node_path, O_WRONLY);
+                if (fd >= 0) {
+                    if (ioctl(fd, 21780, 0) < 0) {
+                        std::cerr << "[USB Reset] IOCTL reset failed: " << strerror(errno) << std::endl;
+                    } else {
+                        std::cout << "[USB Reset] Reset signal sent successfully!" << std::endl;
+                        reset_done = true;
+                    }
+                    close(fd);
+                } else {
+                    std::cerr << "[USB Reset] Failed to open " << dev_node_path << ": " << strerror(errno) << std::endl;
+                }
+            }
+        }
+    }
+    closedir(dir);
+    
+    if (reset_done) {
+        std::cout << "[USB Reset] Waiting 8 seconds for camera to re-initialize..." << std::endl;
+        std::this_thread::sleep_for(std::chrono::seconds(8));
+        return true;
+    }
+    return false;
+}
 
 std::string format_sdk_code(CrInt32u code) {
     switch(code) {
@@ -219,6 +292,10 @@ int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "Sony A7R4 Tethered Capture Test Utility" << std::endl;
     std::cout << "========================================" << std::endl;
+
+    // 0. Auto-reset camera USB if present
+    std::cout << "Checking for Sony USB cameras to reset..." << std::endl;
+    reset_sony_camera_usb();
 
     // 1. Initialize the SDK
     std::cout << "Initializing SDK..." << std::endl;
