@@ -58,11 +58,11 @@ The project includes a **[Makefile](file:///home/alpha/Projects/negicc-station/M
 Once the system dependencies are installed and the Sony SDK files are populated in `3rd_party/CrSDK/`, you can compile the test capture utility:
 
 ```bash
-# Build the test executable
+# Build the test executable and populate bin_out/
 make
 
 # Run the capture test program
-./capture_test
+./bin_out/capture_test
 ```
 
 ---

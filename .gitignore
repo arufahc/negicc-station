@@ -2,8 +2,8 @@
 3rd_party/CrSDK/include/
 3rd_party/CrSDK/lib/
 
-# Compiled test target
-capture_test
+# Compiled output directory
+bin_out/
 
 
 
