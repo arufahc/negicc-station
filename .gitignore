@@ -10,5 +10,4 @@ CrAdapter
 libCr_Core.so
 libmonitor_protocol.so
 libmonitor_protocol_pf.so
-3rd_party/libs/
 

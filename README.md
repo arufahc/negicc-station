@@ -43,18 +43,13 @@ The project includes a **[Makefile](file:///home/alpha/Projects/negicc-station/M
 ### Linking Flags (`LDFLAGS`)
 * `-L3rd_party/CrSDK/lib -lCr_Core`: Links against the core Sony SDK library.
 * `-Wl,-rpath,'$$ORIGIN/3rd_party/CrSDK/lib'`: Sets the run-time shared library search path (rpath) relative to the executable's directory. This allows the application to find `libCr_Core.so` and its adapters at runtime without needing to modify the `LD_LIBRARY_PATH` environment variable.
-* `-L3rd_party/libs -lraw -llcms2`: Directs the linker to link against `libraw` and `lcms2`.
+* `-lraw -llcms2`: Directs the linker to link against `libraw` and `lcms2` system libraries.
 
-### The Local Symlink Workaround
-If the development packages (`libraw-dev` and `liblcms2-dev`) are not installed on the system, the unversioned linker targets `/usr/lib/aarch64-linux-gnu/libraw.so` and `/usr/lib/aarch64-linux-gnu/liblcms2.so` will not exist (only the versioned runtime objects like `.so.20` and `.so.2` are present).
-To compile without installing dev packages:
-1. Create a local folder: `3rd_party/libs/`
-2. Create symbolic links pointing to the system's runtime libraries:
-   ```bash
-   ln -s /usr/lib/aarch64-linux-gnu/liblcms2.so.2 3rd_party/libs/liblcms2.so
-   ln -s /usr/lib/aarch64-linux-gnu/libraw.so.20 3rd_party/libs/libraw.so
-   ```
-This satisfies the linker when searching with `-L3rd_party/libs -lraw -llcms2`.
+> [!IMPORTANT]
+> The development packages (`libraw-dev` and `liblcms2-dev`) must be installed on the system beforehand for compilation to succeed. If compilation fails with linker errors like `cannot find -lraw` or `cannot find -llcms2`, make sure you have run:
+> ```bash
+> sudo apt-get update && sudo apt-get install -y libraw-dev liblcms2-dev
+> ```
 
 ---
 
