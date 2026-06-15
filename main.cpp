@@ -104,13 +104,35 @@ std::string format_sdk_code(CrInt32u code) {
 
 using namespace SCRSDK;
 
+void query_and_set_property(CrDeviceHandle deviceHandle, CrInt32u code, CrInt64u value, const std::string& label) {
+    CrInt32u codes[1] = { code };
+    CrDeviceProperty* properties = nullptr;
+    CrInt32 numOfProperties = 0;
+    
+    CrError err = GetSelectDeviceProperties(deviceHandle, 1, codes, &properties, &numOfProperties);
+    if (err == CrError_None && properties != nullptr && numOfProperties > 0) {
+        // Update value using the correct type
+        properties[0].SetCurrentValue(value);
+        err = SetDeviceProperty(deviceHandle, &properties[0]);
+        if (err != CrError_None) {
+            std::cerr << "WARNING: Failed to set " << label << ". Code: " << format_sdk_code(err) << std::endl;
+        } else {
+            std::cout << "Successfully set " << label << std::endl;
+        }
+        ReleaseDeviceProperties(deviceHandle, properties);
+    } else {
+        std::cerr << "WARNING: Failed to query " << label << " property from camera. Code: " << format_sdk_code(err) << std::endl;
+    }
+}
+
 class MyDeviceCallback : public IDeviceCallback {
 public:
-    MyDeviceCallback() : m_connected(false), m_disconnected(false), m_downloaded(false), m_downloaded_filename("") {}
+    MyDeviceCallback() : m_connected(false), m_disconnected(false), m_downloaded(false), m_reconnecting(false), m_downloaded_filename("") {}
 
     // Called when the camera device connection is successfully established
     virtual void OnConnected(DeviceConnectionVersioin version) override {
         m_connected = true;
+        m_reconnecting = false;
         std::cout << "[Callback] Camera connected. Connection version: " << version << std::endl;
     }
 
@@ -143,6 +165,9 @@ public:
     // Called for warnings
     virtual void OnWarning(CrInt32u warning) override {
         std::cout << "[Callback] Warning: " << format_sdk_code(warning) << std::endl;
+        if (warning == CrWarning_Connect_Reconnecting) {
+            m_reconnecting = true;
+        }
     }
 
     // Called for errors
@@ -153,17 +178,20 @@ public:
     bool isConnected() const { return m_connected; }
     bool isDisconnected() const { return m_disconnected; }
     bool isDownloaded() const { return m_downloaded; }
+    bool isReconnecting() const { return m_reconnecting; }
     std::string downloadedFilename() const { return m_downloaded_filename; }
 
     void reset() {
         m_connected = false;
         m_disconnected = false;
         m_downloaded = false;
+        m_reconnecting = false;
         m_downloaded_filename = "";
     }
 
     void resetDownload() {
         m_downloaded = false;
+        m_reconnecting = false;
         m_downloaded_filename = "";
     }
 
@@ -171,6 +199,7 @@ private:
     bool m_connected;
     bool m_disconnected;
     bool m_downloaded;
+    bool m_reconnecting;
     std::string m_downloaded_filename;
 };
 
@@ -221,6 +250,10 @@ bool run_capture_test_case(CrDeviceHandle deviceHandle, MyDeviceCallback& callba
     std::cout << "Waiting for RAW file to download..." << std::endl;
     int waitSeconds = 0;
     while (!callback.isDownloaded() && waitSeconds < 25) {
+        if (callback.isDisconnected() || callback.isReconnecting()) {
+            std::cout << "[Wait] Connection dropped or reconnecting. Aborting wait." << std::endl;
+            break;
+        }
         std::this_thread::sleep_for(std::chrono::seconds(1));
         waitSeconds++;
     }
@@ -392,36 +425,15 @@ int main() {
 
     // Force save destination to Host PC to ensure OnCompleteDownload callback is triggered
     std::cout << "Setting Still Image Store Destination to Host PC..." << std::endl;
-    CrDeviceProperty destProp;
-    destProp.SetCode(CrDeviceProperty_StillImageStoreDestination);
-    destProp.SetValueType(CrDataType_UInt16);
-    destProp.SetCurrentValue(CrStillImageStoreDestination_HostPC);
-    err = SetDeviceProperty(deviceHandle, &destProp);
-    if (err != CrError_None) {
-        std::cerr << "WARNING: Failed to set Save Destination to Host PC. Code: " << format_sdk_code(err) << std::endl;
-    }
+    query_and_set_property(deviceHandle, CrDeviceProperty_StillImageStoreDestination, CrStillImageStoreDestination_HostPC, "StillImageStoreDestination");
 
     // Force Release without Card to Enable to support disk-less scanning
     std::cout << "Setting Release without Card to Enable..." << std::endl;
-    CrDeviceProperty releaseCardProp;
-    releaseCardProp.SetCode(CrDeviceProperty_ReleaseWithoutCard);
-    releaseCardProp.SetValueType(CrDataType_UInt8);
-    releaseCardProp.SetCurrentValue(CrReleaseWithoutCard_Enable);
-    err = SetDeviceProperty(deviceHandle, &releaseCardProp);
-    if (err != CrError_None) {
-        std::cerr << "WARNING: Failed to set Release without Card to Enable. Code: " << format_sdk_code(err) << std::endl;
-    }
+    query_and_set_property(deviceHandle, CrDeviceProperty_ReleaseWithoutCard, CrReleaseWithoutCard_Enable, "ReleaseWithoutCard");
 
     // Set camera ISO to 100
     std::cout << "Setting ISO to 100..." << std::endl;
-    CrDeviceProperty isoProp;
-    isoProp.SetCode(CrDeviceProperty_IsoSensitivity);
-    isoProp.SetValueType(CrDataType_UInt32);
-    isoProp.SetCurrentValue(100);
-    err = SetDeviceProperty(deviceHandle, &isoProp);
-    if (err != CrError_None) {
-        std::cerr << "WARNING: Failed to set ISO to 100. Code: " << format_sdk_code(err) << std::endl;
-    }
+    query_and_set_property(deviceHandle, CrDeviceProperty_IsoSensitivity, 100, "IsoSensitivity");
 
     bool testSuccess = true;
 
@@ -444,7 +456,7 @@ int main() {
     Disconnect(deviceHandle);
 
     waitSeconds = 0;
-    while (!callback.isDisconnected() && waitSeconds < 5) {
+    while (!callback.isDisconnected() && waitSeconds < 2) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         waitSeconds++;
     }
