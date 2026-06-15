@@ -453,12 +453,15 @@ int main() {
 
     // 6. Disconnect and clean up
     std::cout << "\nDisconnecting from camera..." << std::endl;
-    Disconnect(deviceHandle);
-
-    waitSeconds = 0;
-    while (!callback.isDisconnected() && waitSeconds < 2) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-        waitSeconds++;
+    if (callback.isDisconnected() || callback.isReconnecting()) {
+        std::cout << "[Cleanup] Connection already lost or reconnecting. Skipping Disconnect call to avoid hangs." << std::endl;
+    } else {
+        Disconnect(deviceHandle);
+        waitSeconds = 0;
+        while (!callback.isDisconnected() && waitSeconds < 2) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            waitSeconds++;
+        }
     }
 
     ReleaseDevice(deviceHandle);
