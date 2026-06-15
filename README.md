@@ -15,8 +15,8 @@ sudo apt-get update
 # Install build tools and C++ compiler
 sudo apt-get install -y build-essential g++
 
-# Install SDK dependencies (USB library and XML parsing support)
-sudo apt-get install -y libusb-1.0-0-dev libxml2-dev
+# Install SDK and image processing dependencies (USB, XML, LibRaw, and LCMS2)
+sudo apt-get install -y libusb-1.0-0-dev libxml2-dev libraw-dev liblcms2-dev
 ```
 
 Additionally, to allow the application to communicate with the Sony camera over USB without requiring superuser (`root`) privileges, configure the USB udev rules as described in the SDK setup guide.
@@ -31,7 +31,34 @@ Please follow the detailed setup instructions in **[3rd_party/CrSDK/README.md](f
 
 ---
 
-## 3. Building the Project
+## 3. Build and Link Configuration (Makefile Flags)
+
+The project includes a **[Makefile](file:///home/alpha/Projects/negicc-station/Makefile)** configured with specific compilation and linking flags optimized for the Jetson Nano (ARM64 architecture) and our library dependencies:
+
+### Compilation Flags (`CXXFLAGS`)
+* `-fsigned-char`: **Critical for ARM64 architecture.** By default, `char` is unsigned on ARM64 platforms (unlike x86_64 where it is signed). Since many third-party libraries (including LibRaw headers) expect `char` to be signed, this flag forces `char` to be signed, preventing compilation errors and subtle image parsing bugs.
+* `-I3rd_party/CrSDK/include`: Includes the Sony Camera Remote SDK headers.
+* `-I3rd_party`: Includes our local third-party headers (such as `lcms2.h` or custom headers).
+
+### Linking Flags (`LDFLAGS`)
+* `-L3rd_party/CrSDK/lib -lCr_Core`: Links against the core Sony SDK library.
+* `-Wl,-rpath,'$$ORIGIN/3rd_party/CrSDK/lib'`: Sets the run-time shared library search path (rpath) relative to the executable's directory. This allows the application to find `libCr_Core.so` and its adapters at runtime without needing to modify the `LD_LIBRARY_PATH` environment variable.
+* `-L3rd_party/libs -lraw -llcms2`: Directs the linker to link against `libraw` and `lcms2`.
+
+### The Local Symlink Workaround
+If the development packages (`libraw-dev` and `liblcms2-dev`) are not installed on the system, the unversioned linker targets `/usr/lib/aarch64-linux-gnu/libraw.so` and `/usr/lib/aarch64-linux-gnu/liblcms2.so` will not exist (only the versioned runtime objects like `.so.20` and `.so.2` are present).
+To compile without installing dev packages:
+1. Create a local folder: `3rd_party/libs/`
+2. Create symbolic links pointing to the system's runtime libraries:
+   ```bash
+   ln -s /usr/lib/aarch64-linux-gnu/liblcms2.so.2 3rd_party/libs/liblcms2.so
+   ln -s /usr/lib/aarch64-linux-gnu/libraw.so.20 3rd_party/libs/libraw.so
+   ```
+This satisfies the linker when searching with `-L3rd_party/libs -lraw -llcms2`.
+
+---
+
+## 4. Building the Project
 
 Once the system dependencies are installed and the Sony SDK files are populated in `3rd_party/CrSDK/`, you can compile the test capture utility:
 
@@ -45,7 +72,7 @@ make
 
 ---
 
-## 4. Agent Instructions for Managing Dependencies
+## 5. Agent Instructions for Managing Dependencies
 
 When introducing any new third-party dependency, library, or system package to this codebase, the agent **MUST** follow these protocol steps to keep the environment reproducible:
 

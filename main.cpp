@@ -1,15 +1,18 @@
 #include <iostream>
 #include <chrono>
 #include <thread>
+#include <cmath>
+#include <cstdio>
 #include "CameraRemote_SDK.h"
 #include "IDeviceCallback.h"
 #include "ICrCameraObjectInfo.h"
+#include "raw_processor.h"
 
 using namespace SCRSDK;
 
 class MyDeviceCallback : public IDeviceCallback {
 public:
-    MyDeviceCallback() : m_connected(false), m_disconnected(false) {}
+    MyDeviceCallback() : m_connected(false), m_disconnected(false), m_downloaded(false), m_downloaded_filename("") {}
 
     // Called when the camera device connection is successfully established
     virtual void OnConnected(DeviceConnectionVersioin version) override {
@@ -28,6 +31,21 @@ public:
         std::cout << "[Callback] Property changed on camera." << std::endl;
     }
 
+    // Called when download of a captured file is completed
+    virtual void OnCompleteDownload(CrChar* filename, CrInt32u type = 0xFFFFFFFF) override {
+        std::string fn(filename);
+        std::cout << "[Callback] Download complete: " << fn << " (type: " << type << ")" << std::endl;
+        
+        // Filter for Sony RAW files (.ARW / .arw)
+        if (fn.size() >= 4 && (fn.substr(fn.size() - 4) == ".ARW" || fn.substr(fn.size() - 4) == ".arw")) {
+            m_downloaded = true;
+            m_downloaded_filename = fn;
+        } else {
+            // Automatically clean up non-RAW files (like JPEG) if they are transferred
+            std::remove(filename);
+        }
+    }
+
     // Called for warnings
     virtual void OnWarning(CrInt32u warning) override {
         std::cout << "[Callback] Warning: 0x" << std::hex << warning << std::dec << std::endl;
@@ -40,20 +58,145 @@ public:
 
     bool isConnected() const { return m_connected; }
     bool isDisconnected() const { return m_disconnected; }
+    bool isDownloaded() const { return m_downloaded; }
+    std::string downloadedFilename() const { return m_downloaded_filename; }
 
     void reset() {
         m_connected = false;
         m_disconnected = false;
+        m_downloaded = false;
+        m_downloaded_filename = "";
+    }
+
+    void resetDownload() {
+        m_downloaded = false;
+        m_downloaded_filename = "";
     }
 
 private:
     bool m_connected;
     bool m_disconnected;
+    bool m_downloaded;
+    std::string m_downloaded_filename;
 };
+
+// Helper function to run a single capture test case
+bool run_capture_test_case(CrDeviceHandle deviceHandle, MyDeviceCallback& callback, 
+                           CrInt32u shutterSpeedVal, double expectedShutterSec, 
+                           const std::string& label) {
+    std::cout << "\n----------------------------------------" << std::endl;
+    std::cout << "TEST CASE: " << label << std::endl;
+    std::cout << "----------------------------------------" << std::endl;
+
+    // 1. Set Shutter Speed property
+    std::cout << "Setting Shutter Speed..." << std::endl;
+    CrDeviceProperty shutterProp;
+    shutterProp.SetCode(CrDeviceProperty_ShutterSpeed);
+    shutterProp.SetValueType(CrDataType_UInt32);
+    shutterProp.SetCurrentValue(shutterSpeedVal);
+    
+    CrError err = SetDeviceProperty(deviceHandle, &shutterProp);
+    if (err != CrError_None) {
+        std::cerr << "ERROR: Failed to set Shutter Speed. Code: " << err << std::endl;
+        return false;
+    }
+
+    // Wait for setting to apply
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+
+    // Reset download status in callback
+    callback.resetDownload();
+
+    // 2. Trigger Capture
+    std::cout << "Triggering camera shutter..." << std::endl;
+    err = SendCommand(deviceHandle, CrCommandId_Release, CrCommandParam_Down);
+    if (err != CrError_None) {
+        std::cerr << "ERROR: Failed to send shutter press down. Code: " << err << std::endl;
+        return false;
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    err = SendCommand(deviceHandle, CrCommandId_Release, CrCommandParam_Up);
+    if (err != CrError_None) {
+        std::cerr << "ERROR: Failed to send shutter release up. Code: " << err << std::endl;
+        return false;
+    }
+
+    // 3. Wait for image download
+    std::cout << "Waiting for RAW file to download..." << std::endl;
+    int waitSeconds = 0;
+    while (!callback.isDownloaded() && waitSeconds < 25) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        waitSeconds++;
+    }
+
+    if (!callback.isDownloaded()) {
+        std::cerr << "ERROR: Capture timed out. RAW file not received." << std::endl;
+        return false;
+    }
+
+    std::string filepath = callback.downloadedFilename();
+    std::cout << "Successfully downloaded: " << filepath << std::endl;
+
+    // 4. Load the RAW file and print metadata properties
+    std::cout << "Processing RAW file using LibRaw..." << std::endl;
+    // Pass debayer = false for speed, since we only need the metadata headers
+    LibRaw* proc = RawProcessor::load_raw(filepath, /*debayer*/ false);
+    if (proc == nullptr) {
+        std::cerr << "ERROR: Failed to load RAW file metadata." << std::endl;
+        return false;
+    }
+
+    float shutter = proc->imgdata.other.shutter;
+    float iso = proc->imgdata.other.iso_speed;
+    float aperture = proc->imgdata.other.aperture;
+
+    std::cout << "\n>>> Decoded Metadata <<<" << std::endl;
+    std::cout << "  Shutter Speed: " << shutter << " seconds" << std::endl;
+    std::cout << "  ISO Speed:     " << iso << std::endl;
+    std::cout << "  Aperture:      f/" << aperture << std::endl;
+
+    // Clean up LibRaw processor resources
+    proc->recycle();
+    delete proc;
+
+    // 5. Verify the properties
+    std::cout << "\nVerifying metadata properties..." << std::endl;
+    bool success = true;
+
+    // Verify shutter speed (within 10% tolerance)
+    double diff = std::abs(shutter - expectedShutterSec);
+    double tolerance = expectedShutterSec * 0.10;
+    if (diff > tolerance) {
+        std::cerr << "VERIFICATION FAILURE: Decoded Shutter Speed (" << shutter 
+                  << "s) does not match expected value (" << expectedShutterSec << "s)" << std::endl;
+        success = false;
+    } else {
+        std::cout << "  [PASS] Shutter Speed matches expected value." << std::endl;
+    }
+
+    // Verify ISO (native lowest ISO 100)
+    if (std::abs(iso - 100.0) > 1.0) {
+        std::cerr << "VERIFICATION FAILURE: Decoded ISO (" << iso 
+                  << ") does not match expected base ISO (100)" << std::endl;
+        success = false;
+    } else {
+        std::cout << "  [PASS] ISO matches expected value (100)." << std::endl;
+    }
+
+    // 6. Delete the file
+    std::cout << "Deleting captured file: " << filepath << std::endl;
+    if (std::remove(filepath.c_str()) != 0) {
+        std::cerr << "WARNING: Failed to delete " << filepath << std::endl;
+    }
+
+    return success;
+}
 
 int main() {
     std::cout << "========================================" << std::endl;
-    std::cout << "Sony Camera Remote SDK Capture Tool" << std::endl;
+    std::cout << "Sony A7R4 Tethered Capture Test Utility" << std::endl;
     std::cout << "========================================" << std::endl;
 
     // 1. Initialize the SDK
@@ -66,17 +209,14 @@ int main() {
     // 2. Discover connected cameras
     std::cout << "Scanning for connected cameras..." << std::endl;
     ICrEnumCameraObjectInfo* cameraList = nullptr;
-    CrError err = EnumCameraObjects(&cameraList, 3); // Wait up to 3 seconds
+    CrError err = EnumCameraObjects(&cameraList, 3);
 
     if (err != CrError_None || cameraList == nullptr || cameraList->GetCount() == 0) {
-        std::cerr << "ERROR: No cameras found. Please verify the physical USB connection and that the camera's mode is set to 'PC Remote'." << std::endl;
+        std::cerr << "ERROR: No cameras found." << std::endl;
         if (cameraList) cameraList->Release();
         Release();
         return -1;
     }
-
-    int count = cameraList->GetCount();
-    std::cout << "Found " << count << " camera(s)." << std::endl;
 
     // 3. Get the first camera info object
     ICrCameraObjectInfo* cameraInfo = const_cast<ICrCameraObjectInfo*>(cameraList->GetCameraObjectInfo(0));
@@ -101,7 +241,7 @@ int main() {
         return -1;
     }
 
-    // Wait for OnConnected callback to verify connection is established
+    // Wait for OnConnected callback
     std::cout << "Waiting for connection verification..." << std::endl;
     int waitSeconds = 0;
     while (!callback.isConnected() && waitSeconds < 10) {
@@ -110,7 +250,7 @@ int main() {
     }
 
     if (!callback.isConnected() || deviceHandle == 0) {
-        std::cerr << "ERROR: Camera connection timed out or handle is invalid." << std::endl;
+        std::cerr << "ERROR: Camera connection timed out." << std::endl;
         cameraList->Release();
         Release();
         return -1;
@@ -119,78 +259,64 @@ int main() {
     std::cout << "Connection established successfully!" << std::endl;
     std::cout << "NOTE: Make sure the physical mode dial on the camera is set to M (Manual)." << std::endl;
 
-    // 5. Configure settings: Shutter Speed = 1/125s
-    std::cout << "Setting Shutter Speed to 1/125s..." << std::endl;
-    CrDeviceProperty shutterProp;
-    shutterProp.SetCode(CrDeviceProperty_ShutterSpeed);
-    shutterProp.SetValueType(CrDataType_UInt32);
-    // Value is 32-bit: Numerator (upper 16 bits = 0x0001) | Denominator (lower 16 bits = 125 = 0x007D)
-    // 0x0001007D = 65661
-    shutterProp.SetCurrentValue(0x0001007D); 
-    
-    err = SetDeviceProperty(deviceHandle, &shutterProp);
+    // 5. Configure Save Information: save to local directory with prefix "test_capture"
+    std::cout << "Configuring save info to local directory..." << std::endl;
+    err = SetSaveInfo(deviceHandle, const_cast<char*>("./"), const_cast<char*>("test_capture"), 1);
     if (err != CrError_None) {
-        std::cerr << "WARNING: Failed to apply Shutter Speed change. Code: " << err << std::endl;
+        std::cerr << "WARNING: SetSaveInfo failed. Code: " << err << std::endl;
     }
 
-    // 6. Configure settings: ISO = 100 (lowest native ISO)
+    // Set camera ISO to 100
     std::cout << "Setting ISO to 100..." << std::endl;
     CrDeviceProperty isoProp;
     isoProp.SetCode(CrDeviceProperty_IsoSensitivity);
     isoProp.SetValueType(CrDataType_UInt32);
-    // Bits 0-23 represent the ISO value directly
-    isoProp.SetCurrentValue(100); 
-
+    isoProp.SetCurrentValue(100);
     err = SetDeviceProperty(deviceHandle, &isoProp);
     if (err != CrError_None) {
-        std::cerr << "WARNING: Failed to apply ISO change. Code: " << err << std::endl;
+        std::cerr << "WARNING: Failed to set ISO to 100. Code: " << err << std::endl;
     }
 
-    // Wait 2 seconds for settings to propagate to the device
-    std::this_thread::sleep_for(std::chrono::seconds(2));
+    bool testSuccess = true;
 
-    // 7. Take a picture
-    std::cout << "Triggering camera shutter..." << std::endl;
-    
-    // Simulate Shutter Press Down
-    err = SendCommand(deviceHandle, CrCommandId_Release, CrCommandParam_Down);
-    if (err != CrError_None) {
-        std::cerr << "ERROR: Failed to send shutter press down. Code: " << err << std::endl;
+    // Test Case 1: Shutter Speed = 1.0s
+    // 1.0s value: Numerator (upper 16 bits) = 1 (0x0001) | Denominator (lower 16 bits) = 1 (0x0001)
+    // 0x00010001 = 65537
+    if (!run_capture_test_case(deviceHandle, callback, 0x00010001, 1.0, "1s Exposure")) {
+        testSuccess = false;
     }
 
-    // Hold the shutter button down for 100ms
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-    // Simulate Shutter Release Up
-    err = SendCommand(deviceHandle, CrCommandId_Release, CrCommandParam_Up);
-    if (err != CrError_None) {
-        std::cerr << "ERROR: Failed to send shutter release up. Code: " << err << std::endl;
-    } else {
-        std::cout << "Photo captured successfully!" << std::endl;
+    // Test Case 2: Shutter Speed = 1/125s
+    // 1/125s value: Numerator (upper 16 bits) = 1 (0x0001) | Denominator (lower 16 bits) = 125 (0x007D)
+    // 0x0001007D = 65661
+    if (!run_capture_test_case(deviceHandle, callback, 0x0001007D, 1.0 / 125.0, "1/125s Exposure")) {
+        testSuccess = false;
     }
 
-    // Wait 3 seconds for photo storage/processing to complete on the camera
-    std::this_thread::sleep_for(std::chrono::seconds(3));
-
-    // 8. Disconnect and clean up
-    std::cout << "Disconnecting from camera..." << std::endl;
+    // 6. Disconnect and clean up
+    std::cout << "\nDisconnecting from camera..." << std::endl;
     Disconnect(deviceHandle);
 
-    // Wait for OnDisconnected callback
     waitSeconds = 0;
     while (!callback.isDisconnected() && waitSeconds < 5) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         waitSeconds++;
     }
 
-    // Release connection resources
     ReleaseDevice(deviceHandle);
-    std::cout << "Camera connection released." << std::endl;
-
-    // Release camera list and SDK resources
     cameraList->Release();
     Release();
     std::cout << "SDK shutdown complete." << std::endl;
 
-    return 0;
+    if (testSuccess) {
+        std::cout << "\n========================================" << std::endl;
+        std::cout << "TEST RESULT: SUCCESS" << std::endl;
+        std::cout << "========================================" << std::endl;
+        return 0;
+    } else {
+        std::cout << "\n========================================" << std::endl;
+        std::cout << "TEST RESULT: FAILURE" << std::endl;
+        std::cout << "========================================" << std::endl;
+        return -1;
+    }
 }

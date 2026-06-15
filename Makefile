@@ -1,9 +1,9 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -fsigned-char -I3rd_party/CrSDK/include
-LDFLAGS = -L3rd_party/CrSDK/lib -lCr_Core -Wl,-rpath,'$$ORIGIN/3rd_party/CrSDK/lib' -lpthread
+CXXFLAGS = -std=c++17 -Wall -Wextra -fsigned-char -I3rd_party/CrSDK/include -I3rd_party
+LDFLAGS = -L3rd_party/CrSDK/lib -lCr_Core -Wl,-rpath,'$$ORIGIN/3rd_party/CrSDK/lib' -L3rd_party/libs -lraw -llcms2 -lpthread
 
 TARGET = capture_test
-SRC = main.cpp
+SRC = main.cpp raw_processor.cpp
 
 all: $(TARGET)
 
