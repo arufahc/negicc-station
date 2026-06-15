@@ -401,6 +401,17 @@ int main() {
         std::cerr << "WARNING: Failed to set Save Destination to Host PC. Code: " << format_sdk_code(err) << std::endl;
     }
 
+    // Force Release without Card to Enable to support disk-less scanning
+    std::cout << "Setting Release without Card to Enable..." << std::endl;
+    CrDeviceProperty releaseCardProp;
+    releaseCardProp.SetCode(CrDeviceProperty_ReleaseWithoutCard);
+    releaseCardProp.SetValueType(CrDataType_UInt8);
+    releaseCardProp.SetCurrentValue(CrReleaseWithoutCard_Enable);
+    err = SetDeviceProperty(deviceHandle, &releaseCardProp);
+    if (err != CrError_None) {
+        std::cerr << "WARNING: Failed to set Release without Card to Enable. Code: " << format_sdk_code(err) << std::endl;
+    }
+
     // Set camera ISO to 100
     std::cout << "Setting ISO to 100..." << std::endl;
     CrDeviceProperty isoProp;
