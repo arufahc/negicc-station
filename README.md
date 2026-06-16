@@ -2,6 +2,22 @@
 
 This repository contains the software for a negative film scanning station designed to run on the **Nvidia Jetson Nano** (ARMv8 64-bit architecture) and interface with a connected **Sony A7R4** camera.
 
+### Directory Structure
+
+* **[src/](src/)**: Main C++ and CPython extension source code, as well as Python example scripts.
+  * [camera_session.h](src/camera_session.h) / [sony_camera_session.cpp](src/sony_camera_session.cpp): Sony Camera Remote SDK wrapper.
+  * [raw_processor.cpp](src/raw_processor.cpp): Linear conversion and 4-shot pixel-shift merging.
+  * [image_capture.cpp](src/image_capture.cpp): CapturedImage definition and linear TIFF writer.
+  * [python_bindings.cpp](src/python_bindings.cpp): CPython bindings exposing tethered capture and raw conversion to Python.
+  * [sample_capture_tiff.py](src/sample_capture_tiff.py): Simple command-line capture example.
+  * [sample_ui.py](src/sample_ui.py): PyGObject/GTK3 desktop UI application for scanner control and preview.
+* **[tests/](tests/)**: Integration tests ([test_cpython.py](tests/test_cpython.py) and [test_live_parity.py](tests/test_live_parity.py)).
+* **[test_imgs/](test_imgs/)**: reference RAW images stored using LZMA compression ([test_capture_ref.ARW.xz](test_imgs/test_capture_ref.ARW.xz)).
+* **[3rd_party/](3rd_party/)**: Local third-party dependencies, minimal headers, and SDK configuration.
+* **[build/](build/)**: Unified folder containing compiled binaries, shared libraries, and build artifacts.
+* **[setup.py](setup.py)**: Packaging setup configuration for the C extension.
+* **[Makefile](Makefile)**: Target compilation and test harness configurations.
+
 ---
 
 ## 1. Jetson Nano System Dependencies
@@ -55,16 +71,22 @@ The project includes a **[Makefile](Makefile)** configured with specific compila
 
 ---
 
-## 4. Building the Project
+## 4. Building and Running the Project
 
-Once the system dependencies are installed and the Sony SDK files are populated in `3rd_party/CrSDK/`, you can compile the test capture utility:
+Once the system dependencies are installed and the Sony SDK files are populated in `3rd_party/CrSDK/`, you can compile the project and run the capture utilities:
 
 ```bash
-# Build the test executable and populate build/
+# Build all C++ targets and build/install the Python library
 make
 
-# Run the capture test program
+# Run the C++ capture test program
 ./build/capture_test
+
+# Run the command-line Python capture example
+./venv/bin/python3 src/sample_capture_tiff.py
+
+# Run the PyGObject GTK3 desktop scanning GUI
+./venv/bin/python3 src/sample_ui.py
 ```
 
 ---

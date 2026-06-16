@@ -4,6 +4,12 @@ This file contains mandatory rules for any agent working in this repository.
 
 ---
 
+## Project Objective
+
+The primary objective of `negicc-station` is to interface with a connected **Sony A7R4** camera over USB on an **Nvidia Jetson Nano** running Linux, trigger live captures (supporting both single-shot and Sony 4-shot IBIS pixel shift), perform high-performance linear RAW image decoding/merging in C++ (handling Bayer grid demosaicing or 4-frame alignment without interpolation to prevent grain bleeding), and expose the resulting linear RGB data to Python as a standard 16-bit NumPy array. This library forms the core capture and processing frontend for a film negative scanning system, enabling downstream mathematical negative inversion.
+
+---
+
 ## Documentation Rules
 
 ### Never Use Hardcoded Absolute Paths
