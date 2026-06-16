@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Simple capture and convert demo using the negicc_station extension.
-Run with: ./venv/bin/python3 sample_capture_tiff.py
+Run with: ./venv/bin/python3 src/sample_capture_tiff.py
 """
 import negicc_station
 
