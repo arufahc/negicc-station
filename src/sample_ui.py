@@ -291,6 +291,7 @@ class ScanningAppWindow(Gtk.Window):
         self.capture_time_label.set_text(f"Capture Duration: {t_cap_duration:.3f}s")
         self.convert_time_label.set_text(f"Conversion Duration: {t_conv_duration:.3f}s")
 
+        t_render_start = time.time()
         # Create Pixbuf from raw bytes safely using GLib.Bytes
         glib_bytes = GLib.Bytes.new(raw_bytes)
         self.current_pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
@@ -309,6 +310,15 @@ class ScanningAppWindow(Gtk.Window):
 
         # Update preview canvas image
         self.refresh_preview_image()
+        t_render_duration = time.time() - t_render_start
+
+        # Print detailed timing information to stdout
+        print("\n=== Capture & Processing Timing (seconds) ===")
+        print(f"  Capture & Transfer:   {t_cap_duration:.3f}s")
+        print(f"  Linear Conversion:    {t_conv_duration:.3f}s")
+        print(f"  UI Render & Display:  {t_render_duration:.3f}s")
+        print(f"  Total pipeline:       {t_cap_duration + t_conv_duration + t_render_duration:.3f}s")
+        print("=============================================")
 
     def update_ui_failure(self, error_msg):
         self.spinner.stop()
