@@ -8,6 +8,7 @@ display 16-bit linear C++ converted previews, and show metadata.
 import os
 import sys
 import threading
+import time
 import numpy as np
 import gi
 
@@ -188,6 +189,19 @@ class ScanningAppWindow(Gtk.Window):
         self.files_label.get_style_context().add_class("meta-label")
         self.meta_box.pack_start(self.files_label, False, False, 0)
 
+        # Timing / Debug Labels
+        self.capture_time_label = Gtk.Label(label="Capture Duration: --")
+        self.capture_time_label.set_xalign(0.0)
+        self.capture_time_label.set_yalign(0.5)
+        self.capture_time_label.get_style_context().add_class("meta-label")
+        self.meta_box.pack_start(self.capture_time_label, False, False, 0)
+
+        self.convert_time_label = Gtk.Label(label="Conversion Duration: --")
+        self.convert_time_label.set_xalign(0.0)
+        self.convert_time_label.set_yalign(0.5)
+        self.convert_time_label.get_style_context().add_class("meta-label")
+        self.meta_box.pack_start(self.convert_time_label, False, False, 0)
+
         # =====================================================================
         # RIGHT PANEL: Preview Canvas
         # =====================================================================
@@ -233,7 +247,9 @@ class ScanningAppWindow(Gtk.Window):
             shutter_num, shutter_den = parse_shutter_speed(shutter_str)
 
             # Trigger C++ capture via bindings
+            t_cap_start = time.time()
             img = negicc_station.capture(type=mode_id, shutter_num=shutter_num, shutter_den=shutter_den)
+            t_cap_duration = time.time() - t_cap_start
             
             # Fetch metadata
             iso = img.iso
@@ -241,7 +257,10 @@ class ScanningAppWindow(Gtk.Window):
             paths = img.filepaths
 
             # Convert to half-size numpy array for fast screen preview
+            t_conv_start = time.time()
             arr = img.to_numpy(half=True)
+            t_conv_duration = time.time() - t_conv_start
+
             height, width, channels = arr.shape
 
             # Convert uint16 linear array to uint8 RGB for GTK GdkPixbuf
@@ -252,11 +271,11 @@ class ScanningAppWindow(Gtk.Window):
             img.discard()
 
             # Schedule UI updates back onto the GTK main thread safely
-            GLib.idle_add(self.update_ui_success, raw_bytes, width, height, iso, shutter_sec, paths)
+            GLib.idle_add(self.update_ui_success, raw_bytes, width, height, iso, shutter_sec, paths, t_cap_duration, t_conv_duration)
         except Exception as e:
             GLib.idle_add(self.update_ui_failure, str(e))
 
-    def update_ui_success(self, raw_bytes, width, height, iso, shutter_sec, paths):
+    def update_ui_success(self, raw_bytes, width, height, iso, shutter_sec, paths, t_cap_duration, t_conv_duration):
         # Stop spinner and enable UI controls
         self.spinner.stop()
         self.capture_button.set_sensitive(True)
@@ -269,6 +288,8 @@ class ScanningAppWindow(Gtk.Window):
         self.shutter_label.set_text(f"Shutter Speed: {shutter_sec:.4f}s")
         self.size_label.set_text(f"Dimensions: {width} x {height} (Half-size)")
         self.files_label.set_text(f"RAW Filepath(s) [Deleted]:\n" + "\n".join(paths))
+        self.capture_time_label.set_text(f"Capture Duration: {t_cap_duration:.3f}s")
+        self.convert_time_label.set_text(f"Conversion Duration: {t_conv_duration:.3f}s")
 
         # Create Pixbuf from raw bytes safely using GLib.Bytes
         glib_bytes = GLib.Bytes.new(raw_bytes)
