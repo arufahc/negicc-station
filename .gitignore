@@ -5,5 +5,10 @@
 # Compiled output directory
 bin_out/
 
+# Python Virtual Environment and Build Artifacts
+venv/
+build/
+negicc_station.egg-info/
+
 
 

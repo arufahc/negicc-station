@@ -1,6 +1,6 @@
 # Sony Camera Remote SDK (CrSDK) Integration
 
-This directory ([3rd_party/CrSDK](file:///home/alpha/Projects/negicc-station/3rd_party/CrSDK)) is designated to house the Sony Camera Remote SDK (CrSDK) binaries and headers. Since the SDK is proprietary and subject to Sony's licensing terms, it cannot be version-controlled directly in this repository.
+This directory (`3rd_party/CrSDK`) is designated to house the Sony Camera Remote SDK (CrSDK) binaries and headers. Since the SDK is proprietary and subject to Sony's licensing terms, it cannot be version-controlled directly in this repository.
 
 This project is a negative film scanning software designed to interface with Sony cameras (specifically the **Sony A7R4** / ILCE-7RM4) and is built to run on the **Nvidia Jetson Nano** (ARMv8 64-bit architecture).
 
@@ -48,12 +48,12 @@ Copy the files from the extracted SDK folder as follows:
 
 1. **Headers**:
    Copy all files from the SDK's `include` directory to:
-   * [include/](file:///home/alpha/Projects/negicc-station/3rd_party/CrSDK/include)
+   * [include/](include/)
 
 2. **Libraries**:
    Create a new directory named `lib` at `3rd_party/CrSDK/lib/` and copy the contents of the SDK's `app` (or `libs/linux/armv8`) folder there:
-   * Copy `libCr_Core.so`, `libmonitor_protocol.so`, and `libmonitor_protocol_pf.so` to [lib/](file:///home/alpha/Projects/negicc-station/3rd_party/CrSDK/lib).
-   * Copy the entire `CrAdapter` directory (containing `libCr_PTP_IP.so` and `libCr_PTP_USB.so`) to [lib/CrAdapter/](file:///home/alpha/Projects/negicc-station/3rd_party/CrSDK/lib/CrAdapter).
+   * Copy `libCr_Core.so`, `libmonitor_protocol.so`, and `libmonitor_protocol_pf.so` to [lib/](lib/).
+   * Copy the entire `CrAdapter` directory (containing `libCr_PTP_IP.so` and `libCr_PTP_USB.so`) to [lib/CrAdapter/](lib/CrAdapter/).
 
 ---
 
@@ -84,7 +84,7 @@ By default, standard Linux users do not have permissions to access raw USB devic
 The application needs to know where to find `libCr_Core.so` and its adapters at runtime.
 - **Development**: Ensure your build system (e.g. CMake) sets the appropriate `RPATH` pointing to the library folder, or set the `LD_LIBRARY_PATH` before running the executable:
   ```bash
-  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/home/alpha/Projects/negicc-station/3rd_party/CrSDK/lib
+  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/3rd_party/CrSDK/lib
   ```
 
 ### System Dependencies

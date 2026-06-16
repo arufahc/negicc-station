@@ -27,13 +27,13 @@ Additionally, to allow the application to communicate with the Sony camera over 
 
 The camera remote control capability relies on the proprietary Sony Camera Remote SDK. Because the SDK is proprietary, its headers and libraries are not stored in this repository.
 
-Please follow the detailed setup instructions in **[3rd_party/CrSDK/README.md](file:///home/alpha/Projects/negicc-station/3rd_party/CrSDK/README.md)** to download, extract, and install the Linux ARMv8 SDK.
+Please follow the detailed setup instructions in **[3rd_party/CrSDK/README.md](3rd_party/CrSDK/README.md)** to download, extract, and install the Linux ARMv8 SDK.
 
 ---
 
 ## 3. Build and Link Configuration (Makefile Flags)
 
-The project includes a **[Makefile](file:///home/alpha/Projects/negicc-station/Makefile)** configured with specific compilation and linking flags optimized for the Jetson Nano (ARM64 architecture) and our library dependencies:
+The project includes a **[Makefile](Makefile)** configured with specific compilation and linking flags optimized for the Jetson Nano (ARM64 architecture) and our library dependencies:
 
 ### Compilation Flags (`CXXFLAGS`)
 * `-fsigned-char`: **Critical for ARM64 architecture.** By default, `char` is unsigned on ARM64 platforms (unlike x86_64 where it is signed). Since many third-party libraries (including LibRaw headers) expect `char` to be signed, this flag forces `char` to be signed, preventing compilation errors and subtle image parsing bugs.
@@ -58,11 +58,11 @@ The project includes a **[Makefile](file:///home/alpha/Projects/negicc-station/M
 Once the system dependencies are installed and the Sony SDK files are populated in `3rd_party/CrSDK/`, you can compile the test capture utility:
 
 ```bash
-# Build the test executable and populate bin_out/
+# Build the test executable and populate build/
 make
 
 # Run the capture test program
-./bin_out/capture_test
+./build/capture_test
 ```
 
 ---
@@ -71,7 +71,43 @@ make
 
 When introducing any new third-party dependency, library, or system package to this codebase, the agent **MUST** follow these protocol steps to keep the environment reproducible:
 
-1. **Update System Dependencies**: Add any new system-level package requirements to the **Jetson Nano System Dependencies** section in this top-level [README.md](file:///home/alpha/Projects/negicc-station/README.md).
+1. **Update System Dependencies**: Add any new system-level package requirements to the **Jetson Nano System Dependencies** section in this top-level [README.md](README.md).
 2. **Setup Subdirectory Integration**: If the dependency is a third-party library, create a dedicated folder under `3rd_party/<DependencyName>/` and write a local `README.md` detailing how to download, compile, or install the library.
-3. **Configure Git Exclusion**: If the dependency contains proprietary binaries or large compiled libraries, add them to the top-level [.gitignore](file:///home/alpha/Projects/negicc-station/.gitignore) to prevent them from being checked into version control.
+3. **Configure Git Exclusion**: If the dependency contains proprietary binaries or large compiled libraries, add them to the top-level [.gitignore](.gitignore) to prevent them from being checked into version control.
 4. **Document Code & Builds**: Ensure all Makefiles and source files are updated and linked correctly, and document the complete build instructions so another agent can repeat the execution flow on a fresh Jetson Nano environment.
+
+---
+
+## 6. Troubleshooting and Hardware Diagnostics
+
+### A. USB Memory Limit (`ENOMEM` / Disconnection during file transfer)
+When transferring large RAW image files (like the 61MP files from the Sony A7R4), the Sony SDK submits multiple concurrent USB requests. If the total size of these requests exceeds the kernel's USB filesystem memory limit, the transfer fails and the connection drops.
+* **Symptom**: Callback prints `CrWarning_Connect_Reconnecting (0x20002)` or connection drops, followed by capture timeouts.
+* **Diagnostic**: Run the application under `strace` to check for `ENOMEM` errors:
+  ```bash
+  strace -f -o strace.log ./build/capture_test
+  grep "USBDEVFS_SUBMITURB" strace.log
+  # Look for: ioctl(..., USBDEVFS_SUBMITURB, ...) = -1 ENOMEM (Cannot allocate memory)
+  ```
+* **Temporary Fix**: Increase the runtime USB memory limit to 1024MB:
+  ```bash
+  echo 1024 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
+  ```
+* **Persistent Fix**: Write the modprobe configuration by running:
+  ```bash
+  echo "options usbcore usbfs_memory_mb=1024" | sudo tee /etc/modprobe.d/usbcore.conf
+  ```
+
+### B. USB Autosuspend
+The Linux kernel's USB power management can suspend the camera during long exposures or idle periods, leading to `0x8207` (`CrError_Connect_Disconnected`) errors.
+* **Fix**: The application attempts to write `on` to all `/sys/devices/.../power/control` files at startup. Ensure the application is run with sufficient privileges or configure udev rules to disable autosuspend for the camera's USB vendor/product ID.
+
+### C. Stale Sessions (`CrWarning_Connect_Already` / `0x20011`)
+Performing a hard USB reset (e.g. `USBDEVFS_RESET` ioctl) right before connecting forces the USB connection to drop without letting the SDK perform its cleanup flow. This leaves a stale session active on the camera side, which causes `CrWarning_Connect_Already (0x20011)` warnings right after capture triggers, aborting the transfer.
+* **Fix**: Avoid manual USB resets before connecting; instead, rely on the SDK's built-in reconnection logic (`CrReconnecting_ON`).
+
+### D. Shutter Speed Codes
+The Sony SDK represents shutter speed values as a fraction pack where the upper 16 bits are the numerator and the lower 16 bits are the denominator.
+* **Fractional Speeds**: Set numerator to `1` and denominator to the fraction value (e.g., `1/125s` is `0x0001007D`).
+* **Whole-Second Speeds**: Represented with a **fixed denominator of 10** (`0x000A`) and the numerator scaled accordingly (e.g., `1s` is `10/10` which is `0x000A000A`; `2s` is `20/10` which is `0x0014000A`).
+* **Behavior**: If you send a value that is not in the camera's supported list of shutter speeds, the camera will silently reject it and keep its current setting.
