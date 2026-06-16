@@ -16,7 +16,9 @@ sudo apt-get update
 sudo apt-get install -y build-essential g++
 
 # Install SDK and image processing dependencies (USB, XML, LibRaw, and LCMS2)
-sudo apt-get install -y libusb-1.0-0-dev libxml2-dev libraw-dev liblcms2-dev
+# and PyGObject GUI system dependencies (GObject Introspection, Cairo, and GTK3)
+sudo apt-get install -y libusb-1.0-0-dev libxml2-dev libraw-dev liblcms2-dev libgirepository1.0-dev libcairo2-dev gir1.2-gtk-3.0
+
 ```
 
 Additionally, to allow the application to communicate with the Sony camera over USB without requiring superuser (`root`) privileges, configure the USB udev rules as described in the SDK setup guide.

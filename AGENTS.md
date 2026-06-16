@@ -8,11 +8,12 @@ This file contains mandatory rules for any agent working in this repository.
 
 ### Never Use Hardcoded Absolute Paths
 
-Do **not** embed machine-specific absolute paths (e.g., `/home/alpha/Projects/negicc-station/...`) anywhere in documentation, markdown files, scripts, or source comments.
+Do **not** embed machine-specific absolute paths (e.g., `/home/user/Projects/negicc-station/...`) anywhere in documentation, markdown files, scripts, or source comments.
 
 This applies to:
-- Markdown links (e.g., `[text](file:///home/alpha/Projects/...)` is **forbidden**)
-- Shell script examples (e.g., `export LD_LIBRARY_PATH=...:/home/alpha/Projects/...` is **forbidden**)
+- Markdown links (e.g., `[text](file:///home/user/Projects/...)` is **forbidden**.)
+- Shell script examples (e.g., `export LD_LIBRARY_PATH=...:/home/user/Projects/...` is **forbidden**.)
+
 - Any hardcoded path that assumes a specific user or machine layout
 
 **Use relative paths instead:**

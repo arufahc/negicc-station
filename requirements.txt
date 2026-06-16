@@ -1,3 +1,3 @@
 numpy
 pycairo
-PyGObject
+PyGObject==3.42.1
