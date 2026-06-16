@@ -64,7 +64,7 @@ class ScanningAppWindow(Gtk.Window):
             .capture-btn:hover {
                 background-image: linear-gradient(to bottom, #30bc5a, #2ea44f);
             }
-            .capture-btn:insensitive {
+            .capture-btn:disabled {
                 background: #555555;
                 color: #888888;
             }
@@ -104,7 +104,8 @@ class ScanningAppWindow(Gtk.Window):
         # Header Title
         title_label = Gtk.Label()
         title_label.set_markup("<span size='large' weight='bold'>Negative Scanner</span>")
-        title_label.set_alignment(0, 0.5)
+        title_label.set_xalign(0.0)
+        title_label.set_yalign(0.5)
         sidebar_box.pack_start(title_label, False, False, 5)
 
         # Section: Configuration
@@ -115,8 +116,9 @@ class ScanningAppWindow(Gtk.Window):
         sidebar_box.pack_start(config_frame, False, False, 5)
 
         # Capture Mode Dropdown
-        mode_label = Gtk.Label(text="Capture Mode:")
-        mode_label.set_alignment(0, 0.5)
+        mode_label = Gtk.Label(label="Capture Mode:")
+        mode_label.set_xalign(0.0)
+        mode_label.set_yalign(0.5)
         config_box.pack_start(mode_label, False, False, 0)
 
         self.mode_combo = Gtk.ComboBoxText()
@@ -126,8 +128,9 @@ class ScanningAppWindow(Gtk.Window):
         config_box.pack_start(self.mode_combo, False, False, 0)
 
         # Shutter Speed Dropdown
-        shutter_label = Gtk.Label(text="Shutter Speed:")
-        shutter_label.set_alignment(0, 0.5)
+        shutter_label = Gtk.Label(label="Shutter Speed:")
+        shutter_label.set_xalign(0.0)
+        shutter_label.set_yalign(0.5)
         config_box.pack_start(shutter_label, False, False, 0)
 
         self.shutter_combo = Gtk.ComboBoxText()
@@ -147,8 +150,9 @@ class ScanningAppWindow(Gtk.Window):
         status_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         self.spinner = Gtk.Spinner()
         status_box.pack_start(self.spinner, False, False, 0)
-        self.status_label = Gtk.Label(text="Status: Idle")
-        self.status_label.set_alignment(0, 0.5)
+        self.status_label = Gtk.Label(label="Status: Idle")
+        self.status_label.set_xalign(0.0)
+        self.status_label.set_yalign(0.5)
         status_box.pack_start(self.status_label, True, True, 0)
         sidebar_box.pack_start(status_box, False, False, 0)
 
@@ -159,23 +163,27 @@ class ScanningAppWindow(Gtk.Window):
         meta_frame.add(self.meta_box)
         sidebar_box.pack_start(meta_frame, True, True, 5)
 
-        self.iso_label = Gtk.Label(text="ISO: --")
-        self.iso_label.set_alignment(0, 0.5)
+        self.iso_label = Gtk.Label(label="ISO: --")
+        self.iso_label.set_xalign(0.0)
+        self.iso_label.set_yalign(0.5)
         self.iso_label.get_style_context().add_class("meta-label")
         self.meta_box.pack_start(self.iso_label, False, False, 0)
 
-        self.shutter_label = Gtk.Label(text="Shutter Speed: --")
-        self.shutter_label.set_alignment(0, 0.5)
+        self.shutter_label = Gtk.Label(label="Shutter Speed: --")
+        self.shutter_label.set_xalign(0.0)
+        self.shutter_label.set_yalign(0.5)
         self.shutter_label.get_style_context().add_class("meta-label")
         self.meta_box.pack_start(self.shutter_label, False, False, 0)
 
-        self.size_label = Gtk.Label(text="Dimensions: --")
-        self.size_label.set_alignment(0, 0.5)
+        self.size_label = Gtk.Label(label="Dimensions: --")
+        self.size_label.set_xalign(0.0)
+        self.size_label.set_yalign(0.5)
         self.size_label.get_style_context().add_class("meta-label")
         self.meta_box.pack_start(self.size_label, False, False, 0)
 
-        self.files_label = Gtk.Label(text="RAW Filepath(s): --")
-        self.files_label.set_alignment(0, 0.5)
+        self.files_label = Gtk.Label(label="RAW Filepath(s): --")
+        self.files_label.set_xalign(0.0)
+        self.files_label.set_yalign(0.5)
         self.files_label.set_line_wrap(True)
         self.files_label.get_style_context().add_class("meta-label")
         self.meta_box.pack_start(self.files_label, False, False, 0)
