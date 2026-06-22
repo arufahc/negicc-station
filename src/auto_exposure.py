@@ -42,7 +42,8 @@ def capture_exposure_frame(shutter_str, half=True):
 
 def calculate_dynamic_range(arr):
     """Calculates the dynamic range for each channel and the average, excluding 5% boundaries.
-    Enforces a strict ceiling of 80% of 16384 (13107) on all channels to prevent overexposure.
+    Caps the 95th percentile at 13107.2 (80% of 16384) to naturally compress the dynamic range
+    on overexposure.
     """
     H, W, C = arr.shape
     h_border = int(H * 0.05)
@@ -59,14 +60,10 @@ def calculate_dynamic_range(arr):
         channel_data = cropped[:, :, c]
         p95 = np.percentile(channel_data, 95)
         p5 = np.percentile(channel_data, 5)
-        dr = p95 - p5
         
-        ch_max = np.max(channel_data)
-        if ch_max > OVEREXPOSURE_THRESHOLD:
-            excess = ch_max - OVEREXPOSURE_THRESHOLD
-            penalty = 100000.0 + 10000.0 * excess
-            dr -= penalty
-            
+        # Cap p95 below the max value to naturally compress dynamic range on overexposure
+        p95_capped = min(p95, OVEREXPOSURE_THRESHOLD)
+        dr = p95_capped - p5
         dr_channels.append(dr)
         
     avg_dr = np.mean(dr_channels)
