@@ -27,7 +27,7 @@ def parse_shutter_speed(shutter_str):
         else:
             return int(round(val * 10.0)), 10
 
-def capture_exposure_frame(shutter_str, half=True):
+def capture_exposure_frame(shutter_str, half=True, session=None):
     """
     Helper function to capture a single frame at a given shutter speed string.
     Loads negicc_station, triggers capture, converts to numpy array,
@@ -35,7 +35,10 @@ def capture_exposure_frame(shutter_str, half=True):
     """
     import negicc_station
     num, den = parse_shutter_speed(shutter_str)
-    img = negicc_station.capture(type=0, shutter_num=num, shutter_den=den)
+    if session is not None:
+        img = session.capture(type=0, shutter_num=num, shutter_den=den)
+    else:
+        img = negicc_station.capture(type=0, shutter_num=num, shutter_den=den)
     arr = img.to_numpy(half=half)
     img.discard()
     return arr

@@ -77,8 +77,9 @@ class CrosstalkAppWindow(Gtk.Window):
             .btn-red:hover {
                 background-image: linear-gradient(to bottom, #f24e4e, #d93838);
             }
-            .btn-red:disabled {
-                background: #444444;
+            .btn-red:disabled, .btn-red:insensitive {
+                background-image: none;
+                background-color: #444444;
                 color: #888888;
                 border-color: #222222;
             }
@@ -93,8 +94,9 @@ class CrosstalkAppWindow(Gtk.Window):
             .btn-blue:hover {
                 background-image: linear-gradient(to bottom, #408df2, #2c75d9);
             }
-            .btn-blue:disabled {
-                background: #444444;
+            .btn-blue:disabled, .btn-blue:insensitive {
+                background-image: none;
+                background-color: #444444;
                 color: #888888;
                 border-color: #222222;
             }
@@ -109,8 +111,9 @@ class CrosstalkAppWindow(Gtk.Window):
             .btn-green:hover {
                 background-image: linear-gradient(to bottom, #30bc5a, #2ea44f);
             }
-            .btn-green:disabled {
-                background: #444444;
+            .btn-green:disabled, .btn-green:insensitive {
+                background-image: none;
+                background-color: #444444;
                 color: #888888;
                 border-color: #222222;
             }
@@ -125,8 +128,9 @@ class CrosstalkAppWindow(Gtk.Window):
             .btn-test:hover {
                 background-image: linear-gradient(to bottom, #8c96a0, #6a737d);
             }
-            .btn-test:disabled {
-                background: #444444;
+            .btn-test:disabled, .btn-test:insensitive {
+                background-image: none;
+                background-color: #444444;
                 color: #888888;
                 border-color: #222222;
             }
@@ -141,8 +145,9 @@ class CrosstalkAppWindow(Gtk.Window):
             .btn-save:hover {
                 background-image: linear-gradient(to bottom, #a052ff, #8a2be2);
             }
-            .btn-save:disabled {
-                background: #444444;
+            .btn-save:disabled, .btn-save:insensitive {
+                background-image: none;
+                background-color: #444444;
                 color: #888888;
                 border-color: #222222;
             }
@@ -415,13 +420,19 @@ class CrosstalkAppWindow(Gtk.Window):
         capture_thread.start()
 
     def background_capture_step(self, channel_id):
+        session = negicc_station.CameraSession()
+        GLib.idle_add(self.status_label.set_text, f"Status: Connecting to camera...")
+        if not session.connect():
+            GLib.idle_add(self.on_step_error, channel_id, "Failed to connect to camera via CameraSession")
+            return
+
         def ae_progress_callback(idx, shutter_str, dr_channels, avg_dr):
             dr_r, dr_g, dr_b = dr_channels
             GLib.idle_add(self.add_ae_step_to_listbox, idx, shutter_str, dr_r, dr_g, dr_b, avg_dr)
 
         def ae_capture_func(idx):
             shutter_str = auto_exposure.SHUTTER_SPEEDS[idx]
-            return auto_exposure.capture_exposure_frame(shutter_str, half=True)
+            return auto_exposure.capture_exposure_frame(shutter_str, half=True, session=session)
 
         try:
             opt_speed, _ = auto_exposure.run_auto_exposure(
@@ -434,7 +445,7 @@ class CrosstalkAppWindow(Gtk.Window):
             GLib.idle_add(self.status_label.set_text, f"Status: AE complete ({opt_speed}). Capturing final image...")
 
             num, den = auto_exposure.parse_shutter_speed(opt_speed)
-            img = negicc_station.capture(type=0, shutter_num=num, shutter_den=den)
+            img = session.capture(type=0, shutter_num=num, shutter_den=den)
             arr = img.to_numpy(half=True)
             model = img.camera_model
             img.discard()
@@ -443,6 +454,8 @@ class CrosstalkAppWindow(Gtk.Window):
             GLib.idle_add(self.on_step_complete, channel_id, opt_speed, model, means, stds)
         except Exception as e:
             GLib.idle_add(self.on_step_error, channel_id, str(e))
+        finally:
+            session.close()
 
     def on_step_complete(self, channel_id, opt_speed, model, means, stds):
         self.spinner.stop()

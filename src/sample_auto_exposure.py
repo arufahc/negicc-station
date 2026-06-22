@@ -20,11 +20,7 @@ if os.path.exists(lib_path):
     ctypes.CDLL(lib_path)
 
 import auto_exposure
-
-def test_capture_func(idx):
-    shutter_str = auto_exposure.SHUTTER_SPEEDS[idx]
-    print(f"[{idx}] Capturing at shutter speed {shutter_str} (single-shot, half-size)...")
-    return auto_exposure.capture_exposure_frame(shutter_str, half=True)
+import negicc_station
 
 if __name__ == "__main__":
     import argparse
@@ -49,12 +45,27 @@ if __name__ == "__main__":
         
     print(f"Testing auto-exposure library starting from {args.start_speed} using channel {channel}...")
     
-    opt_speed, steps = auto_exposure.run_auto_exposure(
-        start_shutter_str=args.start_speed,
-        capture_func=test_capture_func,
-        progress_callback=None,
-        channel=channel
-    )
+    session = negicc_station.CameraSession()
+    print("Connecting to camera session...")
+    if not session.connect():
+        print("ERROR: Failed to connect to camera via CameraSession.")
+        sys.exit(1)
+
+    def test_capture_func(idx):
+        shutter_str = auto_exposure.SHUTTER_SPEEDS[idx]
+        print(f"[{idx}] Capturing at shutter speed {shutter_str} (single-shot, half-size)...")
+        return auto_exposure.capture_exposure_frame(shutter_str, half=True, session=session)
+
+    try:
+        opt_speed, steps = auto_exposure.run_auto_exposure(
+            start_shutter_str=args.start_speed,
+            capture_func=test_capture_func,
+            progress_callback=None,
+            channel=channel
+        )
+    finally:
+        print("Closing camera session...")
+        session.close()
     
     print(f"\nOptimal speed found: {opt_speed}")
     print("\n--- Steps summary ---")

@@ -143,4 +143,66 @@ For accurate film negative color inversion, no channel is allowed to reach or ex
 
 This penalty function guarantees that any exposure where the 95th percentile exceeds the safety threshold is rejected in favor of a safe, unclipped exposure. Checking the 95th percentile instead of the absolute peak pixel value also makes the overexposure constraint robust against hot pixels and sensor noise.
 
+---
+
+### 7. Crosstalk Correction Mathematics & Principles
+
+In film negative scanning systems, obtaining independent readings for each color channel (Red, Green, and Blue) is critical. However, even when utilizing narrow-band LED light sources or high-quality optical filters, digital camera sensors suffer from **spectral crosstalk**. Spectral crosstalk occurs because the transmission curves of the sensor's Color Filter Array (CFA) overlap (for example, the green filter has non-zero transmission in the red and blue bands). Consequently, a pure red illumination source will register non-zero responses in the green and blue channels of the raw linear image.
+
+To mathematically decouple these overlapping signals, a crosstalk correction matrix is applied to the raw linear RGB response.
+
+#### Mathematical Model
+
+Let the raw linear RGB response of a pixel be represented by the vector:
+$$V_{raw} = \begin{bmatrix} R_{raw} \\ G_{raw} \\ B_{raw} \end{bmatrix}$$
+
+We define the corrected linear RGB response vector as:
+$$V_{corr} = \begin{bmatrix} R_{corr} \\ G_{corr} \\ B_{corr} \end{bmatrix}$$
+
+The corrected values are calculated via a linear transformation using a $3\times3$ correction matrix $C$:
+$$V_{corr} = C \cdot V_{raw}$$
+
+In expanded matrix form:
+$$\begin{bmatrix} R_{corr} \\ G_{corr} \\ B_{corr} \end{bmatrix} = \begin{bmatrix} C_{00} & C_{01} & C_{02} \\ C_{10} & C_{11} & C_{12} \\ C_{20} & C_{21} & C_{22} \end{bmatrix} \begin{bmatrix} R_{raw} \\ G_{raw} \\ B_{raw} \end{bmatrix}$$
+
+After matrix multiplication, the corrected channels are clipped to the 16-bit linear buffer limits $[0, 65535]$ to prevent underflow and overflow:
+$$V_{corr, i} = \max\left(0, \min\left(65535, V_{corr, i}\right)\right) \quad \text{for } i \in \{0, 1, 2\}$$
+
+---
+
+### 8. Calibration and Matrix Generation
+
+Calibration is performed to generate the correction matrix $C$ by measuring the sensor's specific crosstalk signature under controlled, single-channel illumination.
+
+#### Calibration Capture Protocol
+
+The calibration process requires capturing three separate exposures, each under a single narrow-band light source or bandpass filter:
+1. **Red Calibration Capture**: Image exposed only with Red light.
+2. **Green Calibration Capture**: Image exposed only with Green light.
+3. **Blue Calibration Capture**: Image exposed only with Blue light.
+
+For each of the three calibration images, the spatial average (mean) of the linear $R, G, B$ channels is calculated over a central region of interest. To avoid edge effects and lens vignetting, this central region is defined as a circle in the center of the image with a diameter equal to $1/3$ of the shorter side of the image.
+
+This yields three average response vectors:
+$$S_R = \begin{bmatrix} R_R \\ G_R \\ B_R \end{bmatrix}, \quad S_G = \begin{bmatrix} R_G \\ G_G \\ B_G \end{bmatrix}, \quad S_B = \begin{bmatrix} R_B \\ G_B \\ B_B \end{bmatrix}$$
+
+#### Matrix Construction and Normalization
+
+A raw crosstalk matrix $M$ is constructed where each column represents the response to one of the calibration lights:
+$$M = \begin{bmatrix} S_R & S_G & S_B \end{bmatrix} = \begin{bmatrix} R_R & R_G & R_B \\ G_R & G_G & G_B \\ B_R & B_G & B_B \end{bmatrix}$$
+
+To prevent overall brightness scaling from distorting the color balance, $M$ is normalized column-wise. Each column $j$ is divided by its diagonal element $M_{j,j}$ (the response of channel $j$ to its own corresponding illumination):
+$$M_{norm} = \begin{bmatrix} 1 & \frac{R_G}{G_G} & \frac{R_B}{B_B} \\ \frac{G_R}{R_R} & 1 & \frac{G_B}{B_B} \\ \frac{B_R}{R_R} & \frac{B_G}{G_G} & 1 \end{bmatrix}$$
+
+#### Correction Matrix Computation
+
+The final crosstalk correction matrix $C$ is the mathematical inverse of the normalized crosstalk matrix:
+$$C = M_{norm}^{-1}$$
+
+If the matrix is singular (i.e., columns are linearly dependent due to severe sensor saturation or zero illumination), the inverse does not exist, and calibration fails.
+
+> [!IMPORTANT]
+> **Overexposure Constraint During Calibration:**
+> The calibration exposures must maximize the dynamic range of each channel to optimize the signal-to-noise ratio, but **must strictly avoid overexposure (clipping)**. If any pixel values in the calibration region saturate (reach the 14-bit sensor ceiling of 16384), the response becomes non-linear, distorting the calculated ratios and rendering the calibration matrix invalid.
+
 

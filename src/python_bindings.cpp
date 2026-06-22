@@ -2,9 +2,14 @@
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <numpy/arrayobject.h>
 #include "image_capture.h"
+#include "sony_camera_session.h"
 #include <vector>
 #include <string>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+
+// Forward declarations
 
 
 // Structure for Python's CapturedImage wrapper
@@ -12,6 +17,12 @@ typedef struct {
     PyObject_HEAD
     CapturedImage* cpp_img;
 } PyCapturedImage;
+
+// Structure for Python's CameraSession wrapper
+typedef struct {
+    PyObject_HEAD
+    CameraSession* cpp_session;
+} PyCameraSession;
 
 static void PyCapturedImage_dealloc(PyCapturedImage* self) {
     if (self->cpp_img) {
@@ -397,9 +408,189 @@ static PyObject* PyNegiccStation_capture(PyObject* Py_UNUSED(self), PyObject* ar
     return (PyObject*)py_img;
 }
 
+// PyCameraSession implementation
+
+static void PyCameraSession_dealloc(PyCameraSession* self) {
+    if (self->cpp_session) {
+        delete self->cpp_session;
+        self->cpp_session = nullptr;
+    }
+    Py_TYPE(self)->tp_free((PyObject*)self);
+}
+
+static int PyCameraSession_init(PyCameraSession* self, PyObject* Py_UNUSED(args), PyObject* Py_UNUSED(kwargs)) {
+    self->cpp_session = new SonyCameraSession();
+    return 0;
+}
+
+static PyObject* PyCameraSession_connect(PyCameraSession* self, PyObject* Py_UNUSED(args)) {
+    if (!self->cpp_session) {
+        PyErr_SetString(PyExc_RuntimeError, "CameraSession C++ backend is null.");
+        return nullptr;
+    }
+    bool ok = self->cpp_session->initialize();
+    if (!ok) {
+        Py_RETURN_FALSE;
+    }
+    ok = self->cpp_session->configure_settings();
+    if (!ok) {
+        self->cpp_session->close();
+        Py_RETURN_FALSE;
+    }
+    Py_RETURN_TRUE;
+}
+
+static PyObject* PyCameraSession_capture(PyCameraSession* self, PyObject* args, PyObject* kwargs) {
+    if (!self->cpp_session) {
+        PyErr_SetString(PyExc_RuntimeError, "CameraSession C++ backend is null.");
+        return nullptr;
+    }
+    static const char* kwlist[] = {"type", "shutter_num", "shutter_den", nullptr};
+    int type_int = 0;
+    int shutter_num = 0;
+    int shutter_den = 0;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "iii", const_cast<char**>(kwlist), &type_int, &shutter_num, &shutter_den)) {
+        return nullptr;
+    }
+
+    ImageCaptureType type = static_cast<ImageCaptureType>(type_int);
+    if (type != ImageCaptureType::SINGLE && type != ImageCaptureType::SONY_PIXEL_SHIFT_4) {
+        PyErr_SetString(PyExc_ValueError, "Invalid capture type. Must be 0 (SINGLE) or 1 (SONY_PIXEL_SHIFT_4).");
+        return nullptr;
+    }
+
+    uint32_t shutter_val = map_shutter_speed(shutter_num, shutter_den);
+    if (!self->cpp_session->set_shutter_speed(shutter_val)) {
+        PyErr_SetString(PyExc_RuntimeError, "Failed to set shutter speed on camera.");
+        return nullptr;
+    }
+
+    CaptureOutput output;
+    CaptureType capType = (type == ImageCaptureType::SONY_PIXEL_SHIFT_4)
+                          ? CaptureType::SONY_PIXEL_SHIFT_4
+                          : CaptureType::SINGLE;
+
+    if (!self->cpp_session->capture(capType, output)) {
+        PyErr_SetString(PyExc_RuntimeError, "Capture failed inside camera session.");
+        return nullptr;
+    }
+
+    uint16_t numerator = shutter_val >> 16;
+    uint16_t denominator = shutter_val & 0xFFFF;
+    double shutterSec = (denominator > 0) ? (double)numerator / (double)denominator : 0.1;
+
+    PyCapturedImage* py_img = (PyCapturedImage*)PyObject_New(PyCapturedImage, &PyCapturedImage_Type);
+    if (!py_img) {
+        return nullptr;
+    }
+
+    py_img->cpp_img = new CapturedImage(type, shutterSec, 100, output.filepaths);
+    return (PyObject*)py_img;
+}
+
+static PyObject* PyCameraSession_close(PyCameraSession* self, PyObject* Py_UNUSED(args)) {
+    if (self->cpp_session) {
+        self->cpp_session->close();
+    }
+    Py_RETURN_NONE;
+}
+
+static PyMethodDef PyCameraSession_methods[] = {
+    {"connect", (PyCFunction)PyCameraSession_connect, METH_NOARGS, "Connect to the camera and configure settings"},
+    {"capture", (PyCFunction)PyCameraSession_capture, METH_VARARGS | METH_KEYWORDS, "Capture an image with the current connection"},
+    {"close", (PyCFunction)PyCameraSession_close, METH_NOARGS, "Disconnect from the camera and release SDK"},
+    {nullptr, nullptr, 0, nullptr}
+};
+
+static PyTypeObject PyCameraSession_Type = {
+    PyVarObject_HEAD_INIT(nullptr, 0)
+    "negicc_station.CameraSession",            /* tp_name */
+    sizeof(PyCameraSession),                   /* tp_basicsize */
+    0,                                         /* tp_itemsize */
+    (destructor)PyCameraSession_dealloc,       /* tp_dealloc */
+    0,                                         /* tp_vectorcall_offset */
+    nullptr,                                   /* tp_getattr */
+    nullptr,                                   /* tp_setattr */
+    nullptr,                                   /* tp_as_async */
+    nullptr,                                   /* tp_repr */
+    nullptr,                                   /* tp_as_number */
+    nullptr,                                   /* tp_as_sequence */
+    nullptr,                                   /* tp_as_mapping */
+    nullptr,                                   /* tp_hash */
+    nullptr,                                   /* tp_call */
+    nullptr,                                   /* tp_str */
+    nullptr,                                   /* tp_getattro */
+    nullptr,                                   /* tp_setattro */
+    nullptr,                                   /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT,                        /* tp_flags */
+    "Wrapper for CameraSession C++ class",     /* tp_doc */
+    nullptr,                                   /* tp_traverse */
+    nullptr,                                   /* tp_clear */
+    nullptr,                                   /* tp_richcompare */
+    0,                                         /* tp_weaklistoffset */
+    nullptr,                                   /* tp_iter */
+    nullptr,                                   /* tp_iternext */
+    PyCameraSession_methods,                   /* tp_methods */
+    nullptr,                                   /* tp_members */
+    nullptr,                                   /* tp_getset */
+    nullptr,                                   /* tp_base */
+    nullptr,                                   /* tp_dict */
+    nullptr,                                   /* tp_descr_get */
+    nullptr,                                   /* tp_descr_set */
+    0,                                         /* tp_dictoffset */
+    (initproc)PyCameraSession_init,            /* tp_init */
+    nullptr,                                   /* tp_alloc */
+    PyType_GenericNew,                         /* tp_new */
+    nullptr,                                   /* tp_free */
+    nullptr,                                   /* tp_is_gc */
+    nullptr,                                   /* tp_bases */
+    nullptr,                                   /* tp_mro */
+    nullptr,                                   /* tp_cache */
+    nullptr,                                   /* tp_subclasses */
+    nullptr,                                   /* tp_weaklist */
+    nullptr,                                   /* tp_del */
+    0,                                         /* tp_version_tag */
+    nullptr,                                   /* tp_finalize */
+    nullptr,                                   /* tp_vectorcall */
+};
+
+// Helper function to check if a Sony camera is connected via USB sysfs
+static PyObject* PyNegiccStation_is_camera_connected(PyObject* /*self*/, PyObject* /*args*/) {
+    bool connected = false;
+    namespace fs = std::filesystem;
+    try {
+        if (fs::exists("/sys/bus/usb/devices")) {
+            for (const auto& entry : fs::directory_iterator("/sys/bus/usb/devices")) {
+                fs::path vendor_path = entry.path() / "idVendor";
+                if (fs::exists(vendor_path)) {
+                    std::ifstream file(vendor_path);
+                    std::string vendor_id;
+                    if (file >> vendor_id) {
+                        // Sony Vendor ID is 054c (hexadecimal string in sysfs is usually lowercase 054c)
+                        if (vendor_id == "054c" || vendor_id == "054C") {
+                            connected = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    } catch (...) {
+        // Ignore filesystem errors and return False
+    }
+
+    if (connected) {
+        Py_RETURN_TRUE;
+    } else {
+        Py_RETURN_FALSE;
+    }
+}
+
 // Module method table
 static PyMethodDef NegiccStation_module_methods[] = {
     {"capture", (PyCFunction)PyNegiccStation_capture, METH_VARARGS | METH_KEYWORDS, "Capture an image from tethered camera"},
+    {"is_camera_connected", (PyCFunction)PyNegiccStation_is_camera_connected, METH_NOARGS, "Check if a Sony camera is connected via USB"},
     {nullptr, nullptr, 0, nullptr}
 };
 
@@ -429,8 +620,21 @@ PyMODINIT_FUNC PyInit_negicc_station(void) {
         return nullptr;
     }
 
+    if (PyType_Ready(&PyCameraSession_Type) < 0) {
+        Py_DECREF(m);
+        return nullptr;
+    }
+
     Py_INCREF(&PyCapturedImage_Type);
     if (PyModule_AddObject(m, "CapturedImage", (PyObject*)&PyCapturedImage_Type) < 0) {
+        Py_DECREF(&PyCapturedImage_Type);
+        Py_DECREF(m);
+        return nullptr;
+    }
+
+    Py_INCREF(&PyCameraSession_Type);
+    if (PyModule_AddObject(m, "CameraSession", (PyObject*)&PyCameraSession_Type) < 0) {
+        Py_DECREF(&PyCameraSession_Type);
         Py_DECREF(&PyCapturedImage_Type);
         Py_DECREF(m);
         return nullptr;

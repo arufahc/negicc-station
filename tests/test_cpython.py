@@ -18,6 +18,12 @@ def main():
 
     print("Successfully imported negicc_station!")
 
+    # 2. Test camera connection query
+    print("Testing is_camera_connected() function...")
+    conn = negicc_station.is_camera_connected()
+    print(f"  is_camera_connected() returned: {conn}")
+    assert isinstance(conn, bool), "is_camera_connected() must return a boolean"
+
     # 3. Decompress the checked-in reference ARW file for offline parity testing
     raw_file = os.path.abspath(os.path.join(project_dir, "../test_imgs/test_capture_ref.ARW"))
     compressed_file = raw_file + ".xz"

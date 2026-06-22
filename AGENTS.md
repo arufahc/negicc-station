@@ -53,3 +53,10 @@ All agents committing to this repository must configure their Git author informa
 git config user.name "Agent for Alpha Lam" && git config user.email "arufa.hc@gmail.com"
 ```
 
+---
+
+## Source Code and Script Placement
+
+All new source files, testing scripts, and sample programs (such as sample UI tools and auto-exposure experiments) must be placed in the `src/` directory. Do not add raw source files or executable python scripts directly to the repository root to keep the root directory clean.
+
+
