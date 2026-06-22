@@ -48,7 +48,7 @@ class CrosstalkAppWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title="Sony Crosstalk Calibration Tool")
         self.set_default_size(1050, 680)
-        self.connect("destroy", Gtk.main_quit)
+        self.connect("destroy", self.on_destroy)
 
         # Force GTK dark theme
         settings = Gtk.Settings.get_default()
@@ -199,6 +199,12 @@ class CrosstalkAppWindow(Gtk.Window):
         title_label.set_xalign(0.0)
         sidebar_box.pack_start(title_label, False, False, 5)
 
+        # Camera Connection Status Indicator
+        self.camera_status_label = Gtk.Label()
+        self.camera_status_label.set_markup("<span><span foreground='#e6a23c'>●</span> Camera: Connecting...</span>")
+        self.camera_status_label.set_xalign(0.0)
+        sidebar_box.pack_start(self.camera_status_label, False, False, 5)
+
         # Settings Section
         config_frame = Gtk.Frame(label="Calibration Settings")
         config_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -337,6 +343,79 @@ class CrosstalkAppWindow(Gtk.Window):
 
         self.show_all()
 
+        # Camera session and auto-connect
+        self.camera_session = None
+        self.is_connected = False
+        self.is_connecting = False
+        self.connect_camera()
+        GLib.timeout_add_seconds(2, self.poll_camera_connection)
+
+    def on_destroy(self, widget):
+        if self.camera_session:
+            try:
+                self.camera_session.close()
+            except Exception:
+                pass
+        Gtk.main_quit()
+
+    def poll_camera_connection(self):
+        if self.is_connected:
+            # Check if camera was unplugged
+            if not negicc_station.is_camera_connected():
+                self.is_connected = False
+                self.update_connection_ui(False, "Camera unplugged.")
+                if self.camera_session:
+                    try:
+                        self.camera_session.close()
+                    except Exception:
+                        pass
+                    self.camera_session = None
+        elif not self.is_connecting:
+            # Check if camera was plugged in
+            if negicc_station.is_camera_connected():
+                self.connect_camera()
+        return True
+
+    def connect_camera(self):
+        if self.is_connecting or self.is_connected:
+            return
+        self.is_connecting = True
+        self.set_controls_sensitive(False)
+        self.camera_status_label.set_markup("<span><span foreground='#e6a23c'>●</span> Camera: Connecting...</span>")
+        
+        def run():
+            try:
+                if self.camera_session is None:
+                    self.camera_session = negicc_station.CameraSession()
+                ok = self.camera_session.connect()
+                if ok:
+                    self.is_connected = True
+                    GLib.idle_add(self.update_connection_ui, True, None)
+                else:
+                    self.is_connected = False
+                    GLib.idle_add(self.update_connection_ui, False, "Failed to connect to camera.")
+            except Exception as e:
+                self.is_connected = False
+                GLib.idle_add(self.update_connection_ui, False, str(e))
+                
+        thread = threading.Thread(target=run)
+        thread.daemon = True
+        thread.start()
+
+    def update_connection_ui(self, connected, error_msg):
+        self.is_connecting = False
+        if connected:
+            self.camera_status_label.set_markup("<span foreground='#44ff44'>●</span> <b>Camera: Connected</b>")
+            self.set_controls_sensitive(True)
+            self.status_label.set_text("Status: Camera connected, ready.")
+        else:
+            self.camera_status_label.set_markup("<span foreground='#ff4444'>●</span> <b>Camera: Disconnected</b>")
+            self.set_controls_sensitive(False)
+            if error_msg:
+                self.status_label.set_text(f"Status: Connection failed ({error_msg})")
+            else:
+                self.status_label.set_text("Status: Camera disconnected.")
+
     def create_grid_cell(self):
         lbl = Gtk.Label(label="--")
         lbl.get_style_context().add_class("grid-cell")
@@ -387,11 +466,11 @@ class CrosstalkAppWindow(Gtk.Window):
         capture_thread.start()
 
     def background_capture_step(self, channel_id):
-        session = negicc_station.CameraSession()
-        GLib.idle_add(self.status_label.set_text, f"Status: Connecting to camera...")
-        if not session.connect():
-            GLib.idle_add(self.on_step_error, channel_id, "Failed to connect to camera via CameraSession")
+        if not self.is_connected or self.camera_session is None:
+            GLib.idle_add(self.on_step_error, channel_id, "Camera is not connected.")
             return
+
+        session = self.camera_session
 
         def ae_progress_callback(idx, shutter_str, dr_channels, avg_dr):
             dr_r, dr_g, dr_b = dr_channels
@@ -421,8 +500,6 @@ class CrosstalkAppWindow(Gtk.Window):
             GLib.idle_add(self.on_step_complete, channel_id, opt_speed, model, means, stds)
         except Exception as e:
             GLib.idle_add(self.on_step_error, channel_id, str(e))
-        finally:
-            session.close()
 
     def on_step_complete(self, channel_id, opt_speed, model, means, stds):
         self.spinner.stop()
@@ -460,10 +537,11 @@ class CrosstalkAppWindow(Gtk.Window):
         self.status_label.set_text(f"Status: Error in {channel_id} capture - {error_msg}")
 
     def set_controls_sensitive(self, sensitive):
-        self.shutter_combo.set_sensitive(sensitive)
-        self.btn_capture_r.set_sensitive(sensitive)
-        self.btn_capture_b.set_sensitive(sensitive)
-        self.btn_capture_g.set_sensitive(sensitive)
+        is_active = sensitive and self.is_connected
+        self.shutter_combo.set_sensitive(is_active)
+        self.btn_capture_r.set_sensitive(is_active)
+        self.btn_capture_b.set_sensitive(is_active)
+        self.btn_capture_g.set_sensitive(is_active)
 
     def format_matrix_with_labels(self, matrix):
         return (
