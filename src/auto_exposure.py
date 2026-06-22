@@ -51,7 +51,7 @@ def calculate_dynamic_range(arr):
     # Exclude 5% borders
     cropped = arr[h_border:H-h_border, w_border:W-w_border, :]
     
-    OVEREXPOSURE_THRESHOLD = 13107.2  # 80% of 16384
+    OVEREXPOSURE_THRESHOLD = 12000.0
     global_max = np.max(cropped)
     
     dr_channels = []
