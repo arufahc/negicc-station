@@ -6,7 +6,17 @@
 #include <netinet/in.h>
 #include "libraw/tiff_head.h"
 
-bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::vector<uint16_t>& out_buf) const {
+static inline void apply_crosstalk_correction(uint16_t& r, uint16_t& g, uint16_t& b, const std::vector<float>& cc_matrix) {
+    if (cc_matrix.empty()) return;
+    float fr = r * cc_matrix[0] + g * cc_matrix[1] + b * cc_matrix[2] + 0.5f;
+    float fg = r * cc_matrix[3] + g * cc_matrix[4] + b * cc_matrix[5] + 0.5f;
+    float fb = r * cc_matrix[6] + g * cc_matrix[7] + b * cc_matrix[8] + 0.5f;
+    r = std::min(65535, (int)std::max(0.0f, fr));
+    g = std::min(65535, (int)std::max(0.0f, fg));
+    b = std::min(65535, (int)std::max(0.0f, fb));
+}
+
+bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::vector<uint16_t>& out_buf, const std::vector<float>& cc_matrix) const {
     if (m_filepaths.empty()) {
         std::cerr << "ERROR: No filepaths available in CapturedImage." << std::endl;
         return false;
@@ -25,9 +35,13 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
         out_buf.resize(out_w * out_h * 3);
 
         for (int i = 0; i < out_w * out_h; ++i) {
-            out_buf[i * 3]     = proc->imgdata.image[i][0];
-            out_buf[i * 3 + 1] = proc->imgdata.image[i][1];
-            out_buf[i * 3 + 2] = proc->imgdata.image[i][2];
+            uint16_t r = proc->imgdata.image[i][0];
+            uint16_t g = proc->imgdata.image[i][1];
+            uint16_t b = proc->imgdata.image[i][2];
+            apply_crosstalk_correction(r, g, b, cc_matrix);
+            out_buf[i * 3]     = r;
+            out_buf[i * 3 + 1] = g;
+            out_buf[i * 3 + 2] = b;
         }
 
         proc->recycle();
@@ -80,9 +94,13 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
                         }
                     }
                     int dest_idx = row * out_w + col;
-                    out_buf[dest_idx * 3]     = static_cast<uint16_t>(r_sum / 4);
-                    out_buf[dest_idx * 3 + 1] = static_cast<uint16_t>(g_sum / 4);
-                    out_buf[dest_idx * 3 + 2] = static_cast<uint16_t>(b_sum / 4);
+                    uint16_t r = static_cast<uint16_t>(r_sum / 4);
+                    uint16_t g = static_cast<uint16_t>(g_sum / 4);
+                    uint16_t b = static_cast<uint16_t>(b_sum / 4);
+                    apply_crosstalk_correction(r, g, b, cc_matrix);
+                    out_buf[dest_idx * 3]     = r;
+                    out_buf[dest_idx * 3 + 1] = g;
+                    out_buf[dest_idx * 3 + 2] = b;
                 }
             }
         } else {
@@ -90,9 +108,13 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
             out_h = h;
             out_buf.resize(out_w * out_h * 3);
             for (int i = 0; i < out_w * out_h; ++i) {
-                out_buf[i * 3]     = proc->imgdata.image[i][0];
-                out_buf[i * 3 + 1] = proc->imgdata.image[i][1];
-                out_buf[i * 3 + 2] = proc->imgdata.image[i][2];
+                uint16_t r = proc->imgdata.image[i][0];
+                uint16_t g = proc->imgdata.image[i][1];
+                uint16_t b = proc->imgdata.image[i][2];
+                apply_crosstalk_correction(r, g, b, cc_matrix);
+                out_buf[i * 3]     = r;
+                out_buf[i * 3 + 1] = g;
+                out_buf[i * 3 + 2] = b;
             }
         }
 
@@ -140,7 +162,7 @@ std::unique_ptr<CapturedImage> capture_image(ImageCaptureType type, uint32_t shu
     return std::make_unique<CapturedImage>(type, shutterSec, 100, output.filepaths);
 }
 
-bool write_linear_tiff(const CapturedImage& img, const std::string& output_path, bool half_size) {
+bool write_linear_tiff(const CapturedImage& img, const std::string& output_path, bool half_size, const std::vector<float>& cc_matrix) {
     if (img.filepaths().empty()) return false;
 
     LibRaw* proc = nullptr;
@@ -201,15 +223,19 @@ bool write_linear_tiff(const CapturedImage& img, const std::string& output_path,
                 }
             } else {
                 for (unsigned col = 0; col < output_width; ++col) {
-                    row_buf[col * 3]     = (row_buf[col * 3] +
-                                            proc->imgdata.image[row * width + 2 * col][0] +
-                                            proc->imgdata.image[row * width + 2 * col + 1][0]) / 4;
-                    row_buf[col * 3 + 1] = (row_buf[col * 3 + 1] +
-                                            proc->imgdata.image[row * width + 2 * col][1] +
-                                            proc->imgdata.image[row * width + 2 * col + 1][1]) / 4;
-                    row_buf[col * 3 + 2] = (row_buf[col * 3 + 2] +
-                                            proc->imgdata.image[row * width + 2 * col][2] +
-                                            proc->imgdata.image[row * width + 2 * col + 1][2]) / 4;
+                    uint16_t r = (row_buf[col * 3] +
+                                  proc->imgdata.image[row * width + 2 * col][0] +
+                                  proc->imgdata.image[row * width + 2 * col + 1][0]) / 4;
+                    uint16_t g = (row_buf[col * 3 + 1] +
+                                  proc->imgdata.image[row * width + 2 * col][1] +
+                                  proc->imgdata.image[row * width + 2 * col + 1][1]) / 4;
+                    uint16_t b = (row_buf[col * 3 + 2] +
+                                  proc->imgdata.image[row * width + 2 * col][2] +
+                                  proc->imgdata.image[row * width + 2 * col + 1][2]) / 4;
+                    apply_crosstalk_correction(r, g, b, cc_matrix);
+                    row_buf[col * 3]     = r;
+                    row_buf[col * 3 + 1] = g;
+                    row_buf[col * 3 + 2] = b;
                 }
                 fwrite(row_buf.data(), 2 * 3, output_width, fp);
             }
@@ -218,9 +244,13 @@ bool write_linear_tiff(const CapturedImage& img, const std::string& output_path,
         std::vector<ushort> row_buf(width * 3);
         for (unsigned row = 0; row < height; ++row) {
             for (unsigned col = 0; col < width; ++col) {
-                row_buf[col * 3]     = proc->imgdata.image[row * width + col][0];
-                row_buf[col * 3 + 1] = proc->imgdata.image[row * width + col][1];
-                row_buf[col * 3 + 2] = proc->imgdata.image[row * width + col][2];
+                uint16_t r = proc->imgdata.image[row * width + col][0];
+                uint16_t g = proc->imgdata.image[row * width + col][1];
+                uint16_t b = proc->imgdata.image[row * width + col][2];
+                apply_crosstalk_correction(r, g, b, cc_matrix);
+                row_buf[col * 3]     = r;
+                row_buf[col * 3 + 1] = g;
+                row_buf[col * 3 + 2] = b;
             }
             fwrite(row_buf.data(), 2 * 3, width, fp);
         }
@@ -230,4 +260,15 @@ bool write_linear_tiff(const CapturedImage& img, const std::string& output_path,
     proc->recycle();
     delete proc;
     return true;
+}
+
+std::string CapturedImage::camera_model() const {
+    if (m_filepaths.empty()) return "Unknown";
+    LibRaw proc;
+    if (proc.open_file(m_filepaths[0].c_str()) == LIBRAW_SUCCESS) {
+        std::string model = proc.imgdata.idata.model;
+        proc.recycle();
+        return model;
+    }
+    return "Unknown";
 }

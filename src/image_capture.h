@@ -21,6 +21,7 @@ public:
     double shutter_speed() const { return m_shutter_speed; }
     int iso() const { return m_iso; }
     const std::vector<std::string>& filepaths() const { return m_filepaths; }
+    std::string camera_model() const;
 
     // Deletes the temporary raw files from disk
     void discard() {
@@ -32,7 +33,7 @@ public:
 
     // Decodes the raw files and fills out_buf with linear RGB 16-bit values.
     // Dimensions out_w and out_h are set.
-    bool get_linear_rgb(bool half_size, int& out_w, int& out_h, std::vector<uint16_t>& out_buf) const;
+    bool get_linear_rgb(bool half_size, int& out_w, int& out_h, std::vector<uint16_t>& out_buf, const std::vector<float>& cc_matrix = {}) const;
 
 private:
     ImageCaptureType m_type;
@@ -45,6 +46,6 @@ private:
 std::unique_ptr<CapturedImage> capture_image(ImageCaptureType type, uint32_t shutterSpeedVal);
 
 // Stores the linear image from CapturedImage to a 16-bit RGB TIFF file
-bool write_linear_tiff(const CapturedImage& img, const std::string& output_path, bool half_size);
+bool write_linear_tiff(const CapturedImage& img, const std::string& output_path, bool half_size, const std::vector<float>& cc_matrix = {});
 
 #endif // IMAGE_CAPTURE_H

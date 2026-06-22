@@ -61,6 +61,15 @@ static PyObject* PyCapturedImage_get_filepaths(PyCapturedImage* self, void* clos
     return py_list;
 }
 
+static PyObject* PyCapturedImage_get_camera_model(PyCapturedImage* self, void* closure) {
+    if (!self->cpp_img) {
+        PyErr_SetString(PyExc_RuntimeError, "CapturedImage C++ backend is null.");
+        return nullptr;
+    }
+    std::string model = self->cpp_img->camera_model();
+    return PyUnicode_FromString(model.c_str());
+}
+
 // Methods on CapturedImage
 static PyObject* PyCapturedImage_discard(PyCapturedImage* self, PyObject* Py_UNUSED(args)) {
     if (!self->cpp_img) {
@@ -77,15 +86,37 @@ static PyObject* PyCapturedImage_to_numpy(PyCapturedImage* self, PyObject* args,
         return nullptr;
     }
 
-    static const char* kwlist[] = {"half", nullptr};
+    static const char* kwlist[] = {"half", "crosstalk_matrix", nullptr};
     int half = 0;
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|p", const_cast<char**>(kwlist), &half)) {
+    PyObject* py_matrix = nullptr;
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|pO", const_cast<char**>(kwlist), &half, &py_matrix)) {
         return nullptr;
+    }
+
+    std::vector<float> cc_matrix;
+    if (py_matrix && py_matrix != Py_None) {
+        if (!PyList_Check(py_matrix)) {
+            PyErr_SetString(PyExc_TypeError, "crosstalk_matrix must be a list of 9 floats.");
+            return nullptr;
+        }
+        Py_ssize_t len = PyList_Size(py_matrix);
+        if (len != 9) {
+            PyErr_SetString(PyExc_ValueError, "crosstalk_matrix must contain exactly 9 elements.");
+            return nullptr;
+        }
+        for (Py_ssize_t i = 0; i < 9; ++i) {
+            PyObject* item = PyList_GetItem(py_matrix, i);
+            if (!PyFloat_Check(item) && !PyLong_Check(item)) {
+                PyErr_SetString(PyExc_TypeError, "All elements of crosstalk_matrix must be floats.");
+                return nullptr;
+            }
+            cc_matrix.push_back((float)PyFloat_AsDouble(item));
+        }
     }
 
     int w = 0, h = 0;
     std::vector<uint16_t> buf;
-    if (!self->cpp_img->get_linear_rgb(half != 0, w, h, buf)) {
+    if (!self->cpp_img->get_linear_rgb(half != 0, w, h, buf, cc_matrix)) {
         PyErr_SetString(PyExc_RuntimeError, "Failed to load/process RAW image buffer.");
         return nullptr;
     }
@@ -106,14 +137,36 @@ static PyObject* PyCapturedImage_write_tiff(PyCapturedImage* self, PyObject* arg
         return nullptr;
     }
 
-    static const char* kwlist[] = {"output_path", "half", nullptr};
+    static const char* kwlist[] = {"output_path", "half", "crosstalk_matrix", nullptr};
     const char* output_path = nullptr;
     int half = 0;
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|p", const_cast<char**>(kwlist), &output_path, &half)) {
+    PyObject* py_matrix = nullptr;
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|pO", const_cast<char**>(kwlist), &output_path, &half, &py_matrix)) {
         return nullptr;
     }
 
-    bool success = write_linear_tiff(*self->cpp_img, output_path, half != 0);
+    std::vector<float> cc_matrix;
+    if (py_matrix && py_matrix != Py_None) {
+        if (!PyList_Check(py_matrix)) {
+            PyErr_SetString(PyExc_TypeError, "crosstalk_matrix must be a list of 9 floats.");
+            return nullptr;
+        }
+        Py_ssize_t len = PyList_Size(py_matrix);
+        if (len != 9) {
+            PyErr_SetString(PyExc_ValueError, "crosstalk_matrix must contain exactly 9 elements.");
+            return nullptr;
+        }
+        for (Py_ssize_t i = 0; i < 9; ++i) {
+            PyObject* item = PyList_GetItem(py_matrix, i);
+            if (!PyFloat_Check(item) && !PyLong_Check(item)) {
+                PyErr_SetString(PyExc_TypeError, "All elements of crosstalk_matrix must be floats.");
+                return nullptr;
+            }
+            cc_matrix.push_back((float)PyFloat_AsDouble(item));
+        }
+    }
+
+    bool success = write_linear_tiff(*self->cpp_img, output_path, half != 0, cc_matrix);
     return PyBool_FromLong(success ? 1 : 0);
 }
 
@@ -131,6 +184,7 @@ static PyGetSetDef PyCapturedImage_getset[] = {
     {const_cast<char*>("iso"), (getter)PyCapturedImage_get_iso, nullptr, const_cast<char*>("ISO value"), nullptr},
     {const_cast<char*>("capture_type"), (getter)PyCapturedImage_get_capture_type, nullptr, const_cast<char*>("Capture type (0=SINGLE, 1=SONY_PIXEL_SHIFT_4)"), nullptr},
     {const_cast<char*>("filepaths"), (getter)PyCapturedImage_get_filepaths, nullptr, const_cast<char*>("Temporary raw file paths"), nullptr},
+    {const_cast<char*>("camera_model"), (getter)PyCapturedImage_get_camera_model, nullptr, const_cast<char*>("Camera model name"), nullptr},
     {nullptr, nullptr, nullptr, nullptr, nullptr}
 };
 
