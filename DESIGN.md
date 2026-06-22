@@ -136,11 +136,11 @@ To prevent clear light source bleeds or black film holder edges from throwing of
 #### Overexposure Limit Constraint
 For accurate film negative color inversion, no channel is allowed to reach or exceed sensor highlight saturation.
 - High-end digital cameras typically utilize a 14-bit analog-to-digital converter (ADC), yielding a maximum raw capacity of 16384 levels.
-- To prevent clipping and guarantee highlight headroom, the 95th percentile ($P_{95}$) is capped below the sensor capacity at **80% of 16384 (13107.2)**:
-  $$P_{95,\text{capped}} = \min(P_{95}, 13107.2)$$
-- Dynamic range is computed using this capped percentile:
-  $$\text{DR}_c = P_{95,\text{capped}} - P_{5}$$
+- To prevent clipping and guarantee highlight headroom, the 95th percentile ($P_{95}$) of each channel is monitored and constrained to be below **80% of 16384 (13107.2)**.
+- If $P_{95}$ for any channel exceeds 13107.2, that channel's dynamic range metric is heavily penalized:
+  $$\text{Penalty} = 100000.0 + 10000.0 \times (P_{95} - 13107.2)$$
+  $$\text{DR}_c = (P_{95} - P_5) - \text{Penalty}$$
 
-Because the shadow floor ($P_5$) strictly increases with longer exposure times, capping $P_{95}$ at 13107.2 causes the calculated dynamic range to compress and decrease naturally when the channel is overexposed. The search algorithm will therefore naturally maximize the metric right at the safety threshold without requiring an artificial penalty function.
+This penalty function guarantees that any exposure where the 95th percentile exceeds the safety threshold is rejected in favor of a safe, unclipped exposure. Checking the 95th percentile instead of the absolute peak pixel value also makes the overexposure constraint robust against hot pixels and sensor noise.
 
 
