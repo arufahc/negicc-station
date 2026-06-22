@@ -326,6 +326,7 @@ class CrosstalkAppWindow(Gtk.Window):
         self.lbl_m_norm = Gtk.Label(label="Matrix will display after Red, Blue, and Green steps are captured.")
         self.lbl_m_norm.get_style_context().add_class("matrix-label")
         self.lbl_m_norm.set_xalign(0.0)
+        self.lbl_m_norm.set_selectable(True)
         norm_vbox.pack_start(self.lbl_m_norm, True, True, 0)
         norm_frame.add(norm_vbox)
         matrix_box.pack_start(norm_frame, True, True, 0)
@@ -337,6 +338,7 @@ class CrosstalkAppWindow(Gtk.Window):
         self.lbl_m_corr = Gtk.Label(label="Matrix will display after Red, Blue, and Green steps are captured.")
         self.lbl_m_corr.get_style_context().add_class("matrix-label")
         self.lbl_m_corr.set_xalign(0.0)
+        self.lbl_m_corr.set_selectable(True)
         corr_vbox.pack_start(self.lbl_m_corr, True, True, 0)
         corr_frame.add(corr_vbox)
         matrix_box.pack_start(corr_frame, True, True, 0)
@@ -545,10 +547,12 @@ class CrosstalkAppWindow(Gtk.Window):
 
     def format_matrix_with_labels(self, matrix):
         return (
-            "         R        G        B\n"
-            f"R  [ {matrix[0,0]:8.4f} {matrix[0,1]:8.4f} {matrix[0,2]:8.4f} ]\n"
-            f"G  [ {matrix[1,0]:8.4f} {matrix[1,1]:8.4f} {matrix[1,2]:8.4f} ]\n"
-            f"B  [ {matrix[2,0]:8.4f} {matrix[2,1]:8.4f} {matrix[2,2]:8.4f} ]"
+            "# Col:  R         G         B\n"
+            "[\n"
+            f"  [{matrix[0,0]:8.4f}, {matrix[0,1]:8.4f}, {matrix[0,2]:8.4f}],  # Row: R\n"
+            f"  [{matrix[1,0]:8.4f}, {matrix[1,1]:8.4f}, {matrix[1,2]:8.4f}],  # Row: G\n"
+            f"  [{matrix[2,0]:8.4f}, {matrix[2,1]:8.4f}, {matrix[2,2]:8.4f}]   # Row: B\n"
+            "]"
         )
 
     def update_matrix_calculations(self):
