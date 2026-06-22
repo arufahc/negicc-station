@@ -114,7 +114,35 @@ Refer to the following source files for implementation details:
 - [image_capture.h](src/image_capture.h): C++ CapturedImage interface representing camera parameters, captured raw file locations, and linear RGB/TIFF conversion routines.
 - [image_capture.cpp](src/image_capture.cpp): Core implementation of single and pixel-shift linear conversions, including 2x2 downsampling.
 - [python_bindings.cpp](src/python_bindings.cpp): CPython glue code exposing `negicc_station.capture()`, `negicc_station.CapturedImage`, and C-API NumPy array generation.
-- [sample_capture_tiff.py](src/sample_capture_tiff.py): Simple command-line Python script demonstrating camera capture and TIFF conversion.
 - [sample_ui.py](src/sample_ui.py): PyGObject/GTK3 desktop graphical interface demonstrating real-time camera controls, preview rendering, and timing diagnostics.
+
+---
+
+### 6. Auto-Exposure Search Algorithm & Overexposure Constraint
+
+To automate the selection of the optimal shutter speed, the system integrates a hill-climbing search algorithm based on dynamic range maximization.
+
+#### Objective Function
+The algorithm evaluates exposure frames to maximize either:
+- **`ALL` channels (default)**: Maximizes the average dynamic range across R, G, and B.
+  $$\text{Objective} = \frac{\text{DR}_R + \text{DR}_G + \text{DR}_B}{3}$$
+- **Individual channels (`R`, `G`, or `B`)**: Maximizes the dynamic range for the selected channel specifically.
+
+Dynamic range ($\text{DR}_c$) is defined as the difference between the 95th and 5th percentile values in color channel $c$ within the active film area:
+$$\text{DR}_c = P_{95}(\text{PixelValues}_c) - P_{5}(\text{PixelValues}_c)$$
+
+To prevent clear light source bleeds or black film holder edges from throwing off the percentiles, the dynamic range is calculated only on a central cropped area, excluding a 5% border on all sides.
+
+#### Overexposure Limit Constraint
+For accurate film negative color inversion, no channel is allowed to reach or exceed sensor highlight saturation.
+- High-end digital cameras typically utilize a 14-bit analog-to-digital converter (ADC), yielding a maximum raw capacity of 16384 levels.
+- Any pixel value exceeding **80% of 16384 (13107.2)** within the cropped region is treated as overexposed.
+- If the maximum pixel value in any channel surpasses 13107.2, a severe continuous penalty is applied to the objective metric:
+  $$\text{Penalty} = 100000.0 + 10000.0 \times (\text{MaxPixelValue} - 13107.2)$$
+  $$\text{Metric}_{\text{penalized}} = \text{Metric}_{\text{raw}} - \text{Penalty}$$
+
+This penalty function guarantees that:
+1. Any non-overexposed exposure speed is mathematically preferred over any overexposed exposure speed.
+2. Between two overexposed settings, the search is directed toward the shorter shutter speed (less overexposed, having a lower maximum pixel value).
 
 

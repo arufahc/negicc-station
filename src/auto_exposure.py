@@ -41,13 +41,18 @@ def capture_exposure_frame(shutter_str, half=True):
     return arr
 
 def calculate_dynamic_range(arr):
-    """Calculates the dynamic range for each channel and the average, excluding 5% boundaries."""
+    """Calculates the dynamic range for each channel and the average, excluding 5% boundaries.
+    Enforces a strict ceiling of 80% of 16384 (13107) on all channels to prevent overexposure.
+    """
     H, W, C = arr.shape
     h_border = int(H * 0.05)
     w_border = int(W * 0.05)
     
     # Exclude 5% borders
     cropped = arr[h_border:H-h_border, w_border:W-w_border, :]
+    
+    OVEREXPOSURE_THRESHOLD = 13107.2  # 80% of 16384
+    global_max = np.max(cropped)
     
     dr_channels = []
     # Loop over R, G, B channels
@@ -58,6 +63,13 @@ def calculate_dynamic_range(arr):
         dr_channels.append(p95 - p5)
         
     avg_dr = np.mean(dr_channels)
+    
+    # If overexposed, penalize metrics using a penalty proportional to the excess value
+    if global_max > OVEREXPOSURE_THRESHOLD:
+        penalty = 100000.0 + 10000.0 * (global_max - OVEREXPOSURE_THRESHOLD)
+        avg_dr -= penalty
+        dr_channels = [dr - penalty for dr in dr_channels]
+        
     return avg_dr, tuple(dr_channels)
 
 def run_auto_exposure(start_shutter_str, capture_func, progress_callback=None, channel='ALL'):
