@@ -9,11 +9,11 @@ if project_dir not in sys.path:
     sys.path.insert(0, project_dir)
 
 import negicc_station
+import crosstalk_calibration
 
 def main():
     profile_path = os.path.join(project_dir, "../profiles/ILCE-7RM4_crosstalk_profile.json")
-    with open(profile_path, "r") as f:
-        profile = json.load(f)
+    profile = crosstalk_calibration.load_profile(profile_path)
     
     matrix = profile["crosstalk_correction_matrix"]
     matrix_np = np.array(matrix)
@@ -55,7 +55,7 @@ def main():
         mean_raw = np.mean(pixels_raw, axis=0)
 
         # 2. Apply correction in Python via NumPy dot product and clamp (matching C++ + 0.5f rounding)
-        pixels_cc_py = np.clip(np.dot(pixels_raw.astype(np.float32), matrix_np.T) + 0.5, 0, 65535).astype(np.uint16)
+        pixels_cc_py = crosstalk_calibration.apply_correction(pixels_raw, matrix_np)
         mean_cc_py = np.mean(pixels_cc_py, axis=0)
 
         # 3. Load corrected RAW from C++ backend directly

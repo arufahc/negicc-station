@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
 GTK3-based Crosstalk Correction Calibration application for negicc-station.
-Guides the user through capturing 4 images (Red, Blue, Green, All LEDs)
+Guides the user through capturing 3 images (Red, Blue, Green)
 to calculate and save the crosstalk correction matrix.
 """
 
 import os
 import sys
-import json
 import threading
 import numpy as np
 import gi
@@ -29,6 +28,7 @@ if os.path.exists(lib_path):
 
 import negicc_station
 import auto_exposure
+import crosstalk_calibration
 
 def get_circle_stats(arr):
     H, W, C = arr.shape
@@ -117,23 +117,6 @@ class CrosstalkAppWindow(Gtk.Window):
                 color: #888888;
                 border-color: #222222;
             }
-            .btn-test {
-                background-image: linear-gradient(to bottom, #6a737d, #586069);
-                color: white;
-                font-weight: bold;
-                border: 1px solid rgba(0,0,0,0.2);
-                border-radius: 6px;
-                padding: 10px;
-            }
-            .btn-test:hover {
-                background-image: linear-gradient(to bottom, #8c96a0, #6a737d);
-            }
-            .btn-test:disabled, .btn-test:insensitive {
-                background-image: none;
-                background-color: #444444;
-                color: #888888;
-                border-color: #222222;
-            }
             .btn-save {
                 background-image: linear-gradient(to bottom, #8a2be2, #6a1b9a);
                 color: white;
@@ -194,10 +177,6 @@ class CrosstalkAppWindow(Gtk.Window):
         self.stds_g = None
         self.speed_g = None
 
-        self.means_t = None
-        self.stds_t = None
-        self.speed_t = None
-        
         self.M = None
         self.M_norm = None
         self.correction_matrix = None
@@ -253,7 +232,13 @@ class CrosstalkAppWindow(Gtk.Window):
         self.save_button.get_style_context().add_class("btn-save")
         self.save_button.set_sensitive(False)
         self.save_button.connect("clicked", self.on_save_clicked)
-        sidebar_box.pack_start(self.save_button, False, False, 10)
+        sidebar_box.pack_start(self.save_button, False, False, 5)
+
+        # Load Button
+        self.load_button = Gtk.Button(label="LOAD PROFILE")
+        self.load_button.get_style_context().add_class("btn-save")
+        self.load_button.connect("clicked", self.on_load_clicked)
+        sidebar_box.pack_start(self.load_button, False, False, 5)
 
         # Status spinner & label
         status_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
@@ -291,11 +276,6 @@ class CrosstalkAppWindow(Gtk.Window):
         self.btn_capture_g.connect("clicked", self.on_capture_clicked, "G")
         btn_box.pack_start(self.btn_capture_g, True, True, 0)
 
-        self.btn_capture_t = Gtk.Button(label="Step 4: Capture Test")
-        self.btn_capture_t.get_style_context().add_class("btn-test")
-        self.btn_capture_t.connect("clicked", self.on_capture_clicked, "ALL")
-        btn_box.pack_start(self.btn_capture_t, True, True, 0)
-
         # Stats display grid
         self.grid = Gtk.Grid()
         self.grid.set_column_spacing(1)
@@ -324,23 +304,10 @@ class CrosstalkAppWindow(Gtk.Window):
         self.val_g_means = self.create_grid_cell()
         self.val_g_stds = self.create_grid_cell()
 
-        self.val_t_speed = self.create_grid_cell()
-        self.val_t_means = self.create_grid_cell()
-        self.val_t_stds = self.create_grid_cell()
-
-        self.val_t_corr_speed = self.create_grid_cell()
-        self.val_t_corr_means = self.create_grid_cell()
-        self.val_t_corr_stds = self.create_grid_cell()
-        
-        self.val_t_corr_speed.set_text("N/A")
-        self.val_t_corr_stds.set_text("N/A")
-
         # Map grid positions
         self.setup_row(1, "Red (Step 1)", self.val_r_speed, self.val_r_means, self.val_r_stds)
         self.setup_row(2, "Blue (Step 2)", self.val_b_speed, self.val_b_means, self.val_b_stds)
         self.setup_row(3, "Green (Step 3)", self.val_g_speed, self.val_g_means, self.val_g_stds)
-        self.setup_row(4, "Test (Raw, Step 4)", self.val_t_speed, self.val_t_means, self.val_t_stds)
-        self.setup_row(5, "Test (Corrected)", self.val_t_corr_speed, self.val_t_corr_means, self.val_t_corr_stds)
 
         # Matrices output boxes
         matrix_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=20)
@@ -483,13 +450,6 @@ class CrosstalkAppWindow(Gtk.Window):
             self.val_g_speed.set_text(opt_speed)
             self.val_g_means.set_text(f"R:{means[0]:.1f} G:{means[1]:.1f} B:{means[2]:.1f}")
             self.val_g_stds.set_text(f"R:{stds[0]:.1f} G:{stds[1]:.1f} B:{stds[2]:.1f}")
-        elif channel_id == "ALL":
-            self.means_t = means
-            self.stds_t = stds
-            self.speed_t = opt_speed
-            self.val_t_speed.set_text(opt_speed)
-            self.val_t_means.set_text(f"R:{means[0]:.1f} G:{means[1]:.1f} B:{means[2]:.1f}")
-            self.val_t_stds.set_text(f"R:{stds[0]:.1f} G:{stds[1]:.1f} B:{stds[2]:.1f}")
 
         self.status_label.set_text(f"Status: Capture {channel_id} success!")
         self.update_matrix_calculations()
@@ -504,50 +464,26 @@ class CrosstalkAppWindow(Gtk.Window):
         self.btn_capture_r.set_sensitive(sensitive)
         self.btn_capture_b.set_sensitive(sensitive)
         self.btn_capture_g.set_sensitive(sensitive)
-        self.btn_capture_t.set_sensitive(sensitive)
+
+    def format_matrix_with_labels(self, matrix):
+        return (
+            "         R        G        B\n"
+            f"R  [ {matrix[0,0]:8.4f} {matrix[0,1]:8.4f} {matrix[0,2]:8.4f} ]\n"
+            f"G  [ {matrix[1,0]:8.4f} {matrix[1,1]:8.4f} {matrix[1,2]:8.4f} ]\n"
+            f"B  [ {matrix[2,0]:8.4f} {matrix[2,1]:8.4f} {matrix[2,2]:8.4f} ]"
+        )
 
     def update_matrix_calculations(self):
         if self.means_r is not None and self.means_b is not None and self.means_g is not None:
-            # Columns represent inputs Red, Green, Blue
-            # M Column 0: Red illumination response
-            # M Column 1: Green illumination response
-            # M Column 2: Blue illumination response
-            M = np.zeros((3, 3))
-            M[:, 0] = self.means_r
-            M[:, 1] = self.means_g
-            M[:, 2] = self.means_b
-            self.M = M
-
-            M_norm = np.zeros((3, 3))
-            for j in range(3):
-                diag_val = M[j, j]
-                if diag_val == 0:
-                    diag_val = 1.0
-                M_norm[:, j] = M[:, j] / diag_val
-            self.M_norm = M_norm
-
             try:
-                correction_matrix = np.linalg.inv(M_norm)
-                self.correction_matrix = correction_matrix
+                self.M, self.M_norm, self.correction_matrix = crosstalk_calibration.compute_calibration_matrices(
+                    self.means_r, self.means_g, self.means_b
+                )
 
-                self.lbl_m_norm.set_text(
-                    f"[{M_norm[0,0]:.4f}  {M_norm[0,1]:.4f}  {M_norm[0,2]:.4f}]\n"
-                    f"[{M_norm[1,0]:.4f}  {M_norm[1,1]:.4f}  {M_norm[1,2]:.4f}]\n"
-                    f"[{M_norm[2,0]:.4f}  {M_norm[2,1]:.4f}  {M_norm[2,2]:.4f}]"
-                )
-                self.lbl_m_corr.set_text(
-                    f"[{correction_matrix[0,0]:.4f}  {correction_matrix[0,1]:.4f}  {correction_matrix[0,2]:.4f}]\n"
-                    f"[{correction_matrix[1,0]:.4f}  {correction_matrix[1,1]:.4f}  {correction_matrix[1,2]:.4f}]\n"
-                    f"[{correction_matrix[2,0]:.4f}  {correction_matrix[2,1]:.4f}  {correction_matrix[2,2]:.4f}]"
-                )
+                self.lbl_m_norm.set_text(self.format_matrix_with_labels(self.M_norm))
+                self.lbl_m_corr.set_text(self.format_matrix_with_labels(self.correction_matrix))
 
                 self.save_button.set_sensitive(True)
-
-                if self.means_t is not None:
-                    corrected_test = np.dot(correction_matrix, self.means_t)
-                    self.val_t_corr_means.set_text(
-                        f"R:{corrected_test[0]:.1f} G:{corrected_test[1]:.1f} B:{corrected_test[2]:.1f}"
-                    )
             except np.linalg.LinAlgError:
                 self.status_label.set_text("Status: Error - Matrix is singular and cannot be inverted!")
                 self.lbl_m_norm.set_text("Singular matrix!")
@@ -576,45 +512,119 @@ class CrosstalkAppWindow(Gtk.Window):
         response = dialog.run()
         if response == Gtk.ResponseType.OK:
             filepath = dialog.get_filename()
-
-            profile = {
-                "camera_model": self.camera_model,
-                "captured_data": {
-                    "Red": {
-                        "shutter_speed": self.speed_r,
-                        "means": self.means_r,
-                        "stds": self.stds_r
-                    },
-                    "Green": {
-                        "shutter_speed": self.speed_g,
-                        "means": self.means_g,
-                        "stds": self.stds_g
-                    },
-                    "Blue": {
-                        "shutter_speed": self.speed_b,
-                        "means": self.means_b,
-                        "stds": self.stds_b
-                    }
-                },
-                "crosstalk_matrix_raw": self.M.tolist(),
-                "crosstalk_matrix_normalized": self.M_norm.tolist(),
-                "crosstalk_correction_matrix": self.correction_matrix.tolist()
-            }
-
-            if self.means_t is not None:
-                profile["captured_data"]["Test"] = {
-                    "shutter_speed": self.speed_t,
-                    "means": self.means_t,
-                    "stds": self.stds_t
-                }
-
             try:
-                with open(filepath, 'w') as f:
-                    json.dump(profile, f, indent=4)
+                crosstalk_calibration.save_profile(
+                    filepath=filepath,
+                    camera_model=self.camera_model,
+                    speed_r=self.speed_r,
+                    means_r=self.means_r,
+                    stds_r=self.stds_r,
+                    speed_g=self.speed_g,
+                    means_g=self.means_g,
+                    stds_g=self.stds_g,
+                    speed_b=self.speed_b,
+                    means_b=self.means_b,
+                    stds_b=self.stds_b,
+                    M=self.M,
+                    M_norm=self.M_norm,
+                    M_corr=self.correction_matrix
+                )
                 self.status_label.set_text(f"Status: Profile saved to {os.path.basename(filepath)}")
             except Exception as e:
                 self.status_label.set_text(f"Status: Error saving profile: {str(e)}")
 
+        dialog.destroy()
+
+    def on_load_clicked(self, widget):
+        dialog = Gtk.FileChooserDialog(
+            title="Load Calibration Profile",
+            parent=self,
+            action=Gtk.FileChooserAction.OPEN
+        )
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_OPEN, Gtk.ResponseType.OK
+        )
+        
+        # Filter for JSON files
+        filter_json = Gtk.FileFilter()
+        filter_json.set_name("JSON files")
+        filter_json.add_mime_type("application/json")
+        filter_json.add_pattern("*.json")
+        dialog.add_filter(filter_json)
+
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            filepath = dialog.get_filename()
+            try:
+                profile = crosstalk_calibration.load_profile(filepath)
+                
+                self.camera_model = profile.get("camera_model", "Unknown")
+                
+                captured_data = profile.get("captured_data", {})
+                
+                # Load Red
+                r_data = captured_data.get("Red", {})
+                self.speed_r = r_data.get("shutter_speed", "N/A")
+                self.means_r = r_data.get("means")
+                self.stds_r = r_data.get("stds")
+                
+                # Load Green
+                g_data = captured_data.get("Green", {})
+                self.speed_g = g_data.get("shutter_speed", "N/A")
+                self.means_g = g_data.get("means")
+                self.stds_g = g_data.get("stds")
+                
+                # Load Blue
+                b_data = captured_data.get("Blue", {})
+                self.speed_b = b_data.get("shutter_speed", "N/A")
+                self.means_b = b_data.get("means")
+                self.stds_b = b_data.get("stds")
+                
+                # Update UI elements
+                if self.means_r:
+                    self.val_r_speed.set_text(self.speed_r)
+                    self.val_r_means.set_text(f"R:{self.means_r[0]:.1f} G:{self.means_r[1]:.1f} B:{self.means_r[2]:.1f}")
+                    self.val_r_stds.set_text(f"R:{self.stds_r[0]:.1f} G:{self.stds_r[1]:.1f} B:{self.stds_r[2]:.1f}")
+                else:
+                    self.val_r_speed.set_text("--")
+                    self.val_r_means.set_text("--")
+                    self.val_r_stds.set_text("--")
+                    
+                if self.means_g:
+                    self.val_g_speed.set_text(self.speed_g)
+                    self.val_g_means.set_text(f"R:{self.means_g[0]:.1f} G:{self.means_g[1]:.1f} B:{self.means_g[2]:.1f}")
+                    self.val_g_stds.set_text(f"R:{self.stds_g[0]:.1f} G:{self.stds_g[1]:.1f} B:{self.stds_g[2]:.1f}")
+                else:
+                    self.val_g_speed.set_text("--")
+                    self.val_g_means.set_text("--")
+                    self.val_g_stds.set_text("--")
+                    
+                if self.means_b:
+                    self.val_b_speed.set_text(self.speed_b)
+                    self.val_b_means.set_text(f"R:{self.means_b[0]:.1f} G:{self.means_b[1]:.1f} B:{self.means_b[2]:.1f}")
+                    self.val_b_stds.set_text(f"R:{self.stds_b[0]:.1f} G:{self.stds_b[1]:.1f} B:{self.stds_b[2]:.1f}")
+                else:
+                    self.val_b_speed.set_text("--")
+                    self.val_b_means.set_text("--")
+                    self.val_b_stds.set_text("--")
+                
+                # Load matrix values
+                self.M = np.array(profile.get("crosstalk_matrix_raw", np.zeros((3,3))))
+                self.M_norm = np.array(profile.get("crosstalk_matrix_normalized", np.zeros((3,3))))
+                self.correction_matrix = np.array(profile.get("crosstalk_correction_matrix", np.zeros((3,3))))
+                
+                # Format and display matrices
+                self.lbl_m_norm.set_text(self.format_matrix_with_labels(self.M_norm))
+                self.lbl_m_corr.set_text(self.format_matrix_with_labels(self.correction_matrix))
+                
+                # Enable Save Button since we have a valid profile loaded
+                self.save_button.set_sensitive(True)
+                self.status_label.set_text(f"Status: Profile loaded from {os.path.basename(filepath)}")
+                
+            except Exception as e:
+                self.status_label.set_text(f"Status: Error loading profile: {str(e)}")
+        
         dialog.destroy()
 
 if __name__ == "__main__":
