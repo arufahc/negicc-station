@@ -52,7 +52,6 @@ def calculate_dynamic_range(arr):
     cropped = arr[h_border:H-h_border, w_border:W-w_border, :]
     
     OVEREXPOSURE_THRESHOLD = 13107.2  # 80% of 16384
-    global_max = np.max(cropped)
     
     dr_channels = []
     # Loop over R, G, B channels
@@ -60,16 +59,17 @@ def calculate_dynamic_range(arr):
         channel_data = cropped[:, :, c]
         p95 = np.percentile(channel_data, 95)
         p5 = np.percentile(channel_data, 5)
-        dr_channels.append(p95 - p5)
+        dr = p95 - p5
+        
+        ch_max = np.max(channel_data)
+        if ch_max > OVEREXPOSURE_THRESHOLD:
+            excess = ch_max - OVEREXPOSURE_THRESHOLD
+            penalty = 100000.0 + 10000.0 * excess
+            dr -= penalty
+            
+        dr_channels.append(dr)
         
     avg_dr = np.mean(dr_channels)
-    
-    # If overexposed, penalize metrics using a penalty proportional to the excess value
-    if global_max > OVEREXPOSURE_THRESHOLD:
-        penalty = 100000.0 + 10000.0 * (global_max - OVEREXPOSURE_THRESHOLD)
-        avg_dr -= penalty
-        dr_channels = [dr - penalty for dr in dr_channels]
-        
     return avg_dr, tuple(dr_channels)
 
 def run_auto_exposure(start_shutter_str, capture_func, progress_callback=None, channel='ALL'):
