@@ -136,9 +136,9 @@ To prevent clear light source bleeds or black film holder edges from throwing of
 #### Overexposure Limit Constraint
 For accurate film negative color inversion, no channel is allowed to reach or exceed sensor highlight saturation.
 - High-end digital cameras typically utilize a 14-bit analog-to-digital converter (ADC), yielding a maximum raw capacity of 16384 levels.
-- Any pixel value exceeding **12000.0** within the cropped region is treated as overexposed (to guarantee highlight safety headroom for negative inversion).
-- If the maximum pixel value in any channel surpasses 12000.0, a severe continuous penalty is applied to the objective metric:
-  $$\text{Penalty} = 100000.0 + 10000.0 \times (\text{MaxPixelValue} - 12000.0)$$
+- Any pixel value exceeding **80% of 16384 (13107.2)** within the cropped region is treated as overexposed.
+- If the maximum pixel value in any channel surpasses 13107.2, a severe continuous penalty is applied to the objective metric:
+  $$\text{Penalty} = 100000.0 + 10000.0 \times (\text{MaxPixelValue} - 13107.2)$$
   $$\text{Metric}_{\text{penalized}} = \text{Metric}_{\text{raw}} - \text{Penalty}$$
 
 This penalty function guarantees that:
