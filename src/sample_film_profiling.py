@@ -466,17 +466,29 @@ class FilmProfilingAppWindow(Gtk.Window):
         self.target_stack.add_named(self.image_view_target, "preview")
         self.target_stack.set_visible_child_name("placeholder")
 
-        # Store model for IT8 patch values: Patch (str), R (int), G (int), B (int)
-        self.it8_store = Gtk.ListStore(str, int, int, int)
+        # Store model for IT8 patch values: Patch (str), R (int), G (int), B (int), R_std (float), G_std (float), B_std (float)
+        self.it8_store = Gtk.ListStore(str, int, int, int, float, float, float)
         self.it8_treeview = Gtk.TreeView(model=self.it8_store)
         
         # Add columns to TreeView
-        cols = [("Patch", 0), ("R (Linear)", 1), ("G (Linear)", 2), ("B (Linear)", 3)]
-        for col_title, col_idx in cols:
+        cols = [
+            ("Patch", 0, False),
+            ("R (Linear Avg)", 1, False),
+            ("G (Linear Avg)", 2, False),
+            ("B (Linear Avg)", 3, False),
+            ("R (Std Dev)", 4, True),
+            ("G (Std Dev)", 5, True),
+            ("B (Std Dev)", 6, True)
+        ]
+        for col_title, col_idx, is_float in cols:
             renderer = Gtk.CellRendererText()
             if col_idx > 0:
                 renderer.set_property("xalign", 1.0)
-            col = Gtk.TreeViewColumn(col_title, renderer, text=col_idx)
+            col = Gtk.TreeViewColumn(col_title, renderer)
+            if is_float:
+                col.set_cell_data_func(renderer, lambda col, cell, model, iter, idx=col_idx: cell.set_property("text", f"{model.get_value(iter, idx):.2f}"))
+            else:
+                col.add_attribute(renderer, "text", col_idx)
             if col_idx > 0:
                 col.set_alignment(1.0)
             col.set_sort_column_id(col_idx)
@@ -1164,7 +1176,7 @@ class FilmProfilingAppWindow(Gtk.Window):
         if page == 0:
             if not self.current_pixbuf_target:
                 return
-            alloc = self.target_box.get_allocation()
+            alloc = self.target_stack.get_allocation()
             max_w = max(100, alloc.width - 30)
             max_h = max(100, alloc.height - 30)
             w = self.current_pixbuf_target.get_width()
@@ -1179,7 +1191,7 @@ class FilmProfilingAppWindow(Gtk.Window):
         else:
             if not self.current_pixbuf_base:
                 return
-            alloc = self.base_box.get_allocation()
+            alloc = self.base_stack.get_allocation()
             max_w = max(100, alloc.width - 30)
             max_h = max(100, alloc.height - 30)
             w = self.current_pixbuf_base.get_width()
@@ -1420,7 +1432,7 @@ class FilmProfilingAppWindow(Gtk.Window):
         results = []
         # Print header matching read_it8.py output format
         print("\n=== IT8 Patch Measurements (Crosstalk Corrected & Linear) ===")
-        print("patch r g b")
+        print("patch r g b r_std g_std b_std")
         for patch, (bx, by, bw, bh) in sorted(boxes.items()):
             px1, py1 = int(bx * w), int(by * h)
             px2, py2 = int((bx + bw) * w), int((by + bh) * h)
@@ -1432,19 +1444,23 @@ class FilmProfilingAppWindow(Gtk.Window):
             
             patch_img = self.arr_cc_target[py1:py2, px1:px2]
             if patch_img.size > 0:
-                # Use median for accuracy as implemented in read_it8.py
-                r = np.median(patch_img[:, :, 0])
-                g = np.median(patch_img[:, :, 1])
-                b = np.median(patch_img[:, :, 2])
+                # Use average (mean) of each cell as requested
+                r = np.mean(patch_img[:, :, 0])
+                g = np.mean(patch_img[:, :, 1])
+                b = np.mean(patch_img[:, :, 2])
+                r_std = np.std(patch_img[:, :, 0])
+                g_std = np.std(patch_img[:, :, 1])
+                b_std = np.std(patch_img[:, :, 2])
             else:
                 r, g, b = 0.0, 0.0, 0.0
+                r_std, g_std, b_std = 0.0, 0.0, 0.0
             
             r_int = int(round(r))
             g_int = int(round(g))
             b_int = int(round(b))
-            self.it8_store.append([patch, r_int, g_int, b_int])
+            self.it8_store.append([patch, r_int, g_int, b_int, float(r_std), float(g_std), float(b_std)])
             
-            val_str = f"{patch} {r_int} {g_int} {b_int}"
+            val_str = f"{patch} {r_int} {g_int} {b_int} {r_std:.2f} {g_std:.2f} {b_std:.2f}"
             results.append(val_str)
             print(val_str)
         print("=============================================================")
@@ -1474,7 +1490,7 @@ class FilmProfilingAppWindow(Gtk.Window):
         text_view.set_editable(False)
         text_view.set_monospace(True)
         buffer = text_view.get_buffer()
-        buffer.set_text("patch r g b\n" + "\n".join(results))
+        buffer.set_text("patch r g b r_std g_std b_std\n" + "\n".join(results))
         scroll.add(text_view)
 
         dialog.show_all()
