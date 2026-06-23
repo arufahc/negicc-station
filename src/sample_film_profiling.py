@@ -907,7 +907,7 @@ class FilmProfilingAppWindow(Gtk.Window):
 
                 GLib.idle_add(self.status_lbl.set_text, f"Status: Capturing final image at {optimal_speed}...")
                 num, den = parse_shutter_speed(optimal_speed)
-                img = session.capture(type=0, shutter_num=num, shutter_den=den, iso=iso)
+                img = session.capture(type=0, shutter_num=num, shutter_den=den)
                 
                 # Get uncorrected linear RAW
                 arr_raw = img.to_numpy(half=True)
