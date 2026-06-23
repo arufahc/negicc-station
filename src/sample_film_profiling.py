@@ -249,6 +249,12 @@ class FilmProfilingAppWindow(Gtk.Window):
         self.is_connected = False
         self.is_connecting = False
 
+        # IT8 mask parameters
+        self.it8_mask_active = False
+        self.it8_scale = 1.0
+        self.it8_dx = 0.0
+        self.it8_dy = 0.0
+
         # Target (IT8) tab state
         self.arr_raw_target = None
         self.arr_cc_target = None
@@ -420,6 +426,18 @@ class FilmProfilingAppWindow(Gtk.Window):
         self.btn_crop_target.connect("clicked", lambda w: self.crop_active_tab())
         target_tb.pack_start(self.btn_crop_target, False, False, 0)
 
+        self.btn_layer_it8 = Gtk.Button(label="Layer IT8 Mask")
+        self.btn_layer_it8.get_style_context().add_class("tool-btn")
+        self.btn_layer_it8.set_sensitive(False)
+        self.btn_layer_it8.connect("clicked", self.on_layer_it8_clicked)
+        target_tb.pack_start(self.btn_layer_it8, False, False, 0)
+
+        self.btn_read_it8 = Gtk.Button(label="Read Mask Values")
+        self.btn_read_it8.get_style_context().add_class("tool-btn")
+        self.btn_read_it8.set_sensitive(False)
+        self.btn_read_it8.connect("clicked", lambda w: self.read_it8_values())
+        target_tb.pack_start(self.btn_read_it8, False, False, 0)
+
         self.target_stack = Gtk.Stack()
         self.target_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
         self.target_stack.set_transition_duration(150)
@@ -448,7 +466,9 @@ class FilmProfilingAppWindow(Gtk.Window):
         self.target_stack.add_named(self.image_view_target, "preview")
         self.target_stack.set_visible_child_name("placeholder")
 
-        self.notebook.append_page(self.target_box, Gtk.Label(label="Target (IT8)"))
+        self.lbl_target_tab = Gtk.Label(label="Target (IT8)")
+        self.lbl_target_tab.set_use_markup(True)
+        self.notebook.append_page(self.target_box, self.lbl_target_tab)
 
         # Page 2: Film Base Tab
         self.base_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
@@ -597,6 +617,7 @@ class FilmProfilingAppWindow(Gtk.Window):
         # Connect signals after widgets are fully constructed
         self.notebook.connect("switch-page", self.on_notebook_page_changed)
         self.connect("size-allocate", self.on_window_resized)
+        self.connect("key-press-event", self.on_key_press)
 
         # Camera polling initialization
         self.connect_camera()
@@ -956,6 +977,19 @@ class FilmProfilingAppWindow(Gtk.Window):
             cr.stroke()
             cr.set_dash([], 0)
 
+        # Draw IT8 mask grid on Target tab if active
+        if page == 0 and self.it8_mask_active:
+            boxes = self.get_it8_boxes()
+            cr.set_source_rgba(0.0, 1.0, 0.3, 0.85)  # vibrant green
+            cr.set_line_width(1.0)
+            for patch, (bx, by, bw, bh) in boxes.items():
+                px = int(bx * img_w) + x_offset
+                py = int(by * img_h) + y_offset
+                pw = int(bw * img_w)
+                ph = int(bh * img_h)
+                cr.rectangle(px, py, pw, ph)
+                cr.stroke()
+
         return True
 
     # =====================================================================
@@ -1277,6 +1311,167 @@ class FilmProfilingAppWindow(Gtk.Window):
             self.btn_vflip_base.set_sensitive(has_base)
         if hasattr(self, 'btn_crop_base'):
             self.btn_crop_base.set_sensitive(has_base and has_base_selection)
+
+        if hasattr(self, 'btn_layer_it8'):
+            self.btn_layer_it8.set_sensitive(has_target)
+        if hasattr(self, 'btn_read_it8'):
+            self.btn_read_it8.set_sensitive(has_target and self.it8_mask_active)
+
+    def get_it8_boxes(self):
+        # Base dimensions and values matching ../negicc/read_it8.py layout spacing
+        HBASE = 1300.0
+        VBASE = 870.0
+        VSTEP = 53.0
+        HSTEP = 54.0
+        box_size = 18.0
+        a1_x = 77.0
+        a1_y = 79.0
+        gs0_x = 23.0
+        gs0_y = 800.0
+
+        w_box_base = box_size / HBASE
+        h_box_base = box_size / VBASE
+
+        base_boxes = {}
+        base_boxes["a1"] = (a1_x / HBASE, a1_y / VBASE)
+        
+        def add_horizontal_boxes(row, start=2, end=23):
+            for j in range(start, end):
+                left_x, left_y = base_boxes[row + str(j-1)]
+                base_boxes[row + str(j)] = (left_x + HSTEP / HBASE, left_y)
+
+        add_horizontal_boxes('a')
+        
+        for i in range(1, 12):
+            row = chr(ord('a') + i)
+            last_row = chr(ord('a') + (i - 1))
+            last_x, last_y = base_boxes[last_row + '1']
+            base_boxes[row + '1'] = (last_x, last_y + VSTEP / VBASE)
+            add_horizontal_boxes(row)
+
+        base_boxes["gs0"] = (gs0_x / HBASE, gs0_y / VBASE)
+        add_horizontal_boxes('gs', 1, 24)
+
+        # Scale relative to center (0.5, 0.5) and translate
+        scaled_boxes = {}
+        for patch, (bx, by) in base_boxes.items():
+            cx, cy = 0.5, 0.5
+            sx = cx + (bx - cx) * self.it8_scale + self.it8_dx
+            sy = cy + (by - cy) * self.it8_scale + self.it8_dy
+            sw = w_box_base * self.it8_scale
+            sh = h_box_base * self.it8_scale
+            scaled_boxes[patch] = (sx, sy, sw, sh)
+
+        return scaled_boxes
+
+    def on_layer_it8_clicked(self, widget):
+        self.it8_mask_active = not self.it8_mask_active
+        if self.it8_mask_active:
+            self.btn_layer_it8.set_label("Remove IT8 Mask")
+            self.lbl_target_tab.set_markup("<span foreground='#44ff44'><b>Target (IT8) [Masked]</b></span>")
+            self.status_lbl.set_text("Status: IT8 mask active. Use Arrow keys to move, +/- to scale.")
+        else:
+            self.btn_layer_it8.set_label("Layer IT8 Mask")
+            self.lbl_target_tab.set_markup("Target (IT8)")
+            self.status_lbl.set_text("Status: IT8 mask removed.")
+        
+        self.image_view_target.queue_draw()
+        self.update_toolbar_sensitivities()
+
+    def read_it8_values(self):
+        if self.arr_cc_target is None:
+            return
+        
+        boxes = self.get_it8_boxes()
+        h, w, _ = self.arr_cc_target.shape
+        
+        results = []
+        # Print header matching read_it8.py output format
+        print("\n=== IT8 Patch Measurements (Crosstalk Corrected & Linear) ===")
+        print("patch r g b")
+        for patch, (bx, by, bw, bh) in sorted(boxes.items()):
+            px1, py1 = int(bx * w), int(by * h)
+            px2, py2 = int((bx + bw) * w), int((by + bh) * h)
+            
+            px1 = max(0, min(px1, w - 1))
+            px2 = max(0, min(px2, w))
+            py1 = max(0, min(py1, h - 1))
+            py2 = max(0, min(py2, h))
+            
+            patch_img = self.arr_cc_target[py1:py2, px1:px2]
+            if patch_img.size > 0:
+                # Use median for accuracy as implemented in read_it8.py
+                r = np.median(patch_img[:, :, 0])
+                g = np.median(patch_img[:, :, 1])
+                b = np.median(patch_img[:, :, 2])
+            else:
+                r, g, b = 0.0, 0.0, 0.0
+            
+            val_str = f"{patch} {int(round(r))} {int(round(g))} {int(round(b))}"
+            results.append(val_str)
+            print(val_str)
+        print("=============================================================")
+
+        # Show inside a copyable text dialog
+        dialog = Gtk.Dialog(title="IT8 Patch Values", parent=self, flags=0)
+        dialog.add_button(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
+        dialog.set_default_size(450, 500)
+
+        box = dialog.get_content_area()
+        lbl = Gtk.Label()
+        lbl.set_markup("<b>IT8 Patch Values (Crosstalk Corrected & Linear 16-bit):</b>")
+        lbl.set_xalign(0.0)
+        lbl.set_margin_start(10)
+        lbl.set_margin_top(10)
+        box.pack_start(lbl, False, False, 5)
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_margin_start(10)
+        scroll.set_margin_end(10)
+        scroll.set_margin_bottom(10)
+        box.pack_start(scroll, True, True, 5)
+
+        text_view = Gtk.TextView()
+        text_view.set_editable(False)
+        text_view.set_monospace(True)
+        buffer = text_view.get_buffer()
+        buffer.set_text("patch r g b\n" + "\n".join(results))
+        scroll.add(text_view)
+
+        dialog.show_all()
+        dialog.run()
+        dialog.destroy()
+
+    def on_key_press(self, widget, event):
+        if not self.it8_mask_active or self.arr_cc_target is None:
+            return False
+
+        page_num = self.notebook.get_current_page()
+        if page_num != 0:
+            return False
+
+        keyval = event.keyval
+        step_translate = 0.002
+        step_scale = 0.005
+
+        if keyval == Gdk.KEY_Up:
+            self.it8_dy -= step_translate
+        elif keyval == Gdk.KEY_Down:
+            self.it8_dy += step_translate
+        elif keyval == Gdk.KEY_Left:
+            self.it8_dx -= step_translate
+        elif keyval == Gdk.KEY_Right:
+            self.it8_dx += step_translate
+        elif keyval in (Gdk.KEY_plus, Gdk.KEY_equal, Gdk.KEY_KP_Add):
+            self.it8_scale += step_scale
+        elif keyval in (Gdk.KEY_minus, Gdk.KEY_underscore, Gdk.KEY_KP_Subtract):
+            self.it8_scale -= step_scale
+        else:
+            return False
+
+        self.image_view_target.queue_draw()
+        return True
 
     def on_destroy(self, widget):
         if self.camera_session:
