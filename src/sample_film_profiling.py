@@ -1105,8 +1105,6 @@ class FilmProfilingAppWindow(Gtk.Window):
 
     def on_capture_success(self, is_target, raw_bytes, w, h, arr_raw, arr_cc):
         self.spinner.stop()
-        self.set_controls_sensitive(True)
-        self.status_lbl.set_text("Status: Capture successful.")
 
         glib_bytes = GLib.Bytes.new(raw_bytes)
         pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
@@ -1139,12 +1137,13 @@ class FilmProfilingAppWindow(Gtk.Window):
             self.refresh_preview_image(1)
             self.notebook.set_current_page(1)
 
+        self.set_controls_sensitive(self.is_connected)
+        self.status_lbl.set_text("Status: Capture successful.")
         self.update_histograms()
-        self.update_toolbar_sensitivities()
 
     def on_capture_failure(self, err_msg):
         self.spinner.stop()
-        self.set_controls_sensitive(True)
+        self.set_controls_sensitive(self.is_connected)
         self.status_lbl.set_text(f"Status: Capture failed ({err_msg})")
 
         dialog = Gtk.MessageDialog(
