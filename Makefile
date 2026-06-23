@@ -45,7 +45,7 @@ convert_sample: all
 		mkdir -p test_imgs; \
 		cp sample.ARW test_imgs/sample_portra400.ARW && xz -z -f test_imgs/sample_portra400.ARW; \
 	fi
-	./venv/bin/python3 src/build_and_convert.py --profile "profiles/profile_Portra 400_20260623_000121.json" --reference "http://www.colorreference.de/targets/R190808.zip" --raw "sample.ARW" --output "build/sample_converted.tiff"
+	./venv/bin/python3 src/sample_build_and_convert.py --profile "profiles/profile_Portra 400_20260623_000121.json" --reference "http://www.colorreference.de/targets/R190808.zip" --raw "sample.ARW" --output "build/sample_converted.tiff"
 
 clean:
 	rm -rf $(BIN_OUT) negicc_station.egg-info

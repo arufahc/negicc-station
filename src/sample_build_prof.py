@@ -793,16 +793,14 @@ class ProfileBuilderAppWindow(Gtk.Window):
             t_conv_start = time.time()
             
             if should_apply_it8:
-                print("[sample_build_prof] Applying C++ IT8 & Crosstalk Correction...")
-                arr = img.to_numpy(
-                    half=True,
-                    crosstalk_matrix=self.crosstalk_matrix,
-                    it8_profile_path=self.built_clut_icc_path,
-                    output_profile_path="srgb",
-                    profile_film_base=None,
-                    film_base=None,
+                print("[sample_build_prof] Applying dynamic film base scaling and IT8 profile...")
+                arr = film_profiling.convert_raw_image(
+                    img=img,
+                    profile=self.film_profile,
+                    clut_path=self.built_clut_icc_path,
                     exposure_comp=exposure_comp,
-                    post_correction_gamma=gamma_val
+                    post_correction_gamma=gamma_val,
+                    half=True
                 )
             else:
                 print("[sample_build_prof] Fetching raw/uncorrected preview...")

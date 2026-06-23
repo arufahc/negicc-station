@@ -109,11 +109,7 @@ class FilmProfile:
 
         # Film base values
         fb = data.get('film_base', {})
-        fb_r = fb.get('r', {}).get('avg', 0.0)
-        fb_g = fb.get('g', {}).get('avg', 0.0)
-        fb_b = fb.get('b', {}).get('avg', 0.0)
-
-        self.patches = target.get('patches', {})
+        self.normalization_target = data.get('normalization_target', 55000.0)
         self.film_base = {
             'r_avg': fb.get('r', {}).get('avg', 0.0),
             'g_avg': fb.get('g', {}).get('avg', 0.0),
@@ -475,14 +471,15 @@ def build_icc_profile(profile, ref_xyz_path, output_dir,
     exposure_target = t_target * (iso_target / 100.0)
     exposure_ratio = exposure_profile_fb / exposure_target if exposure_target > 0 else 1.0
 
-    # 2. Scale factors to map film base (at target exposure) to 55000.0
+    # 2. Scale factors to map film base (at target exposure) to normalization_target
     fb_r = profile.film_base['r_avg']
     fb_g = profile.film_base['g_avg']
     fb_b = profile.film_base['b_avg']
 
-    scale_r = (55000.0 / fb_r) * exposure_ratio if fb_r > 0 else 1.0
-    scale_g = (55000.0 / fb_g) * exposure_ratio if fb_g > 0 else 1.0
-    scale_b = (55000.0 / fb_b) * exposure_ratio if fb_b > 0 else 1.0
+    target_val = profile.normalization_target
+    scale_r = (target_val / fb_r) * exposure_ratio if fb_r > 0 else 1.0
+    scale_g = (target_val / fb_g) * exposure_ratio if fb_g > 0 else 1.0
+    scale_b = (target_val / fb_b) * exposure_ratio if fb_b > 0 else 1.0
 
     # 3. Create a temporary copy of profile where patches are scaled
     import copy
@@ -495,7 +492,7 @@ def build_icc_profile(profile, ref_xyz_path, output_dir,
         }
 
     df = profile_scaled.build_training_dataframe(ref_xyz_path)
-    log(f"  Loaded {len(df)} patches from profile (scaled to 55000 film base reference).")
+    log(f"  Loaded {len(df)} patches from profile (scaled to {target_val} film base reference).")
 
     # Step 2: Chromatic adaptation
     log("Step 2: Performing chromatic adaptation to D50...")
@@ -960,10 +957,11 @@ def convert_raw_image(img, profile, clut_path, shutter_str=None, exposure_comp=1
     exposure_scan = t_scan * (iso_scan / 100.0)
     exposure_ratio = exposure_profile / exposure_scan if exposure_scan > 0 else 1.0
 
-    # Scale factors to map film base at current exposure to 55000.0
-    scale_r = (55000.0 / fb_r) * exposure_ratio if fb_r > 0 else 1.0
-    scale_g = (55000.0 / fb_g) * exposure_ratio if fb_g > 0 else 1.0
-    scale_b = (55000.0 / fb_b) * exposure_ratio if fb_b > 0 else 1.0
+    # Scale factors to map film base at current exposure to normalization_target
+    target_val = profile.normalization_target
+    scale_r = (target_val / fb_r) * exposure_ratio if fb_r > 0 else 1.0
+    scale_g = (target_val / fb_g) * exposure_ratio if fb_g > 0 else 1.0
+    scale_b = (target_val / fb_b) * exposure_ratio if fb_b > 0 else 1.0
 
     # Merge normalization scale factors into crosstalk matrix on the fly (row-wise!)
     # This applies scaling *after* crosstalk correction: diag(scales) * M
