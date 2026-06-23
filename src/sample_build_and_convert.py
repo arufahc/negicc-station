@@ -144,9 +144,23 @@ def main():
         sc_profile = FilmProfile(temp_json_path)
 
     # 4. Convert RAW to TIFF using C++ to_numpy and save with imageio
-    print(f"Loading RAW image: {raw_path}")
-    if not os.path.exists(raw_path):
-        print(f"Error: Raw file {raw_path} not found.")
+    actual_raw_path = raw_path
+    if actual_raw_path.endswith('.xz'):
+        xz_path = actual_raw_path
+        actual_raw_path = actual_raw_path[:-3]  # Strip '.xz'
+        if not os.path.exists(actual_raw_path) and os.path.exists(xz_path):
+            import subprocess
+            print(f"Decompressing RAW target: {xz_path} -> {actual_raw_path}...")
+            subprocess.run(['xz', '-d', '-k', xz_path], check=True)
+    elif not os.path.exists(actual_raw_path) and os.path.exists(actual_raw_path + '.xz'):
+        xz_path = actual_raw_path + '.xz'
+        import subprocess
+        print(f"Decompressing RAW target: {xz_path} -> {actual_raw_path}...")
+        subprocess.run(['xz', '-d', '-k', xz_path], check=True)
+
+    print(f"Loading RAW image: {actual_raw_path}")
+    if not os.path.exists(actual_raw_path):
+        print(f"Error: Raw file {actual_raw_path} not found.")
         if temp_json_path:
             try:
                 os.remove(temp_json_path)
@@ -159,7 +173,7 @@ def main():
         type=0,  # CAPTURE_SINGLE
         shutter_speed=0.125,  # 1/8s
         iso=100,
-        filepaths=[raw_path]
+        filepaths=[actual_raw_path]
     )
     
     temp_json_file_to_remove = temp_json_path
