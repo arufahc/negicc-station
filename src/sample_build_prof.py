@@ -925,8 +925,8 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Film Profile Builder CLI / GUI")
     parser.add_argument("--profile", type=str, help="Path to a film profile .json file.")
-    parser.add_argument("--reference", type=str, default="http://www.colorreference.de/targets/R190808.zip",
-                        help="URL or local path of the IT8 reference file (.zip or .txt/.it8). Defaults to R190808.zip.")
+    parser.add_argument("--reference", type=str,
+                        help="URL or local path of the IT8 reference file (.zip or .txt/.it8). Required in CLI mode.")
     # Support both boolean flag (--dry-run as switch) and string value for backwards compatibility
     parser.add_argument("--dry-run", nargs='?', const=True, default=False,
                         help="Run in dry-run mode (do not save final ICC files, print errors only). Can optionally specify profile JSON directly.")
@@ -945,6 +945,9 @@ if __name__ == "__main__":
         
     if profile_path:
         ref_location = args.reference
+        if not ref_location:
+            print("Error: --reference file or URL must be specified in CLI mode.")
+            sys.exit(1)
         
         if is_dry_run:
             print(f"=== CLI DRY-RUN BUILD ===")

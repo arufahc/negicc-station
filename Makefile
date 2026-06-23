@@ -31,7 +31,7 @@ test_live: all
 	./venv/bin/python3 tests/test_live_parity.py
 
 profile_gen_dry_run: all
-	./venv/bin/python3 src/sample_build_prof.py --profile "profiles/profile_Portra 400_20260623_000121.json" --dry-run
+	./venv/bin/python3 src/sample_build_prof.py --profile "profiles/profile_Portra 400_20260623_000121.json" --reference "http://www.colorreference.de/targets/R190808.zip" --dry-run
 
 clean:
 	rm -rf $(BIN_OUT) negicc_station.egg-info
