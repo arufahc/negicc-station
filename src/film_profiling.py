@@ -75,8 +75,13 @@ class FilmProfile:
         # Camera name
         self.camera_name = data.get('camera_name', 'Unknown')
 
-        # Crosstalk correction matrix (3x3) - bypassed since linear values are already crosstalk corrected
-        self.crosstalk_matrix = np.eye(3, dtype=np.float64)
+        # Crosstalk correction matrix (3x3)
+        ct_profile = data.get('crosstalk_profile', {})
+        cc_matrix = ct_profile.get('crosstalk_correction_matrix', None)
+        if cc_matrix is not None:
+            self.crosstalk_matrix = np.array(cc_matrix, dtype=np.float64)
+        else:
+            self.crosstalk_matrix = np.eye(3, dtype=np.float64)
 
         # Targets — use first target by default
         targets = data.get('targets', [])
@@ -460,6 +465,8 @@ def build_icc_profile(profile, ref_xyz_path, output_dir,
     color_balance_cell = _find_best_gs_cell(df, r_coef, g_coef, b_coef)
     log(f"  Selected color balance cell: {color_balance_cell}")
 
+    
+    '''
     # Scale G and B coefficients for color balance
     corrected_cb_rgb = crosstalk_correction_mat.dot(
         np.array([df['r'][color_balance_cell],
@@ -471,6 +478,7 @@ def build_icc_profile(profile, ref_xyz_path, output_dir,
         g_coef * corrected_cb_rgb[0] / corrected_cb_rgb[1],
         b_coef * corrected_cb_rgb[0] / corrected_cb_rgb[2]
     ])
+    '''
 
     # Step 5: Estimate TRC curves
     log("Step 5: Estimating TRC curves from grayscale patches...")
@@ -479,6 +487,7 @@ def build_icc_profile(profile, ref_xyz_path, output_dir,
     gs = df.loc[gs_indices]
     gs_rgb = np.array([gs['r'].tolist(), gs['g'].tolist(), gs['b'].tolist()])
 
+    '''
     # Scale the correction matrix by mid-grey scaling
     if mid_grey_patch in df.index:
         mid_grey_rgb = df.loc[mid_grey_patch][['r', 'g', 'b']].to_numpy()
@@ -492,6 +501,7 @@ def build_icc_profile(profile, ref_xyz_path, output_dir,
 
     log(f"  Scale correction matrix by: {global_scale_factor:.6f}")
     crosstalk_correction_mat *= global_scale_factor
+    '''
 
     # Compute corrected grayscale values
     corrected_gs_rgb = np.matmul(crosstalk_correction_mat, gs_rgb)
