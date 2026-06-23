@@ -656,6 +656,80 @@ class FilmProfilingAppWindow(Gtk.Window):
         # Apply custom dark style
         css_provider = Gtk.CssProvider()
         css_provider.load_from_data(b"""
+            /* Global theme rules to override light system themes */
+            window, dialog {
+                background-color: #181818;
+                color: #ffffff;
+            }
+            label {
+                color: #ffffff;
+            }
+            button {
+                background-color: #2e2e2e;
+                color: #ffffff;
+                border: 1px solid #484848;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-weight: bold;
+                text-shadow: none;
+            }
+            button:hover {
+                background-color: #3e3e3e;
+                border-color: #585858;
+            }
+            button:active {
+                background-color: #1e1e1e;
+            }
+            button:disabled {
+                color: #666666;
+                background-color: #1c1c1c;
+                border-color: #2c2c2c;
+            }
+            entry {
+                background-color: #222222;
+                color: #ffffff;
+                border: 1px solid #444444;
+                border-radius: 4px;
+                padding: 6px;
+            }
+            entry:focus {
+                border-color: #2ea44f;
+            }
+            notebook {
+                background-color: #181818;
+                color: #ffffff;
+                border: 1px solid #333333;
+            }
+            notebook tab {
+                background-color: #242424;
+                color: #bbbbbb;
+                padding: 8px 12px;
+                font-weight: bold;
+            }
+            notebook tab:active {
+                background-color: #181818;
+                color: #ffffff;
+                border-bottom: 2px solid #2ea44f;
+            }
+            treeview {
+                background-color: #1e1e1e;
+                color: #ffffff;
+            }
+            treeview header button {
+                background-color: #2a2a2a;
+                color: #ffffff;
+                font-weight: bold;
+            }
+            textview text {
+                background-color: #1e1e1e;
+                color: #ffffff;
+            }
+            scrolledwindow {
+                background-color: #181818;
+                border: 1px solid #333333;
+            }
+
+            /* Custom classes styling */
             .capture-btn {
                 background-image: linear-gradient(to bottom, #2ea44f, #2c974b);
                 color: white;
@@ -664,22 +738,6 @@ class FilmProfilingAppWindow(Gtk.Window):
                 border: 1px solid rgba(27,31,35,0.15);
                 border-radius: 6px;
                 padding: 10px;
-            }
-            .tool-btn {
-                background-color: #2c2c2c;
-                color: #e0e0e0;
-                border: 1px solid #444444;
-                border-radius: 4px;
-                padding: 6px 12px;
-                font-weight: bold;
-            }
-            .tool-btn:hover {
-                background-color: #3d3d3d;
-            }
-            .tool-btn:disabled {
-                color: #666666;
-                background-color: #1e1e1e;
-                border-color: #2a2a2a;
             }
             .capture-btn:hover {
                 background-image: linear-gradient(to bottom, #30bc5a, #2ea44f);
@@ -690,13 +748,29 @@ class FilmProfilingAppWindow(Gtk.Window):
                 color: #888888;
                 border-color: #2c2c2c;
             }
+            .tool-btn {
+                background-color: #2e2e2e;
+                color: #ffffff;
+                border: 1px solid #484848;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: bold;
+            }
+            .tool-btn:hover {
+                background-color: #3e3e3e;
+            }
+            .tool-btn:disabled {
+                color: #666666;
+                background-color: #1c1c1c;
+                border-color: #2c2c2c;
+            }
             .sidebar {
-                background-color: #1e1e1e;
+                background-color: #181818;
                 border-right: 1px solid #333333;
                 padding: 15px;
             }
             .right-sidebar {
-                background-color: #1e1e1e;
+                background-color: #181818;
                 border-left: 1px solid #333333;
                 padding: 15px;
             }
@@ -707,7 +781,7 @@ class FilmProfilingAppWindow(Gtk.Window):
             .meta-label {
                 font-family: monospace;
                 font-size: 11px;
-                color: #b3b3b3;
+                color: #cccccc;
             }
         """)
         Gtk.StyleContext.add_provider_for_screen(
