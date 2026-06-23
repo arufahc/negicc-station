@@ -31,9 +31,10 @@ sudo apt-get update
 # Install build tools and C++ compiler
 sudo apt-get install -y build-essential g++
 
-# Install SDK and image processing dependencies (USB, XML, LibRaw, and LCMS2)
-# and PyGObject GUI system dependencies (GObject Introspection, Cairo, and GTK3)
-sudo apt-get install -y libusb-1.0-0-dev libxml2-dev libraw-dev liblcms2-dev libgirepository1.0-dev libcairo2-dev gir1.2-gtk-3.0
+# Install SDK and image processing dependencies (USB, XML, LibRaw, and LCMS2),
+# PyGObject GUI system dependencies (GObject Introspection, Cairo, and GTK3),
+# and Argyll Color Management System (ArgyllCMS) for film profiling
+sudo apt-get install -y libusb-1.0-0-dev libxml2-dev libraw-dev liblcms2-dev libgirepository1.0-dev libcairo2-dev gir1.2-gtk-3.0 argyll
 
 ```
 

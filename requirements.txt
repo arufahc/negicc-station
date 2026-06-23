@@ -2,3 +2,6 @@ numpy
 pycairo
 PyGObject==3.42.1
 matplotlib
+pandas
+scipy
+scikit-learn

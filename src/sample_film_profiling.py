@@ -174,6 +174,47 @@ def draw_matplotlib_histogram(ax, hists, p2, p98, dr_metrics=None, mean_metrics=
     ax.figure.canvas.draw_idle()
 
 
+class TargetTabState:
+    def __init__(self, index, label_text):
+        self.index = index
+        self.label_text = label_text
+        self.arr_raw = None
+        self.arr_cc = None
+        self.current_pixbuf = None
+        self.scaled_pixbuf = None
+        self.normalized_selection = None
+        self.is_dragging = False
+        self.selection_start = None
+        self.selection_end = None
+        self.img_x_offset = 0
+        self.img_y_offset = 0
+        self.it8_mask_active = False
+        self.it8_scale = 1.0
+        self.it8_dx = 0.0
+        self.it8_dy = 0.0
+        
+        # Exposure Info
+        self.iso = None
+        self.shutter = None
+        
+        # Widgets
+        self.widget_box = None
+        self.image_view = None
+        self.stack = None
+        self.it8_store = None
+        self.it8_treeview = None
+        self.lbl_tab = None
+        self.lbl_exposure_info = None
+        
+        # Toolbar buttons
+        self.btn_rotate = None
+        self.btn_hflip = None
+        self.btn_vflip = None
+        self.btn_crop = None
+        self.btn_layer_it8 = None
+        self.btn_read_it8 = None
+
+
 class FilmProfilingAppWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title="Negative Film Profiling Station")
@@ -249,23 +290,11 @@ class FilmProfilingAppWindow(Gtk.Window):
         self.is_connected = False
         self.is_connecting = False
 
-        # IT8 mask parameters
-        self.it8_mask_active = False
-        self.it8_scale = 1.0
-        self.it8_dx = 0.0
-        self.it8_dy = 0.0
-
-        # Target (IT8) tab state
-        self.arr_raw_target = None
-        self.arr_cc_target = None
-        self.current_pixbuf_target = None
-        self.scaled_pixbuf_target = None
-        self.normalized_selection_target = None
-        self.is_dragging_target = False
-        self.selection_start_target = None
-        self.selection_end_target = None
-        self.img_x_offset_target = 0
-        self.img_y_offset_target = 0
+        # Target tabs and film base state
+        self.target_tabs = []
+        self.base_values = None
+        self.base_iso = None
+        self.base_shutter = None
 
         # Film Base tab state
         self.arr_raw_base = None
@@ -356,7 +385,7 @@ class FilmProfilingAppWindow(Gtk.Window):
         settings_vbox.pack_start(self.ae_checkbox, False, False, 5)
 
         # Actions Panel
-        self.capture_it8_btn = Gtk.Button(label="CAPTURE IT8 TARGET")
+        self.capture_it8_btn = Gtk.Button(label="CAPTURE TARGET")
         self.capture_it8_btn.get_style_context().add_class("capture-btn")
         self.capture_it8_btn.set_sensitive(False)
         self.capture_it8_btn.connect("clicked", self.on_capture_clicked, True)
@@ -377,7 +406,23 @@ class FilmProfilingAppWindow(Gtk.Window):
         self.ae_steps_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
         ae_scroll.add(self.ae_steps_listbox)
         ae_frame.add(ae_scroll)
-        sidebar_box.pack_start(ae_frame, True, True, 5)
+        sidebar_box.pack_start(ae_frame, False, False, 5)
+        # Profile Management Frame
+        mgmt_frame = Gtk.Frame(label="Profile Management")
+        mgmt_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        mgmt_vbox.set_border_width(8)
+        mgmt_frame.add(mgmt_vbox)
+        sidebar_box.pack_start(mgmt_frame, False, False, 5)
+
+        self.save_profile_btn = Gtk.Button(label="SAVE PROFILE")
+        self.save_profile_btn.get_style_context().add_class("tool-btn")
+        self.save_profile_btn.connect("clicked", self.on_save_profile_clicked)
+        mgmt_vbox.pack_start(self.save_profile_btn, False, False, 5)
+
+        self.load_profile_btn_side = Gtk.Button(label="LOAD PROFILE")
+        self.load_profile_btn_side.get_style_context().add_class("tool-btn")
+        self.load_profile_btn_side.connect("clicked", self.on_load_profile_clicked_json)
+        mgmt_vbox.pack_start(self.load_profile_btn_side, False, False, 5)
 
         # Status area
         status_hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -391,121 +436,25 @@ class FilmProfilingAppWindow(Gtk.Window):
         # =====================================================================
         # CENTER NOTEBOOK
         # =====================================================================
+        # =====================================================================
+        # CENTER NOTEBOOK
+        # =====================================================================
         self.notebook = Gtk.Notebook()
+        self.notebook.set_scrollable(True)
         main_box.pack_start(self.notebook, True, True, 0)
 
-        # Page 1: Target (IT8) Tab
-        self.target_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
-        self.target_box.get_style_context().add_class("preview-container")
+        # Create Target 1 dynamically
+        t1 = TargetTabState(1, "Target 1")
+        self.target_tabs.append(t1)
+        t1_widget = self.create_target_tab_widget(t1)
+        t1.lbl_tab = Gtk.Label(label="Target 1")
+        t1.lbl_tab.set_use_markup(True)
+        self.notebook.append_page(t1_widget, t1.lbl_tab)
 
-        # Target Toolbar
-        target_tb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        self.target_box.pack_start(target_tb, False, False, 5)
-
-        self.btn_rotate_target = Gtk.Button(label="Rotate 90°")
-        self.btn_rotate_target.get_style_context().add_class("tool-btn")
-        self.btn_rotate_target.set_sensitive(False)
-        self.btn_rotate_target.connect("clicked", lambda w: self.rotate_active_tab())
-        target_tb.pack_start(self.btn_rotate_target, False, False, 0)
-
-        self.btn_hflip_target = Gtk.Button(label="H-Flip")
-        self.btn_hflip_target.get_style_context().add_class("tool-btn")
-        self.btn_hflip_target.set_sensitive(False)
-        self.btn_hflip_target.connect("clicked", lambda w: self.hflip_active_tab())
-        target_tb.pack_start(self.btn_hflip_target, False, False, 0)
-
-        self.btn_vflip_target = Gtk.Button(label="V-Flip")
-        self.btn_vflip_target.get_style_context().add_class("tool-btn")
-        self.btn_vflip_target.set_sensitive(False)
-        self.btn_vflip_target.connect("clicked", lambda w: self.vflip_active_tab())
-        target_tb.pack_start(self.btn_vflip_target, False, False, 0)
-
-        self.btn_crop_target = Gtk.Button(label="Crop to Selection")
-        self.btn_crop_target.get_style_context().add_class("tool-btn")
-        self.btn_crop_target.set_sensitive(False)
-        self.btn_crop_target.connect("clicked", lambda w: self.crop_active_tab())
-        target_tb.pack_start(self.btn_crop_target, False, False, 0)
-
-        self.btn_layer_it8 = Gtk.Button(label="Layer IT8 Mask")
-        self.btn_layer_it8.get_style_context().add_class("tool-btn")
-        self.btn_layer_it8.set_sensitive(False)
-        self.btn_layer_it8.connect("clicked", self.on_layer_it8_clicked)
-        target_tb.pack_start(self.btn_layer_it8, False, False, 0)
-
-        self.btn_read_it8 = Gtk.Button(label="Read Mask Values")
-        self.btn_read_it8.get_style_context().add_class("tool-btn")
-        self.btn_read_it8.set_sensitive(False)
-        self.btn_read_it8.connect("clicked", lambda w: self.read_it8_values())
-        target_tb.pack_start(self.btn_read_it8, False, False, 0)
-
-        self.target_stack = Gtk.Stack()
-        self.target_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
-        self.target_stack.set_transition_duration(150)
-        self.target_box.pack_start(self.target_stack, True, True, 0)
-
-        target_placeholder = Gtk.Label()
-        target_placeholder.set_markup(
-            "<span size='large' foreground='#777777'>No IT8 Image Captured\n\n"
-            "Please load a crosstalk calibration profile,\nthen click CAPTURE IT8.</span>"
-        )
-        target_placeholder.set_justify(Gtk.Justification.CENTER)
-        self.target_stack.add_named(target_placeholder, "placeholder")
-
-        self.image_view_target = Gtk.DrawingArea()
-        self.image_view_target.set_can_focus(True)
-        self.image_view_target.add_events(
-            Gdk.EventMask.BUTTON_PRESS_MASK |
-            Gdk.EventMask.BUTTON_RELEASE_MASK |
-            Gdk.EventMask.POINTER_MOTION_MASK |
-            Gdk.EventMask.BUTTON_MOTION_MASK
-        )
-        self.image_view_target.connect("draw", self.on_draw_image_view_target)
-        self.image_view_target.connect("button-press-event", self.on_image_button_press_target)
-        self.image_view_target.connect("button-release-event", self.on_image_button_release_target)
-        self.image_view_target.connect("motion-notify-event", self.on_image_motion_notify_target)
-        self.target_stack.add_named(self.image_view_target, "preview")
-        self.target_stack.set_visible_child_name("placeholder")
-
-        # Store model for IT8 patch values: Patch (str), R (int), G (int), B (int), R_std (float), G_std (float), B_std (float)
-        self.it8_store = Gtk.ListStore(str, int, int, int, float, float, float)
-        self.it8_treeview = Gtk.TreeView(model=self.it8_store)
-        
-        # Add columns to TreeView
-        cols = [
-            ("Patch", 0, False),
-            ("R (Linear Avg)", 1, False),
-            ("G (Linear Avg)", 2, False),
-            ("B (Linear Avg)", 3, False),
-            ("R (Std Dev)", 4, True),
-            ("G (Std Dev)", 5, True),
-            ("B (Std Dev)", 6, True)
-        ]
-        for col_title, col_idx, is_float in cols:
-            renderer = Gtk.CellRendererText()
-            if col_idx > 0:
-                renderer.set_property("xalign", 1.0)
-            col = Gtk.TreeViewColumn(col_title, renderer)
-            if is_float:
-                col.set_cell_data_func(renderer, lambda col, cell, model, iter, idx=col_idx: cell.set_property("text", f"{model.get_value(iter, idx):.2f}"))
-            else:
-                col.add_attribute(renderer, "text", col_idx)
-            if col_idx > 0:
-                col.set_alignment(1.0)
-            col.set_sort_column_id(col_idx)
-            self.it8_treeview.append_column(col)
-
-        self.it8_scroll = Gtk.ScrolledWindow()
-        self.it8_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        self.it8_scroll.set_min_content_height(180)
-        self.it8_scroll.add(self.it8_treeview)
-        
-        self.it8_frame = Gtk.Frame(label="Read IT8 Patch Values")
-        self.it8_frame.add(self.it8_scroll)
-        self.target_box.pack_start(self.it8_frame, False, False, 5)
-
-        self.lbl_target_tab = Gtk.Label(label="Target (IT8)")
-        self.lbl_target_tab.set_use_markup(True)
-        self.notebook.append_page(self.target_box, self.lbl_target_tab)
+        # Create the "+" tab page
+        self.plus_box = Gtk.Box()
+        self.lbl_plus_tab = Gtk.Label(label=" + ")
+        self.notebook.append_page(self.plus_box, self.lbl_plus_tab)
 
         # Page 2: Film Base Tab
         self.base_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
@@ -539,6 +488,18 @@ class FilmProfilingAppWindow(Gtk.Window):
         self.btn_crop_base.connect("clicked", lambda w: self.crop_active_tab())
         base_tb.pack_start(self.btn_crop_base, False, False, 0)
 
+        self.btn_read_base = Gtk.Button(label="Read Film Base Values")
+        self.btn_read_base.get_style_context().add_class("tool-btn")
+        self.btn_read_base.set_sensitive(False)
+        self.btn_read_base.connect("clicked", lambda w: self.read_film_base_values())
+        base_tb.pack_start(self.btn_read_base, False, False, 0)
+
+        # Label to display exposure info for Film Base
+        self.lbl_exposure_info_base = Gtk.Label()
+        self.lbl_exposure_info_base.set_xalign(1.0)
+        self.lbl_exposure_info_base.get_style_context().add_class("meta-label")
+        base_tb.pack_end(self.lbl_exposure_info_base, True, True, 10)
+
         self.base_stack = Gtk.Stack()
         self.base_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
         self.base_stack.set_transition_duration(150)
@@ -567,7 +528,36 @@ class FilmProfilingAppWindow(Gtk.Window):
         self.base_stack.add_named(self.image_view_base, "preview")
         self.base_stack.set_visible_child_name("placeholder")
 
-        self.notebook.append_page(self.base_box, Gtk.Label(label="Film Base"))
+        # Table for Film Base values: Channel (str), Avg (float), Std Dev (float)
+        self.base_store = Gtk.ListStore(str, float, float)
+        self.base_treeview = Gtk.TreeView(model=self.base_store)
+        col1 = Gtk.TreeViewColumn("Channel", Gtk.CellRendererText(), text=0)
+
+        col2 = Gtk.TreeViewColumn("Average (Linear)", Gtk.CellRendererText())
+        renderer2 = Gtk.CellRendererText()
+        col2.pack_start(renderer2, True)
+        col2.set_cell_data_func(renderer2, lambda col, cell, model, iter, data=None: cell.set_property("text", f"{model.get_value(iter, 1):.2f}" if model.get_value(iter, 1) is not None else ""))
+
+        col3 = Gtk.TreeViewColumn("Std Dev", Gtk.CellRendererText())
+        renderer3 = Gtk.CellRendererText()
+        col3.pack_start(renderer3, True)
+        col3.set_cell_data_func(renderer3, lambda col, cell, model, iter, data=None: cell.set_property("text", f"{model.get_value(iter, 2):.2f}" if model.get_value(iter, 2) is not None else ""))
+        self.base_treeview.append_column(col1)
+        self.base_treeview.append_column(col2)
+        self.base_treeview.append_column(col3)
+
+        base_scroll = Gtk.ScrolledWindow()
+        base_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        base_scroll.set_min_content_height(140)
+        base_scroll.add(self.base_treeview)
+
+        base_frame_widget = Gtk.Frame(label="Read Film Base Values")
+        base_frame_widget.add(base_scroll)
+        self.base_box.pack_start(base_frame_widget, False, False, 5)
+
+        self.lbl_base_tab = Gtk.Label(label="Film Base")
+        self.lbl_base_tab.set_use_markup(True)
+        self.notebook.append_page(self.base_box, self.lbl_base_tab)
 
         # =====================================================================
         # RIGHT SIDEBAR (Histograms)
@@ -659,6 +649,600 @@ class FilmProfilingAppWindow(Gtk.Window):
         # Camera polling initialization
         self.connect_camera()
         GLib.timeout_add_seconds(2, self.poll_camera_connection)
+
+    # =====================================================================
+    # MULTI-TAB TARGET MANAGEMENT & STATE REDIRECT PROPERTIES
+    # =====================================================================
+    def get_active_target_tab(self):
+        if not hasattr(self, 'target_tabs') or not self.target_tabs:
+            return None
+        page_num = self.notebook.get_current_page()
+        if page_num == -1:
+            return None
+        active_widget = self.notebook.get_nth_page(page_num)
+        for tab in self.target_tabs:
+            if tab.widget_box == active_widget:
+                return tab
+        return None
+
+    @property
+    def arr_raw_target(self):
+        t = self.get_active_target_tab()
+        return t.arr_raw if t else None
+    @arr_raw_target.setter
+    def arr_raw_target(self, val):
+        t = self.get_active_target_tab()
+        if t: t.arr_raw = val
+
+    @property
+    def arr_cc_target(self):
+        t = self.get_active_target_tab()
+        return t.arr_cc if t else None
+    @arr_cc_target.setter
+    def arr_cc_target(self, val):
+        t = self.get_active_target_tab()
+        if t: t.arr_cc = val
+
+    @property
+    def current_pixbuf_target(self):
+        t = self.get_active_target_tab()
+        return t.current_pixbuf if t else None
+    @current_pixbuf_target.setter
+    def current_pixbuf_target(self, val):
+        t = self.get_active_target_tab()
+        if t: t.current_pixbuf = val
+
+    @property
+    def scaled_pixbuf_target(self):
+        t = self.get_active_target_tab()
+        return t.scaled_pixbuf if t else None
+    @scaled_pixbuf_target.setter
+    def scaled_pixbuf_target(self, val):
+        t = self.get_active_target_tab()
+        if t: t.scaled_pixbuf = val
+
+    @property
+    def normalized_selection_target(self):
+        t = self.get_active_target_tab()
+        return t.normalized_selection if t else None
+    @normalized_selection_target.setter
+    def normalized_selection_target(self, val):
+        t = self.get_active_target_tab()
+        if t: t.normalized_selection = val
+
+    @property
+    def is_dragging_target(self):
+        t = self.get_active_target_tab()
+        return t.is_dragging if t else False
+    @is_dragging_target.setter
+    def is_dragging_target(self, val):
+        t = self.get_active_target_tab()
+        if t: t.is_dragging = val
+
+    @property
+    def selection_start_target(self):
+        t = self.get_active_target_tab()
+        return t.selection_start if t else None
+    @selection_start_target.setter
+    def selection_start_target(self, val):
+        t = self.get_active_target_tab()
+        if t: t.selection_start = val
+
+    @property
+    def selection_end_target(self):
+        t = self.get_active_target_tab()
+        return t.selection_end if t else None
+    @selection_end_target.setter
+    def selection_end_target(self, val):
+        t = self.get_active_target_tab()
+        if t: t.selection_end = val
+
+    @property
+    def img_x_offset_target(self):
+        t = self.get_active_target_tab()
+        return t.img_x_offset if t else 0
+    @img_x_offset_target.setter
+    def img_x_offset_target(self, val):
+        t = self.get_active_target_tab()
+        if t: t.img_x_offset = val
+
+    @property
+    def img_y_offset_target(self):
+        t = self.get_active_target_tab()
+        return t.img_y_offset if t else 0
+    @img_y_offset_target.setter
+    def img_y_offset_target(self, val):
+        t = self.get_active_target_tab()
+        if t: t.img_y_offset = val
+
+    @property
+    def it8_mask_active(self):
+        t = self.get_active_target_tab()
+        return t.it8_mask_active if t else False
+    @it8_mask_active.setter
+    def it8_mask_active(self, val):
+        t = self.get_active_target_tab()
+        if t: t.it8_mask_active = val
+
+    @property
+    def it8_scale(self):
+        t = self.get_active_target_tab()
+        return t.it8_scale if t else 1.0
+    @it8_scale.setter
+    def it8_scale(self, val):
+        t = self.get_active_target_tab()
+        if t: t.it8_scale = val
+
+    @property
+    def it8_dx(self):
+        t = self.get_active_target_tab()
+        return t.it8_dx if t else 0.0
+    @it8_dx.setter
+    def it8_dx(self, val):
+        t = self.get_active_target_tab()
+        if t: t.it8_dx = val
+
+    @property
+    def it8_dy(self):
+        t = self.get_active_target_tab()
+        return t.it8_dy if t else 0.0
+    @it8_dy.setter
+    def it8_dy(self, val):
+        t = self.get_active_target_tab()
+        if t: t.it8_dy = val
+
+    @property
+    def it8_store(self):
+        t = self.get_active_target_tab()
+        return t.it8_store if t else None
+
+    @property
+    def btn_rotate_target(self):
+        t = self.get_active_target_tab()
+        return t.btn_rotate if t else None
+
+    @property
+    def btn_hflip_target(self):
+        t = self.get_active_target_tab()
+        return t.btn_hflip if t else None
+
+    @property
+    def btn_vflip_target(self):
+        t = self.get_active_target_tab()
+        return t.btn_vflip if t else None
+
+    @property
+    def btn_crop_target(self):
+        t = self.get_active_target_tab()
+        return t.btn_crop if t else None
+
+    @property
+    def btn_layer_it8(self):
+        t = self.get_active_target_tab()
+        return t.btn_layer_it8 if t else None
+
+    @property
+    def btn_read_it8(self):
+        t = self.get_active_target_tab()
+        return t.btn_read_it8 if t else None
+
+    @property
+    def lbl_target_tab(self):
+        t = self.get_active_target_tab()
+        return t.lbl_tab if t else None
+
+    @property
+    def target_stack(self):
+        t = self.get_active_target_tab()
+        return t.stack if t else None
+
+    @property
+    def image_view_target(self):
+        t = self.get_active_target_tab()
+        return t.image_view if t else None
+
+    def create_target_tab_widget(self, tab_state):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        box.get_style_context().add_class("preview-container")
+
+        # Target Toolbar
+        tb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        box.pack_start(tb, False, False, 5)
+
+        tab_state.btn_rotate = Gtk.Button(label="Rotate 90°")
+        tab_state.btn_rotate.get_style_context().add_class("tool-btn")
+        tab_state.btn_rotate.connect("clicked", lambda w: self.rotate_active_tab())
+        tb.pack_start(tab_state.btn_rotate, False, False, 0)
+
+        tab_state.btn_hflip = Gtk.Button(label="H-Flip")
+        tab_state.btn_hflip.get_style_context().add_class("tool-btn")
+        tab_state.btn_hflip.connect("clicked", lambda w: self.hflip_active_tab())
+        tb.pack_start(tab_state.btn_hflip, False, False, 0)
+
+        tab_state.btn_vflip = Gtk.Button(label="V-Flip")
+        tab_state.btn_vflip.get_style_context().add_class("tool-btn")
+        tab_state.btn_vflip.connect("clicked", lambda w: self.vflip_active_tab())
+        tb.pack_start(tab_state.btn_vflip, False, False, 0)
+
+        tab_state.btn_crop = Gtk.Button(label="Crop to Selection")
+        tab_state.btn_crop.get_style_context().add_class("tool-btn")
+        tab_state.btn_crop.connect("clicked", lambda w: self.crop_active_tab())
+        tb.pack_start(tab_state.btn_crop, False, False, 0)
+
+        tab_state.btn_layer_it8 = Gtk.Button(label="Layer IT8 Mask")
+        tab_state.btn_layer_it8.get_style_context().add_class("tool-btn")
+        tab_state.btn_layer_it8.connect("clicked", self.on_layer_it8_clicked)
+        tb.pack_start(tab_state.btn_layer_it8, False, False, 0)
+
+        tab_state.btn_read_it8 = Gtk.Button(label="Read Mask Values")
+        tab_state.btn_read_it8.get_style_context().add_class("tool-btn")
+        tab_state.btn_read_it8.connect("clicked", lambda w: self.read_it8_values())
+        tb.pack_start(tab_state.btn_read_it8, False, False, 0)
+
+        # Label to display exposure info (ISO and Shutter)
+        tab_state.lbl_exposure_info = Gtk.Label()
+        tab_state.lbl_exposure_info.set_xalign(1.0)
+        tab_state.lbl_exposure_info.get_style_context().add_class("meta-label")
+        tb.pack_end(tab_state.lbl_exposure_info, True, True, 10)
+
+        tab_state.stack = Gtk.Stack()
+        tab_state.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        tab_state.stack.set_transition_duration(150)
+        box.pack_start(tab_state.stack, True, True, 0)
+
+        placeholder = Gtk.Label()
+        placeholder.set_markup(
+            f"<span size='large' foreground='#777777'>No Image Captured for {tab_state.label_text}\n\n"
+            "Please load a crosstalk calibration profile,\nthen click CAPTURE TARGET.</span>"
+        )
+        placeholder.set_justify(Gtk.Justification.CENTER)
+        tab_state.stack.add_named(placeholder, "placeholder")
+
+        tab_state.image_view = Gtk.DrawingArea()
+        tab_state.image_view.set_can_focus(True)
+        tab_state.image_view.add_events(
+            Gdk.EventMask.BUTTON_PRESS_MASK |
+            Gdk.EventMask.BUTTON_RELEASE_MASK |
+            Gdk.EventMask.POINTER_MOTION_MASK |
+            Gdk.EventMask.BUTTON_MOTION_MASK
+        )
+        tab_state.image_view.connect("draw", self.on_draw_image_view_target, tab_state)
+        tab_state.image_view.connect("button-press-event", self.on_image_button_press_target, tab_state)
+        tab_state.image_view.connect("button-release-event", self.on_image_button_release_target, tab_state)
+        tab_state.image_view.connect("motion-notify-event", self.on_image_motion_notify_target, tab_state)
+        tab_state.stack.add_named(tab_state.image_view, "preview")
+        tab_state.stack.set_visible_child_name("placeholder")
+
+        # Table for values
+        tab_state.it8_store = Gtk.ListStore(str, float, float, float, float, float, float)
+        tab_state.it8_treeview = Gtk.TreeView(model=tab_state.it8_store)
+        cols = [
+            ("Patch", 0, False),
+            ("R (Linear Avg)", 1, True),
+            ("G (Linear Avg)", 2, True),
+            ("B (Linear Avg)", 3, True),
+            ("R (Std Dev)", 4, True),
+            ("G (Std Dev)", 5, True),
+            ("B (Std Dev)", 6, True)
+        ]
+        def _make_float_renderer(idx):
+            def _render(col, cell, model, tree_iter, data=None):
+                try:
+                    if tree_iter is None:
+                        cell.set_property("text", "")
+                        return
+                    val = model.get_value(tree_iter, idx)
+                    cell.set_property("text", f"{val:.2f}" if val is not None else "")
+                except Exception:
+                    cell.set_property("text", "")
+            return _render
+
+        for col_title, col_idx, is_float in cols:
+            renderer = Gtk.CellRendererText()
+            if col_idx > 0:
+                renderer.set_property("xalign", 1.0)
+            col = Gtk.TreeViewColumn(col_title, renderer)
+            if is_float:
+                col.set_cell_data_func(renderer, _make_float_renderer(col_idx))
+            else:
+                col.add_attribute(renderer, "text", col_idx)
+            if col_idx > 0:
+                col.set_alignment(1.0)
+            col.set_sort_column_id(col_idx)
+            tab_state.it8_treeview.append_column(col)
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_min_content_height(140)
+        scroll.add(tab_state.it8_treeview)
+
+        frame = Gtk.Frame(label="Read IT8 Patch Values")
+        frame.add(scroll)
+        box.pack_start(frame, False, False, 5)
+
+        tab_state.widget_box = box
+        return box
+
+    def prompt_for_film_stock(self):
+        dialog = Gtk.Dialog(title="Enter Film Stock", parent=self, flags=0)
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_OK, Gtk.ResponseType.OK
+        )
+        dialog.set_default_size(300, 100)
+        
+        box = dialog.get_content_area()
+        lbl = Gtk.Label(label="Enter Film Stock name (e.g. Portra400, Gold200):")
+        lbl.set_margin_start(10)
+        lbl.set_margin_end(10)
+        lbl.set_margin_top(10)
+        box.pack_start(lbl, False, False, 5)
+        
+        entry = Gtk.Entry()
+        entry.set_margin_start(10)
+        entry.set_margin_end(10)
+        entry.set_margin_bottom(10)
+        box.pack_start(entry, True, True, 5)
+        
+        dialog.show_all()
+        response = dialog.run()
+        film_stock = entry.get_text().strip()
+        dialog.destroy()
+        
+        if response == Gtk.ResponseType.OK and film_stock:
+            return film_stock
+        return None
+
+    def on_save_profile_clicked(self, widget):
+        import json
+        if not self.calib:
+            self.status_lbl.set_text("Status: No crosstalk profile loaded.")
+            return
+        
+        if not hasattr(self, 'base_values') or self.base_values is None:
+            dialog = Gtk.MessageDialog(
+                transient_for=self,
+                flags=0,
+                message_type=Gtk.MessageType.WARNING,
+                buttons=Gtk.ButtonsType.OK,
+                text="Missing Film Base"
+            )
+            dialog.format_secondary_text("Please capture and read the Film Base values first.")
+            dialog.run()
+            dialog.destroy()
+            return
+
+        targets_data = []
+        for tab in self.target_tabs:
+            if len(tab.it8_store) > 0:
+                patches = {}
+                for row in tab.it8_store:
+                    patch_name = row[0]
+                    patches[patch_name] = {
+                        "r": row[1],
+                        "g": row[2],
+                        "b": row[3],
+                        "r_std": row[4],
+                        "g_std": row[5],
+                        "b_std": row[6]
+                    }
+                targets_data.append({
+                    "name": tab.label_text,
+                    "iso": tab.iso if tab.iso is not None else 100,
+                    "shutter": tab.shutter if tab.shutter is not None else "1/8s",
+                    "patches": patches
+                })
+
+        if not targets_data:
+            dialog = Gtk.MessageDialog(
+                transient_for=self,
+                flags=0,
+                message_type=Gtk.MessageType.WARNING,
+                buttons=Gtk.ButtonsType.OK,
+                text="Missing Target Data"
+            )
+            dialog.format_secondary_text("Please read mask values for at least one Target tab.")
+            dialog.run()
+            dialog.destroy()
+            return
+
+        film_stock = self.prompt_for_film_stock()
+        if not film_stock:
+            self.status_lbl.set_text("Status: Save canceled.")
+            return
+
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        filename = f"profile_{film_stock}_{timestamp}.json"
+
+        file_dialog = Gtk.FileChooserDialog(
+            title="Save Film Profile JSON",
+            parent=self,
+            action=Gtk.FileChooserAction.SAVE
+        )
+        file_dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_SAVE, Gtk.ResponseType.OK
+        )
+        file_dialog.set_current_name(filename)
+        
+        filter_json = Gtk.FileFilter()
+        filter_json.set_name("JSON files")
+        filter_json.add_mime_type("application/json")
+        filter_json.add_pattern("*.json")
+        file_dialog.add_filter(filter_json)
+
+        response = file_dialog.run()
+        if response == Gtk.ResponseType.OK:
+            filepath = file_dialog.get_filename()
+            try:
+                calib_dict = {
+                    "camera_model": self.calib.camera_model,
+                    "crosstalk_matrix_raw": self.calib.M.tolist() if self.calib.M is not None else None,
+                    "crosstalk_matrix_normalized": self.calib.M_norm.tolist() if self.calib.M_norm is not None else None,
+                    "crosstalk_correction_matrix": self.calib.M_corr.tolist() if self.calib.M_corr is not None else None,
+                    "captured_data": self.calib.captured_data
+                }
+                
+                profile_data = {
+                    "camera_name": self.calib.camera_model,
+                    "crosstalk_profile": calib_dict,
+                    "targets": targets_data,
+                    "film_base": self.base_values
+                }
+                
+                with open(filepath, 'w') as f:
+                    json.dump(profile_data, f, indent=4)
+                
+                self.status_lbl.set_text(f"Status: Profile saved to {os.path.basename(filepath)}")
+            except Exception as e:
+                self.status_lbl.set_text(f"Status: Save failed ({str(e)})")
+        
+        file_dialog.destroy()
+
+    def on_load_profile_clicked_json(self, widget):
+        import json
+        file_dialog = Gtk.FileChooserDialog(
+            title="Load Film Profile JSON",
+            parent=self,
+            action=Gtk.FileChooserAction.OPEN
+        )
+        file_dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_OPEN, Gtk.ResponseType.OK
+        )
+        
+        filter_json = Gtk.FileFilter()
+        filter_json.set_name("JSON files")
+        filter_json.add_mime_type("application/json")
+        filter_json.add_pattern("*.json")
+        file_dialog.add_filter(filter_json)
+
+        response = file_dialog.run()
+        if response == Gtk.ResponseType.OK:
+            filepath = file_dialog.get_filename()
+            try:
+                with open(filepath, 'r') as f:
+                    profile_data = json.load(f)
+                
+                calib_dict = profile_data.get("crosstalk_profile")
+                if calib_dict:
+                    self.calib = crosstalk_calibration.CrosstalkCalibration(
+                        camera_model=calib_dict.get("camera_model"),
+                        M=calib_dict.get("crosstalk_matrix_raw"),
+                        M_norm=calib_dict.get("crosstalk_matrix_normalized"),
+                        M_corr=calib_dict.get("crosstalk_correction_matrix"),
+                        captured_data=calib_dict.get("captured_data")
+                    )
+                    self.lbl_profile_status.set_text(
+                        f"Profile loaded successfully.\nCamera: {self.calib.camera_model}"
+                    )
+                
+                for tab in list(reversed(self.target_tabs)):
+                    pageNum = self.notebook.page_num(tab.widget_box)
+                    if pageNum != -1:
+                        self.notebook.remove_page(pageNum)
+                self.target_tabs = []
+                
+                targets = profile_data.get("targets", [])
+                for i, t_data in enumerate(targets):
+                    tab_name = t_data.get("name", f"Target {i+1}")
+                    t = TargetTabState(i+1, tab_name)
+                    self.target_tabs.append(t)
+                    
+                    t_widget = self.create_target_tab_widget(t)
+                    t.lbl_tab = Gtk.Label(label=tab_name)
+                    t.lbl_tab.set_use_markup(True)
+                    
+                    plus_position = self.notebook.page_num(self.plus_box)
+                    self.notebook.insert_page(t_widget, t.lbl_tab, plus_position)
+                    
+                    t.iso = t_data.get("iso")
+                    t.shutter = t_data.get("shutter")
+                    if t.iso and t.shutter:
+                        t.lbl_exposure_info.set_text(f"Exposure: ISO {t.iso} | {t.shutter}")
+                    
+                    t.it8_store.clear()
+                    patches = t_data.get("patches", {})
+                    for patch_name, p_val in sorted(patches.items()):
+                        r_avg = p_val.get("r", 0.0)
+                        g_avg = p_val.get("g", 0.0)
+                        b_avg = p_val.get("b", 0.0)
+                        r_std = p_val.get("r_std", 0.0)
+                        g_std = p_val.get("g_std", 0.0)
+                        b_std = p_val.get("b_std", 0.0)
+                        t.it8_store.append([patch_name, float(r_avg), float(g_avg), float(b_avg), float(r_std), float(g_std), float(b_std)])
+                    
+                    t.lbl_tab.set_markup(f"<span foreground='#44ff44'><b>{tab_name}</b></span>")
+                
+                film_base = profile_data.get("film_base")
+                if film_base:
+                    self.base_values = film_base
+                    self.base_iso = film_base.get("iso", 100)
+                    self.base_shutter = film_base.get("shutter", "1/8s")
+                    self.lbl_exposure_info_base.set_text(f"Exposure: ISO {self.base_iso} | {self.base_shutter}")
+                    
+                    self.base_store.clear()
+                    self.base_store.append(["Red", float(film_base.get("r", {}).get("avg", 0.0)), float(film_base.get("r", {}).get("std", 0.0))])
+                    self.base_store.append(["Green", float(film_base.get("g", {}).get("avg", 0.0)), float(film_base.get("g", {}).get("std", 0.0))])
+                    self.base_store.append(["Blue", float(film_base.get("b", {}).get("avg", 0.0)), float(film_base.get("b", {}).get("std", 0.0))])
+                    
+                    self.lbl_base_tab.set_markup("<span foreground='#44ff44'><b>Film Base</b></span>")
+                
+                self.notebook.show_all()
+                if self.target_tabs:
+                    self.notebook.set_current_page(0)
+                
+                self.status_lbl.set_text(f"Status: Profile loaded from {os.path.basename(filepath)}")
+                self.set_controls_sensitive(self.is_connected)
+            except Exception as e:
+                self.status_lbl.set_text(f"Status: Load failed ({str(e)})")
+        
+        file_dialog.destroy()
+
+    def read_film_base_values(self):
+        if self.arr_cc_base is None:
+            return
+        
+        arr_raw_crop, arr_cc_crop = self.get_active_crop(self.arr_raw_base, self.arr_cc_base, self.normalized_selection_base)
+        
+        print(f"[DEBUG] read_film_base_values:")
+        print(f"  - Selection coordinates (normalized): {self.normalized_selection_base}")
+        print(f"  - Base image shape: {self.arr_cc_base.shape if self.arr_cc_base is not None else 'None'}")
+        if self.normalized_selection_base is not None:
+            h, w, _ = self.arr_cc_base.shape
+            nx1, ny1, nx2, ny2 = self.normalized_selection_base
+            print(f"  - Pixel bounds: x = [{int(nx1*w)}, {int(nx2*w)}], y = [{int(ny1*h)}, {int(ny2*h)}]")
+        print(f"  - Cropped array shape: {arr_cc_crop.shape}")
+        
+        r_avg = np.mean(arr_cc_crop[:, :, 0])
+        g_avg = np.mean(arr_cc_crop[:, :, 1])
+        b_avg = np.mean(arr_cc_crop[:, :, 2])
+        print(f"  - Crop averages (crosstalk-corrected): R={r_avg:.2f}, G={g_avg:.2f}, B={b_avg:.2f}")
+        
+        r_raw_avg = np.mean(arr_raw_crop[:, :, 0])
+        g_raw_avg = np.mean(arr_raw_crop[:, :, 1])
+        b_raw_avg = np.mean(arr_raw_crop[:, :, 2])
+        print(f"  - Crop averages (raw uncorrected): R={r_raw_avg:.2f}, G={g_raw_avg:.2f}, B={b_raw_avg:.2f}")
+        
+        r_std = np.std(arr_cc_crop[:, :, 0])
+        g_std = np.std(arr_cc_crop[:, :, 1])
+        b_std = np.std(arr_cc_crop[:, :, 2])
+        
+        self.base_store.clear()
+        self.base_store.append(["Red", int(round(r_avg)), float(r_std)])
+        self.base_store.append(["Green", int(round(g_avg)), float(g_std)])
+        self.base_store.append(["Blue", int(round(b_avg)), float(b_std)])
+        
+        self.base_values = {
+            "iso": self.base_iso if self.base_iso is not None else 100,
+            "shutter": self.base_shutter if self.base_shutter is not None else "1/8s",
+            "r": {"avg": float(r_avg), "std": float(r_std)},
+            "g": {"avg": float(g_avg), "std": float(g_std)},
+            "b": {"avg": float(b_avg), "std": float(b_std)}
+        }
+        
+        self.lbl_base_tab.set_markup("<span foreground='#44ff44'><b>Film Base</b></span>")
+        self.status_lbl.set_text("Status: Read film base values.")
 
     # =====================================================================
     # CAMERA CONNECTION LOGIC
@@ -784,12 +1368,13 @@ class FilmProfilingAppWindow(Gtk.Window):
     def update_histograms(self):
         if not hasattr(self, 'right_stack') or self.right_stack is None:
             return
-        page_num = self.notebook.get_current_page()
-        if page_num == 0:
-            arr_raw = self.arr_raw_target
-            arr_cc = self.arr_cc_target
-            selection = self.normalized_selection_target
-            scaled_pixbuf = self.scaled_pixbuf_target
+        
+        active_target = self.get_active_target_tab()
+        if active_target:
+            arr_raw = active_target.arr_raw
+            arr_cc = active_target.arr_cc
+            selection = active_target.normalized_selection
+            scaled_pixbuf = active_target.scaled_pixbuf
         else:
             arr_raw = self.arr_raw_base
             arr_cc = self.arr_cc_base
@@ -837,62 +1422,81 @@ class FilmProfilingAppWindow(Gtk.Window):
         self.cc_canvas.draw_idle()
 
     def on_notebook_page_changed(self, notebook, page, page_num):
+        if page == self.plus_box:
+            # Add a new target tab dynamically
+            new_idx = len(self.target_tabs) + 1
+            tab_name = f"Target {new_idx}"
+            t = TargetTabState(new_idx, tab_name)
+            self.target_tabs.append(t)
+            
+            t_widget = self.create_target_tab_widget(t)
+            t.lbl_tab = Gtk.Label(label=tab_name)
+            t.lbl_tab.set_use_markup(True)
+            
+            plus_position = self.notebook.page_num(self.plus_box)
+            self.notebook.insert_page(t_widget, t.lbl_tab, plus_position)
+            self.notebook.show_all()
+            # Defer the switch: set_current_page inside the page-changed handler
+            # has no effect because GTK is mid-signal. idle_add runs it after.
+            new_page_idx = plus_position  # new tab sits here; + shifted to +1
+            GLib.idle_add(self.notebook.set_current_page, new_page_idx)
+            return
+
         self.update_histograms()
+        self.update_toolbar_sensitivities()
 
     # Target event wrappers
-    def on_draw_image_view_target(self, widget, cr):
-        return self.draw_image_preview(cr, self.scaled_pixbuf_target, self.is_dragging_target, 
-                                       self.selection_start_target, self.selection_end_target,
-                                       self.normalized_selection_target, 0)
+    def on_draw_image_view_target(self, widget, cr, tab_state):
+        return self.draw_image_preview_for_tab(cr, tab_state)
 
-    def on_image_button_press_target(self, widget, event):
-        if not self.scaled_pixbuf_target:
+    def on_image_button_press_target(self, widget, event, tab_state):
+        if not tab_state.scaled_pixbuf:
             return False
         if event.button == 1:
-            img_w = self.scaled_pixbuf_target.get_width()
-            img_h = self.scaled_pixbuf_target.get_height()
-            x = max(self.img_x_offset_target, min(event.x, self.img_x_offset_target + img_w))
-            y = max(self.img_y_offset_target, min(event.y, self.img_y_offset_target + img_h))
-            self.is_dragging_target = True
-            self.selection_start_target = (x, y)
-            self.selection_end_target = (x, y)
+            img_w = tab_state.scaled_pixbuf.get_width()
+            img_h = tab_state.scaled_pixbuf.get_height()
+            x = max(tab_state.img_x_offset, min(event.x, tab_state.img_x_offset + img_w))
+            y = max(tab_state.img_y_offset, min(event.y, tab_state.img_y_offset + img_h))
+            tab_state.is_dragging = True
+            tab_state.selection_start = (x, y)
+            tab_state.selection_end = (x, y)
             widget.queue_draw()
             return True
         return False
 
-    def on_image_motion_notify_target(self, widget, event):
-        if self.is_dragging_target and self.selection_start_target:
-            img_w = self.scaled_pixbuf_target.get_width()
-            img_h = self.scaled_pixbuf_target.get_height()
-            x = max(self.img_x_offset_target, min(event.x, self.img_x_offset_target + img_w))
-            y = max(self.img_y_offset_target, min(event.y, self.img_y_offset_target + img_h))
-            self.selection_end_target = (x, y)
+    def on_image_motion_notify_target(self, widget, event, tab_state):
+        if tab_state.is_dragging and tab_state.selection_start:
+            img_w = tab_state.scaled_pixbuf.get_width()
+            img_h = tab_state.scaled_pixbuf.get_height()
+            x = max(tab_state.img_x_offset, min(event.x, tab_state.img_x_offset + img_w))
+            y = max(tab_state.img_y_offset, min(event.y, tab_state.img_y_offset + img_h))
+            tab_state.selection_end = (x, y)
             widget.queue_draw()
             return True
         return False
 
-    def on_image_button_release_target(self, widget, event):
-        if event.button == 1 and self.is_dragging_target:
-            self.is_dragging_target = False
-            if self.selection_start_target and self.selection_end_target:
-                x1, y1 = self.selection_start_target
-                x2, y2 = self.selection_end_target
+    def on_image_button_release_target(self, widget, event, tab_state):
+        if event.button == 1 and tab_state.is_dragging:
+            tab_state.is_dragging = False
+            if tab_state.selection_start and tab_state.selection_end:
+                x1, y1 = tab_state.selection_start
+                x2, y2 = tab_state.selection_end
                 if abs(x2 - x1) > 5 and abs(y2 - y1) > 5:
-                    img_w = self.scaled_pixbuf_target.get_width()
-                    img_h = self.scaled_pixbuf_target.get_height()
-                    img_x1 = max(0, min(x1, x2) - self.img_x_offset_target)
-                    img_x2 = min(img_w, max(x1, x2) - self.img_x_offset_target)
-                    img_y1 = max(0, min(y1, y2) - self.img_y_offset_target)
-                    img_y2 = min(img_h, max(y1, y2) - self.img_y_offset_target)
+                    img_w = tab_state.scaled_pixbuf.get_width()
+                    img_h = tab_state.scaled_pixbuf.get_height()
+                    img_x1 = max(0, min(x1, x2) - tab_state.img_x_offset)
+                    img_x2 = min(img_w, max(x1, x2) - tab_state.img_x_offset)
+                    img_y1 = max(0, min(y1, y2) - tab_state.img_y_offset)
+                    img_y2 = min(img_h, max(y1, y2) - tab_state.img_y_offset)
 
-                    self.normalized_selection_target = (
+                    tab_state.normalized_selection = (
                         img_x1 / img_w,
                         img_y1 / img_h,
                         img_x2 / img_w,
                         img_y2 / img_h
                     )
                 else:
-                    self.normalized_selection_target = None
+                    tab_state.normalized_selection = None
                 self.update_histograms()
                 self.update_toolbar_sensitivities()
             widget.queue_draw()
@@ -901,9 +1505,56 @@ class FilmProfilingAppWindow(Gtk.Window):
 
     # Film base event wrappers
     def on_draw_image_view_base(self, widget, cr):
-        return self.draw_image_preview(cr, self.scaled_pixbuf_base, self.is_dragging_base, 
-                                       self.selection_start_base, self.selection_end_base,
-                                       self.normalized_selection_base, 1)
+        if not self.scaled_pixbuf_base:
+            return False
+
+        alloc = self.image_view_base.get_allocation()
+        img_w = self.scaled_pixbuf_base.get_width()
+        img_h = self.scaled_pixbuf_base.get_height()
+
+        x_offset = max(0, (alloc.width - img_w) // 2)
+        y_offset = max(0, (alloc.height - img_h) // 2)
+
+        self.img_x_offset_base = x_offset
+        self.img_y_offset_base = y_offset
+
+        Gdk.cairo_set_source_pixbuf(cr, self.scaled_pixbuf_base, x_offset, y_offset)
+        cr.paint()
+
+        if self.is_dragging_base and self.selection_start_base and self.selection_end_base:
+            x1, y1 = self.selection_start_base
+            x2, y2 = self.selection_end_base
+            x_min, x_max = min(x1, x2), max(x1, x2)
+            y_min, y_max = min(y1, y2), max(y1, y2)
+
+            cr.set_source_rgba(0.2, 0.6, 1.0, 0.15)
+            cr.rectangle(x_min, y_min, x_max - x_min, y_max - y_min)
+            cr.fill_preserve()
+
+            cr.set_source_rgba(0.2, 0.6, 1.0, 0.8)
+            cr.set_line_width(1.5)
+            cr.set_dash([4.0, 4.0], 0)
+            cr.stroke()
+            cr.set_dash([], 0)
+
+        elif self.normalized_selection_base is not None:
+            nx1, ny1, nx2, ny2 = self.normalized_selection_base
+            x_min = int(nx1 * img_w) + x_offset
+            y_min = int(ny1 * img_h) + y_offset
+            x_max = int(nx2 * img_w) + x_offset
+            y_max = int(ny2 * img_h) + y_offset
+
+            cr.set_source_rgba(0.2, 0.6, 1.0, 0.15)
+            cr.rectangle(x_min, y_min, x_max - x_min, y_max - y_min)
+            cr.fill_preserve()
+
+            cr.set_source_rgba(0.2, 0.6, 1.0, 0.8)
+            cr.set_line_width(1.5)
+            cr.set_dash([4.0, 4.0], 0)
+            cr.stroke()
+            cr.set_dash([], 0)
+
+        return True
 
     def on_image_button_press_base(self, widget, event):
         if not self.scaled_pixbuf_base:
@@ -959,31 +1610,27 @@ class FilmProfilingAppWindow(Gtk.Window):
             return True
         return False
 
-    def draw_image_preview(self, cr, scaled_pixbuf, is_dragging, selection_start, selection_end, normalized_selection, page):
-        if not scaled_pixbuf:
+    def draw_image_preview_for_tab(self, cr, tab_state):
+        if not tab_state.scaled_pixbuf:
             return False
 
-        alloc = self.image_view_target.get_allocation() if page == 0 else self.image_view_base.get_allocation()
-        img_w = scaled_pixbuf.get_width()
-        img_h = scaled_pixbuf.get_height()
+        alloc = tab_state.image_view.get_allocation()
+        img_w = tab_state.scaled_pixbuf.get_width()
+        img_h = tab_state.scaled_pixbuf.get_height()
 
         x_offset = max(0, (alloc.width - img_w) // 2)
         y_offset = max(0, (alloc.height - img_h) // 2)
 
-        if page == 0:
-            self.img_x_offset_target = x_offset
-            self.img_y_offset_target = y_offset
-        else:
-            self.img_x_offset_base = x_offset
-            self.img_y_offset_base = y_offset
+        tab_state.img_x_offset = x_offset
+        tab_state.img_y_offset = y_offset
 
-        Gdk.cairo_set_source_pixbuf(cr, scaled_pixbuf, x_offset, y_offset)
+        Gdk.cairo_set_source_pixbuf(cr, tab_state.scaled_pixbuf, x_offset, y_offset)
         cr.paint()
 
         # Draw selection border
-        if is_dragging and selection_start and selection_end:
-            x1, y1 = selection_start
-            x2, y2 = selection_end
+        if tab_state.is_dragging and tab_state.selection_start and tab_state.selection_end:
+            x1, y1 = tab_state.selection_start
+            x2, y2 = tab_state.selection_end
             x_min, x_max = min(x1, x2), max(x1, x2)
             y_min, y_max = min(y1, y2), max(y1, y2)
 
@@ -997,8 +1644,8 @@ class FilmProfilingAppWindow(Gtk.Window):
             cr.stroke()
             cr.set_dash([], 0)
 
-        elif normalized_selection is not None:
-            nx1, ny1, nx2, ny2 = normalized_selection
+        elif tab_state.normalized_selection is not None:
+            nx1, ny1, nx2, ny2 = tab_state.normalized_selection
             x_min = int(nx1 * img_w) + x_offset
             y_min = int(ny1 * img_h) + y_offset
             x_max = int(nx2 * img_w) + x_offset
@@ -1015,8 +1662,8 @@ class FilmProfilingAppWindow(Gtk.Window):
             cr.set_dash([], 0)
 
         # Draw IT8 mask grid on Target tab if active
-        if page == 0 and self.it8_mask_active:
-            boxes = self.get_it8_boxes()
+        if tab_state.it8_mask_active:
+            boxes = self.get_it8_boxes_for_tab(tab_state)
             cr.set_source_rgba(0.0, 1.0, 0.3, 0.85)  # vibrant green
             cr.set_line_width(1.0)
             for patch, (bx, by, bw, bh) in boxes.items():
@@ -1055,6 +1702,11 @@ class FilmProfilingAppWindow(Gtk.Window):
     def on_capture_clicked(self, widget, is_target):
         if not self.is_connected or self.camera_session is None:
             self.status_lbl.set_text("Status: Camera not connected.")
+            return
+
+        active_target = self.get_active_target_tab()
+        if is_target and not active_target:
+            self.status_lbl.set_text("Status: No active Target tab selected.")
             return
 
         self.set_controls_sensitive(False)
@@ -1098,16 +1750,22 @@ class FilmProfilingAppWindow(Gtk.Window):
                 arr_raw = img.to_numpy(half=True)
                 img.discard()
 
-                # Correct crosstalk using loaded profile
+                # Correct crosstalk using loaded profile in 32-bit float space
                 GLib.idle_add(self.status_lbl.set_text, "Status: Correcting crosstalk...")
-                arr_cc = self.calib.apply(arr_raw)
+                arr_cc = self.calib.apply(arr_raw.astype(np.float32)).astype(np.float32)
 
                 # Format to 8-bit preview bytes
-                arr_8bit = (arr_cc >> 8).astype(np.uint8)
+                arr_8bit = np.clip(arr_cc / 256.0, 0, 255).astype(np.uint8)
                 raw_bytes = arr_8bit.tobytes()
                 h, w, c = arr_cc.shape
 
-                GLib.idle_add(self.on_capture_success, is_target, raw_bytes, w, h, arr_raw, arr_cc)
+                exposure_info = {
+                    "iso": iso,
+                    "shutter": optimal_speed
+                }
+
+                target_tab_or_base = active_target if is_target else "base"
+                GLib.idle_add(self.on_capture_success, target_tab_or_base, raw_bytes, w, h, arr_raw, arr_cc, exposure_info)
             except Exception as e:
                 GLib.idle_add(self.on_capture_failure, str(e))
 
@@ -1115,7 +1773,7 @@ class FilmProfilingAppWindow(Gtk.Window):
         t.daemon = True
         t.start()
 
-    def on_capture_success(self, is_target, raw_bytes, w, h, arr_raw, arr_cc):
+    def on_capture_success(self, target_tab_or_base, raw_bytes, w, h, arr_raw, arr_cc, exposure_info):
         self.spinner.stop()
 
         glib_bytes = GLib.Bytes.new(raw_bytes)
@@ -1129,25 +1787,38 @@ class FilmProfilingAppWindow(Gtk.Window):
             w * 3
         )
 
-        if is_target:
-            self.arr_raw_target = arr_raw
-            self.arr_cc_target = arr_cc
-            self.current_pixbuf_target = pixbuf
-            self.target_stack.set_visible_child_name("preview")
-            self.refresh_preview_image(0)
-            self.notebook.set_current_page(0)
+        if isinstance(target_tab_or_base, TargetTabState):
+            target_tab_or_base.arr_raw = arr_raw
+            target_tab_or_base.arr_cc = arr_cc
+            target_tab_or_base.current_pixbuf = pixbuf
+            target_tab_or_base.stack.set_visible_child_name("preview")
+            
+            target_tab_or_base.iso = exposure_info["iso"]
+            target_tab_or_base.shutter = exposure_info["shutter"]
+            target_tab_or_base.lbl_exposure_info.set_text(f"Exposure: ISO {target_tab_or_base.iso} | {target_tab_or_base.shutter}")
+            
+            self.refresh_preview_image(target_tab_or_base)
+            pageNum = self.notebook.page_num(target_tab_or_base.widget_box)
+            self.notebook.set_current_page(pageNum)
+            
             # Reset IT8 mask active status and tab label/table values
-            self.it8_mask_active = False
-            self.btn_layer_it8.set_label("Layer IT8 Mask")
-            self.lbl_target_tab.set_markup("Target (IT8)")
-            self.it8_store.clear()
+            target_tab_or_base.it8_mask_active = False
+            target_tab_or_base.btn_layer_it8.set_label("Layer IT8 Mask")
+            target_tab_or_base.lbl_tab.set_markup(target_tab_or_base.label_text)
+            target_tab_or_base.it8_store.clear()
         else:
             self.arr_raw_base = arr_raw
             self.arr_cc_base = arr_cc
             self.current_pixbuf_base = pixbuf
             self.base_stack.set_visible_child_name("preview")
-            self.refresh_preview_image(1)
-            self.notebook.set_current_page(1)
+            
+            self.base_iso = exposure_info["iso"]
+            self.base_shutter = exposure_info["shutter"]
+            self.lbl_exposure_info_base.set_text(f"Exposure: ISO {self.base_iso} | {self.base_shutter}")
+            
+            self.refresh_preview_image("base")
+            pageNum = self.notebook.page_num(self.base_box)
+            self.notebook.set_current_page(pageNum)
 
         self.set_controls_sensitive(self.is_connected)
         self.status_lbl.set_text("Status: Capture successful.")
@@ -1172,22 +1843,23 @@ class FilmProfilingAppWindow(Gtk.Window):
     # =====================================================================
     # LAYOUT AND SIZING
     # =====================================================================
-    def refresh_preview_image(self, page):
-        if page == 0:
-            if not self.current_pixbuf_target:
+    def refresh_preview_image(self, target_tab_or_base):
+        if isinstance(target_tab_or_base, TargetTabState):
+            t = target_tab_or_base
+            if not t.current_pixbuf:
                 return
-            alloc = self.target_stack.get_allocation()
+            alloc = t.stack.get_allocation()
             max_w = max(100, alloc.width - 30)
             max_h = max(100, alloc.height - 30)
-            w = self.current_pixbuf_target.get_width()
-            h = self.current_pixbuf_target.get_height()
+            w = t.current_pixbuf.get_width()
+            h = t.current_pixbuf.get_height()
             scale = min(max_w / w, max_h / h)
             new_w = max(1, int(w * scale))
             new_h = max(1, int(h * scale))
-            self.scaled_pixbuf_target = self.current_pixbuf_target.scale_simple(
+            t.scaled_pixbuf = t.current_pixbuf.scale_simple(
                 new_w, new_h, GdkPixbuf.InterpType.BILINEAR
             )
-            self.image_view_target.queue_draw()
+            t.image_view.queue_draw()
         else:
             if not self.current_pixbuf_base:
                 return
@@ -1205,21 +1877,23 @@ class FilmProfilingAppWindow(Gtk.Window):
             self.image_view_base.queue_draw()
 
     def on_window_resized(self, widget, allocation):
-        if self.current_pixbuf_target:
-            self.refresh_preview_image(0)
+        for tab in self.target_tabs:
+            if tab.current_pixbuf:
+                self.refresh_preview_image(tab)
         if self.current_pixbuf_base:
-            self.refresh_preview_image(1)
+            self.refresh_preview_image("base")
 
-    def update_pixbuf_from_arr(self, page):
-        if page == 0:
-            arr_cc = self.arr_cc_target
+    def update_pixbuf_from_arr(self, target_tab_or_base):
+        if isinstance(target_tab_or_base, TargetTabState):
+            t = target_tab_or_base
+            arr_cc = t.arr_cc
             if arr_cc is None:
-                self.current_pixbuf_target = None
+                t.current_pixbuf = None
                 return
             h, w, c = arr_cc.shape
-            arr_8bit = (arr_cc >> 8).astype(np.uint8)
+            arr_8bit = np.clip(arr_cc / 256.0, 0, 255).astype(np.uint8)
             glib_bytes = GLib.Bytes.new(arr_8bit.tobytes())
-            self.current_pixbuf_target = GdkPixbuf.Pixbuf.new_from_bytes(
+            t.current_pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
                 glib_bytes, GdkPixbuf.Colorspace.RGB, False, 8, w, h, w * 3
             )
         else:
@@ -1228,21 +1902,21 @@ class FilmProfilingAppWindow(Gtk.Window):
                 self.current_pixbuf_base = None
                 return
             h, w, c = arr_cc.shape
-            arr_8bit = (arr_cc >> 8).astype(np.uint8)
+            arr_8bit = np.clip(arr_cc / 256.0, 0, 255).astype(np.uint8)
             glib_bytes = GLib.Bytes.new(arr_8bit.tobytes())
             self.current_pixbuf_base = GdkPixbuf.Pixbuf.new_from_bytes(
                 glib_bytes, GdkPixbuf.Colorspace.RGB, False, 8, w, h, w * 3
             )
 
     def rotate_active_tab(self):
-        page_num = self.notebook.get_current_page()
-        if page_num == 0:
-            if self.arr_cc_target is not None:
-                self.arr_raw_target = np.rot90(self.arr_raw_target, k=-1)
-                self.arr_cc_target = np.rot90(self.arr_cc_target, k=-1)
-                self.normalized_selection_target = None
-                self.update_pixbuf_from_arr(0)
-                self.refresh_preview_image(0)
+        active_target = self.get_active_target_tab()
+        if active_target:
+            if active_target.arr_cc is not None:
+                active_target.arr_raw = np.rot90(active_target.arr_raw, k=-1)
+                active_target.arr_cc = np.rot90(active_target.arr_cc, k=-1)
+                active_target.normalized_selection = None
+                self.update_pixbuf_from_arr(active_target)
+                self.refresh_preview_image(active_target)
                 self.update_histograms()
                 self.update_toolbar_sensitivities()
         else:
@@ -1250,20 +1924,20 @@ class FilmProfilingAppWindow(Gtk.Window):
                 self.arr_raw_base = np.rot90(self.arr_raw_base, k=-1)
                 self.arr_cc_base = np.rot90(self.arr_cc_base, k=-1)
                 self.normalized_selection_base = None
-                self.update_pixbuf_from_arr(1)
-                self.refresh_preview_image(1)
+                self.update_pixbuf_from_arr("base")
+                self.refresh_preview_image("base")
                 self.update_histograms()
                 self.update_toolbar_sensitivities()
 
     def hflip_active_tab(self):
-        page_num = self.notebook.get_current_page()
-        if page_num == 0:
-            if self.arr_cc_target is not None:
-                self.arr_raw_target = np.fliplr(self.arr_raw_target)
-                self.arr_cc_target = np.fliplr(self.arr_cc_target)
-                self.normalized_selection_target = None
-                self.update_pixbuf_from_arr(0)
-                self.refresh_preview_image(0)
+        active_target = self.get_active_target_tab()
+        if active_target:
+            if active_target.arr_cc is not None:
+                active_target.arr_raw = np.fliplr(active_target.arr_raw)
+                active_target.arr_cc = np.fliplr(active_target.arr_cc)
+                active_target.normalized_selection = None
+                self.update_pixbuf_from_arr(active_target)
+                self.refresh_preview_image(active_target)
                 self.update_histograms()
                 self.update_toolbar_sensitivities()
         else:
@@ -1271,20 +1945,20 @@ class FilmProfilingAppWindow(Gtk.Window):
                 self.arr_raw_base = np.fliplr(self.arr_raw_base)
                 self.arr_cc_base = np.fliplr(self.arr_cc_base)
                 self.normalized_selection_base = None
-                self.update_pixbuf_from_arr(1)
-                self.refresh_preview_image(1)
+                self.update_pixbuf_from_arr("base")
+                self.refresh_preview_image("base")
                 self.update_histograms()
                 self.update_toolbar_sensitivities()
 
     def vflip_active_tab(self):
-        page_num = self.notebook.get_current_page()
-        if page_num == 0:
-            if self.arr_cc_target is not None:
-                self.arr_raw_target = np.flipud(self.arr_raw_target)
-                self.arr_cc_target = np.flipud(self.arr_cc_target)
-                self.normalized_selection_target = None
-                self.update_pixbuf_from_arr(0)
-                self.refresh_preview_image(0)
+        active_target = self.get_active_target_tab()
+        if active_target:
+            if active_target.arr_cc is not None:
+                active_target.arr_raw = np.flipud(active_target.arr_raw)
+                active_target.arr_cc = np.flipud(active_target.arr_cc)
+                active_target.normalized_selection = None
+                self.update_pixbuf_from_arr(active_target)
+                self.refresh_preview_image(active_target)
                 self.update_histograms()
                 self.update_toolbar_sensitivities()
         else:
@@ -1292,25 +1966,25 @@ class FilmProfilingAppWindow(Gtk.Window):
                 self.arr_raw_base = np.flipud(self.arr_raw_base)
                 self.arr_cc_base = np.flipud(self.arr_cc_base)
                 self.normalized_selection_base = None
-                self.update_pixbuf_from_arr(1)
-                self.refresh_preview_image(1)
+                self.update_pixbuf_from_arr("base")
+                self.refresh_preview_image("base")
                 self.update_histograms()
                 self.update_toolbar_sensitivities()
 
     def crop_active_tab(self):
-        page_num = self.notebook.get_current_page()
-        if page_num == 0:
-            if self.arr_cc_target is not None and self.normalized_selection_target is not None:
-                nx1, ny1, nx2, ny2 = self.normalized_selection_target
-                h, w, _ = self.arr_cc_target.shape
+        active_target = self.get_active_target_tab()
+        if active_target:
+            if active_target.arr_cc is not None and active_target.normalized_selection is not None:
+                nx1, ny1, nx2, ny2 = active_target.normalized_selection
+                h, w, _ = active_target.arr_cc.shape
                 x1, x2 = int(nx1 * w), int(nx2 * w)
                 y1, y2 = int(ny1 * h), int(ny2 * h)
                 if x2 > x1 and y2 > y1:
-                    self.arr_raw_target = self.arr_raw_target[y1:y2, x1:x2]
-                    self.arr_cc_target = self.arr_cc_target[y1:y2, x1:x2]
-                    self.normalized_selection_target = None
-                    self.update_pixbuf_from_arr(0)
-                    self.refresh_preview_image(0)
+                    active_target.arr_raw = active_target.arr_raw[y1:y2, x1:x2]
+                    active_target.arr_cc = active_target.arr_cc[y1:y2, x1:x2]
+                    active_target.normalized_selection = None
+                    self.update_pixbuf_from_arr(active_target)
+                    self.refresh_preview_image(active_target)
                     self.update_histograms()
                     self.update_toolbar_sensitivities()
         else:
@@ -1323,23 +1997,18 @@ class FilmProfilingAppWindow(Gtk.Window):
                     self.arr_raw_base = self.arr_raw_base[y1:y2, x1:x2]
                     self.arr_cc_base = self.arr_cc_base[y1:y2, x1:x2]
                     self.normalized_selection_base = None
-                    self.update_pixbuf_from_arr(1)
-                    self.refresh_preview_image(1)
+                    self.update_pixbuf_from_arr("base")
+                    self.refresh_preview_image("base")
                     self.update_histograms()
                     self.update_toolbar_sensitivities()
 
     def update_toolbar_sensitivities(self):
-        # Target tab buttons
-        has_target = self.arr_cc_target is not None
-        has_target_selection = self.normalized_selection_target is not None
-        if hasattr(self, 'btn_rotate_target'):
-            self.btn_rotate_target.set_sensitive(has_target)
-        if hasattr(self, 'btn_hflip_target'):
-            self.btn_hflip_target.set_sensitive(has_target)
-        if hasattr(self, 'btn_vflip_target'):
-            self.btn_vflip_target.set_sensitive(has_target)
-        if hasattr(self, 'btn_crop_target'):
-            self.btn_crop_target.set_sensitive(has_target and has_target_selection)
+        active_target = self.get_active_target_tab()
+        has_target = active_target.arr_cc is not None if active_target else False
+        has_target_selection = active_target.normalized_selection is not None if active_target else False
+
+        if active_target:
+            pass  # Target tab buttons are always enabled
 
         # Base tab buttons
         has_base = self.arr_cc_base is not None
@@ -1352,13 +2021,10 @@ class FilmProfilingAppWindow(Gtk.Window):
             self.btn_vflip_base.set_sensitive(has_base)
         if hasattr(self, 'btn_crop_base'):
             self.btn_crop_base.set_sensitive(has_base and has_base_selection)
+        if hasattr(self, 'btn_read_base'):
+            self.btn_read_base.set_sensitive(has_base)
 
-        if hasattr(self, 'btn_layer_it8'):
-            self.btn_layer_it8.set_sensitive(has_target)
-        if hasattr(self, 'btn_read_it8'):
-            self.btn_read_it8.set_sensitive(has_target and self.it8_mask_active)
-
-    def get_it8_boxes(self):
+    def get_it8_boxes_for_tab(self, tab_state):
         # Base dimensions and values matching ../negicc/read_it8.py layout spacing
         HBASE = 1300.0
         VBASE = 870.0
@@ -1397,41 +2063,52 @@ class FilmProfilingAppWindow(Gtk.Window):
         scaled_boxes = {}
         for patch, (bx, by) in base_boxes.items():
             cx, cy = 0.5, 0.5
-            sx = cx + (bx - cx) * self.it8_scale + self.it8_dx
-            sy = cy + (by - cy) * self.it8_scale + self.it8_dy
-            sw = w_box_base * self.it8_scale
-            sh = h_box_base * self.it8_scale
+            sx = cx + (bx - cx) * tab_state.it8_scale + tab_state.it8_dx
+            sy = cy + (by - cy) * tab_state.it8_scale + tab_state.it8_dy
+            sw = w_box_base * tab_state.it8_scale
+            sh = h_box_base * tab_state.it8_scale
             scaled_boxes[patch] = (sx, sy, sw, sh)
 
         return scaled_boxes
 
+    def get_it8_boxes(self):
+        active_target = self.get_active_target_tab()
+        if not active_target:
+            return {}
+        return self.get_it8_boxes_for_tab(active_target)
+
     def on_layer_it8_clicked(self, widget):
-        self.it8_mask_active = not self.it8_mask_active
-        if self.it8_mask_active:
-            self.btn_layer_it8.set_label("Remove IT8 Mask")
-            self.lbl_target_tab.set_markup("<b>Target (IT8) [Masked]</b>")
+        active_target = self.get_active_target_tab()
+        if not active_target:
+            return
+        
+        active_target.it8_mask_active = not active_target.it8_mask_active
+        if active_target.it8_mask_active:
+            active_target.btn_layer_it8.set_label("Remove IT8 Mask")
+            active_target.lbl_tab.set_markup(f"<b>{active_target.label_text} [Masked]</b>")
             self.status_lbl.set_text("Status: IT8 mask active. Use Arrow keys to move, +/- to scale.")
         else:
-            self.btn_layer_it8.set_label("Layer IT8 Mask")
-            self.lbl_target_tab.set_markup("Target (IT8)")
+            active_target.btn_layer_it8.set_label("Layer IT8 Mask")
+            active_target.lbl_tab.set_markup(active_target.label_text)
             self.status_lbl.set_text("Status: IT8 mask removed.")
-            self.it8_store.clear()
+            active_target.it8_store.clear()
         
-        self.image_view_target.queue_draw()
+        active_target.image_view.queue_draw()
         self.update_toolbar_sensitivities()
 
     def read_it8_values(self):
-        if self.arr_cc_target is None:
+        active_target = self.get_active_target_tab()
+        if not active_target or active_target.arr_cc is None:
             return
         
-        boxes = self.get_it8_boxes()
-        h, w, _ = self.arr_cc_target.shape
+        boxes = self.get_it8_boxes_for_tab(active_target)
+        h, w, _ = active_target.arr_cc.shape
         
-        self.it8_store.clear()
+        active_target.it8_store.clear()
         
         results = []
         # Print header matching read_it8.py output format
-        print("\n=== IT8 Patch Measurements (Crosstalk Corrected & Linear) ===")
+        print(f"\n=== IT8 Patch Measurements for {active_target.label_text} (Crosstalk Corrected & Linear) ===")
         print("patch r g b r_std g_std b_std")
         for patch, (bx, by, bw, bh) in sorted(boxes.items()):
             px1, py1 = int(bx * w), int(by * h)
@@ -1442,7 +2119,7 @@ class FilmProfilingAppWindow(Gtk.Window):
             py1 = max(0, min(py1, h - 1))
             py2 = max(0, min(py2, h))
             
-            patch_img = self.arr_cc_target[py1:py2, px1:px2]
+            patch_img = active_target.arr_cc[py1:py2, px1:px2]
             if patch_img.size > 0:
                 # Use average (mean) of each cell as requested
                 r = np.mean(patch_img[:, :, 0])
@@ -1455,16 +2132,13 @@ class FilmProfilingAppWindow(Gtk.Window):
                 r, g, b = 0.0, 0.0, 0.0
                 r_std, g_std, b_std = 0.0, 0.0, 0.0
             
-            r_int = int(round(r))
-            g_int = int(round(g))
-            b_int = int(round(b))
-            self.it8_store.append([patch, r_int, g_int, b_int, float(r_std), float(g_std), float(b_std)])
+            active_target.it8_store.append([patch, float(r), float(g), float(b), float(r_std), float(g_std), float(b_std)])
             
-            val_str = f"{patch} {r_int} {g_int} {b_int} {r_std:.2f} {g_std:.2f} {b_std:.2f}"
+            val_str = f"{patch} {r:.2f} {g:.2f} {b:.2f} {r_std:.2f} {g_std:.2f} {b_std:.2f}"
             results.append(val_str)
             print(val_str)
         print("=============================================================")
-        self.lbl_target_tab.set_markup("<span foreground='#44ff44'><b>Target (IT8) [Read]</b></span>")
+        active_target.lbl_tab.set_markup(f"<span foreground='#44ff44'><b>{active_target.label_text}</b></span>")
 
         # Show inside a copyable text dialog
         dialog = Gtk.Dialog(title="IT8 Patch Values", parent=self, flags=0)
@@ -1498,11 +2172,8 @@ class FilmProfilingAppWindow(Gtk.Window):
         dialog.destroy()
 
     def on_key_press(self, widget, event):
-        if not self.it8_mask_active or self.arr_cc_target is None:
-            return False
-
-        page_num = self.notebook.get_current_page()
-        if page_num != 0:
+        active_target = self.get_active_target_tab()
+        if not active_target or not active_target.it8_mask_active or active_target.arr_cc is None:
             return False
 
         keyval = event.keyval
@@ -1510,21 +2181,21 @@ class FilmProfilingAppWindow(Gtk.Window):
         step_scale = 0.005
 
         if keyval == Gdk.KEY_Up:
-            self.it8_dy -= step_translate
+            active_target.it8_dy -= step_translate
         elif keyval == Gdk.KEY_Down:
-            self.it8_dy += step_translate
+            active_target.it8_dy += step_translate
         elif keyval == Gdk.KEY_Left:
-            self.it8_dx -= step_translate
+            active_target.it8_dx -= step_translate
         elif keyval == Gdk.KEY_Right:
-            self.it8_dx += step_translate
+            active_target.it8_dx += step_translate
         elif keyval in (Gdk.KEY_plus, Gdk.KEY_equal, Gdk.KEY_KP_Add):
-            self.it8_scale += step_scale
+            active_target.it8_scale += step_scale
         elif keyval in (Gdk.KEY_minus, Gdk.KEY_underscore, Gdk.KEY_KP_Subtract):
-            self.it8_scale -= step_scale
+            active_target.it8_scale -= step_scale
         else:
             return False
 
-        self.image_view_target.queue_draw()
+        active_target.image_view.queue_draw()
         return True
 
     def on_destroy(self, widget):

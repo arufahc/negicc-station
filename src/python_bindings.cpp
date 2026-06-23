@@ -97,10 +97,22 @@ static PyObject* PyCapturedImage_to_numpy(PyCapturedImage* self, PyObject* args,
         return nullptr;
     }
 
-    static const char* kwlist[] = {"half", "crosstalk_matrix", nullptr};
+    static const char* kwlist[] = {
+        "half", "crosstalk_matrix", "it8_profile_path", "output_profile_path",
+        "profile_film_base", "film_base", "exposure_comp", "post_correction_gamma", nullptr
+    };
     int half = 0;
     PyObject* py_matrix = nullptr;
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|pO", const_cast<char**>(kwlist), &half, &py_matrix)) {
+    const char* it8_profile_path = nullptr;
+    const char* output_profile_path = nullptr;
+    PyObject* py_profile_film_base = nullptr;
+    PyObject* py_film_base = nullptr;
+    float exposure_comp = 1.0f;
+    float post_correction_gamma = 1.0f;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|pOzzOOff", const_cast<char**>(kwlist),
+                                     &half, &py_matrix, &it8_profile_path, &output_profile_path,
+                                     &py_profile_film_base, &py_film_base, &exposure_comp, &post_correction_gamma)) {
         return nullptr;
     }
 
@@ -125,9 +137,52 @@ static PyObject* PyCapturedImage_to_numpy(PyCapturedImage* self, PyObject* args,
         }
     }
 
+    std::vector<int> profile_film_base;
+    if (py_profile_film_base && py_profile_film_base != Py_None) {
+        if (!PyList_Check(py_profile_film_base)) {
+            PyErr_SetString(PyExc_TypeError, "profile_film_base must be a list of 3 integers.");
+            return nullptr;
+        }
+        if (PyList_Size(py_profile_film_base) != 3) {
+            PyErr_SetString(PyExc_ValueError, "profile_film_base must contain exactly 3 elements.");
+            return nullptr;
+        }
+        for (Py_ssize_t i = 0; i < 3; ++i) {
+            PyObject* item = PyList_GetItem(py_profile_film_base, i);
+            if (!PyLong_Check(item)) {
+                PyErr_SetString(PyExc_TypeError, "All elements of profile_film_base must be integers.");
+                return nullptr;
+            }
+            profile_film_base.push_back((int)PyLong_AsLong(item));
+        }
+    }
+
+    std::vector<int> film_base;
+    if (py_film_base && py_film_base != Py_None) {
+        if (!PyList_Check(py_film_base)) {
+            PyErr_SetString(PyExc_TypeError, "film_base must be a list of 3 integers.");
+            return nullptr;
+        }
+        if (PyList_Size(py_film_base) != 3) {
+            PyErr_SetString(PyExc_ValueError, "film_base must contain exactly 3 elements.");
+            return nullptr;
+        }
+        for (Py_ssize_t i = 0; i < 3; ++i) {
+            PyObject* item = PyList_GetItem(py_film_base, i);
+            if (!PyLong_Check(item)) {
+                PyErr_SetString(PyExc_TypeError, "All elements of film_base must be integers.");
+                return nullptr;
+            }
+            film_base.push_back((int)PyLong_AsLong(item));
+        }
+    }
+
+    std::string it8_path = it8_profile_path ? it8_profile_path : "";
+    std::string out_path = output_profile_path ? output_profile_path : "srgb";
+
     int w = 0, h = 0;
     std::vector<uint16_t> buf;
-    if (!self->cpp_img->get_linear_rgb(half != 0, w, h, buf, cc_matrix)) {
+    if (!self->cpp_img->get_linear_rgb(half != 0, w, h, buf, cc_matrix, it8_path, out_path, profile_film_base, film_base, exposure_comp, post_correction_gamma)) {
         PyErr_SetString(PyExc_RuntimeError, "Failed to load/process RAW image buffer.");
         return nullptr;
     }

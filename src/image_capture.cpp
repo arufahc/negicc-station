@@ -3,8 +3,13 @@
 #include <iostream>
 #include <cstdio>
 #include <algorithm>
+#include <cmath>
 #include <netinet/in.h>
 #include "libraw/tiff_head.h"
+#include <lcms2.h>
+#include "elle_icc_profiles/sRGB_elle_V2_g10.h"
+#include "elle_icc_profiles/sRGB_elle_V2_srgbtrc.h"
+#include "dcraw/gamma_curve.h"
 
 static inline void apply_crosstalk_correction(uint16_t& r, uint16_t& g, uint16_t& b, const std::vector<float>& cc_matrix) {
     if (cc_matrix.empty()) return;
@@ -16,12 +21,162 @@ static inline void apply_crosstalk_correction(uint16_t& r, uint16_t& g, uint16_t
     b = std::min(65535, (int)std::max(0.0f, fb));
 }
 
-bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::vector<uint16_t>& out_buf, const std::vector<float>& cc_matrix) const {
+static inline float dot_product(const std::vector<float>& v1, const std::vector<int>& v2) {
+    float prod = 0;
+    for (size_t i = 0; i < v1.size() && i < v2.size(); ++i) {
+        prod += v1[i] * v2[i];
+    }
+    return prod;
+}
+
+static inline void scale_vector(std::vector<float>& v, float factor) {
+    for (size_t i = 0; i < v.size(); ++i) {
+        v[i] *= factor;
+    }
+}
+
+static void adjust_correction_matrix(std::vector<float>& r_coef, 
+                                     std::vector<float>& g_coef,
+                                     std::vector<float>& b_coef,
+                                     float global_exposure_comp,
+                                     const std::vector<int>& profile_film_base_rgb,
+                                     const std::vector<int>& film_base_rgb) {
+    float cc_average_r = dot_product(r_coef, film_base_rgb);
+    float cc_average_g = dot_product(g_coef, film_base_rgb);
+    float cc_average_b = dot_product(b_coef, film_base_rgb);
+    float cc_profile_r = dot_product(r_coef, profile_film_base_rgb);
+    float cc_profile_g = dot_product(g_coef, profile_film_base_rgb);
+    float cc_profile_b = dot_product(b_coef, profile_film_base_rgb);
+
+    float g_scale = 1.0f;
+    float b_scale = 1.0f;
+
+    scale_vector(r_coef, global_exposure_comp);
+    scale_vector(g_coef, g_scale * global_exposure_comp);
+    scale_vector(b_coef, b_scale * global_exposure_comp);
+}
+
+static void apply_gamma_to_buf(std::vector<uint16_t>& buf, double gamma) {
+    if (std::abs(gamma - 1.0) < 1e-5) return;
+    std::vector<uint16_t> curve(0x10000);
+    gamma_curve(curve.data(), gamma, 0.0);
+    for (size_t i = 0; i < buf.size(); ++i) {
+        buf[i] = curve[buf[i]];
+    }
+}
+
+static int read_profile_from_file(const std::string& prof_name, unsigned **prof_out, unsigned *size) {
+    FILE *fp = fopen(prof_name.c_str(), "rb");
+    if (fp) {
+        if (fread(size, 4, 1, fp) != 1) {
+            fclose(fp);
+            return -1;
+        }
+        fseek(fp, 0, SEEK_SET);
+        *size = ntohl(*size);
+        *prof_out = (unsigned *)malloc(*size);
+        if (!*prof_out) {
+            fclose(fp);
+            return -1;
+        }
+        if (fread(*prof_out, 1, *size, fp) != *size) {
+            free(*prof_out);
+            *prof_out = nullptr;
+            fclose(fp);
+            return -1;
+        }
+        fclose(fp);
+        return 0;
+    }
+    std::cerr << "ERROR: Cannot read ICC profile: " << prof_name << std::endl;
+    return -1;
+}
+
+static bool apply_lcms_profile(std::vector<uint16_t>& buf, int width, int height,
+                              const std::string& input_prof_path, const std::string& output_prof_path) {
+    cmsHPROFILE in_profile = nullptr;
+    cmsHPROFILE out_profile = nullptr;
+    cmsHTRANSFORM transform = nullptr;
+    unsigned* prof = nullptr;
+    unsigned* oprof = nullptr;
+    unsigned size = 0;
+
+    if (read_profile_from_file(input_prof_path, &prof, &size) == 0) {
+        in_profile = cmsOpenProfileFromMem(prof, size);
+        free(prof);
+    }
+    if (!in_profile) {
+        std::cerr << "ERROR: Failed to open input ICC profile from " << input_prof_path << std::endl;
+        return false;
+    }
+
+    if (output_prof_path == "srgb") {
+        out_profile = cmsOpenProfileFromMem(sRGB_elle_V2_srgbtrc_icc, sRGB_elle_V2_srgbtrc_icc_len);
+    } else if (output_prof_path == "srgb-g10") {
+        out_profile = cmsOpenProfileFromMem(sRGB_elle_V2_g10_icc, sRGB_elle_V2_g10_icc_len);
+    } else if (read_profile_from_file(output_prof_path, &oprof, &size) == 0) {
+        out_profile = cmsOpenProfileFromMem(oprof, size);
+        free(oprof);
+    }
+
+    if (!out_profile) {
+        std::cerr << "ERROR: Failed to open output ICC profile from " << output_prof_path << std::endl;
+        cmsCloseProfile(in_profile);
+        return false;
+    }
+
+    transform = cmsCreateTransform(in_profile, TYPE_RGB_16, out_profile, TYPE_RGB_16, INTENT_PERCEPTUAL, 0);
+    if (!transform) {
+        std::cerr << "ERROR: Failed to create LCMS transform." << std::endl;
+        cmsCloseProfile(out_profile);
+        cmsCloseProfile(in_profile);
+        return false;
+    }
+
+    cmsDoTransform(transform, buf.data(), buf.data(), width * height);
+
+    cmsDeleteTransform(transform);
+    cmsCloseProfile(out_profile);
+    cmsCloseProfile(in_profile);
+    return true;
+}
+
+bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::vector<uint16_t>& out_buf,
+                                   const std::vector<float>& cc_matrix,
+                                   const std::string& it8_profile_path,
+                                   const std::string& output_profile_path,
+                                   const std::vector<int>& profile_film_base,
+                                   const std::vector<int>& film_base,
+                                   float exposure_comp,
+                                   float post_correction_gamma) const {
     if (m_filepaths.empty()) {
         std::cerr << "ERROR: No filepaths available in CapturedImage." << std::endl;
         return false;
     }
 
+    std::vector<float> adjusted_cc = cc_matrix;
+    if (!it8_profile_path.empty()) {
+        if (adjusted_cc.empty()) {
+            adjusted_cc = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+        }
+        std::vector<int> p_fb = profile_film_base;
+        std::vector<int> c_fb = film_base;
+        if (p_fb.empty() || c_fb.empty()) {
+            p_fb = {1, 1, 1};
+            c_fb = {1, 1, 1};
+        }
+        std::vector<float> r_coef = {adjusted_cc[0], adjusted_cc[1], adjusted_cc[2]};
+        std::vector<float> g_coef = {adjusted_cc[3], adjusted_cc[4], adjusted_cc[5]};
+        std::vector<float> b_coef = {adjusted_cc[6], adjusted_cc[7], adjusted_cc[8]};
+        adjust_correction_matrix(r_coef, g_coef, b_coef, exposure_comp, p_fb, c_fb);
+        adjusted_cc = {
+            r_coef[0], r_coef[1], r_coef[2],
+            g_coef[0], g_coef[1], g_coef[2],
+            b_coef[0], b_coef[1], b_coef[2]
+        };
+    }
+
+    bool success = false;
     if (m_type == ImageCaptureType::SINGLE) {
         std::cout << "[CapturedImage] Loading single frame to linear buffer..." << std::endl;
         LibRaw* proc = RawProcessor::load_raw(m_filepaths[0], /*debayer*/ true, /*half_size*/ half_size, /*qual*/ 0, /*crop*/ false);
@@ -38,7 +193,7 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
             uint16_t r = proc->imgdata.image[i][0];
             uint16_t g = proc->imgdata.image[i][1];
             uint16_t b = proc->imgdata.image[i][2];
-            apply_crosstalk_correction(r, g, b, cc_matrix);
+            apply_crosstalk_correction(r, g, b, adjusted_cc);
             out_buf[i * 3]     = r;
             out_buf[i * 3 + 1] = g;
             out_buf[i * 3 + 2] = b;
@@ -46,7 +201,7 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
 
         proc->recycle();
         delete proc;
-        return true;
+        success = true;
 
     } else if (m_type == ImageCaptureType::SONY_PIXEL_SHIFT_4) {
         if (m_filepaths.size() < 4) {
@@ -97,7 +252,7 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
                     uint16_t r = static_cast<uint16_t>(r_sum / 4);
                     uint16_t g = static_cast<uint16_t>(g_sum / 4);
                     uint16_t b = static_cast<uint16_t>(b_sum / 4);
-                    apply_crosstalk_correction(r, g, b, cc_matrix);
+                    apply_crosstalk_correction(r, g, b, adjusted_cc);
                     out_buf[dest_idx * 3]     = r;
                     out_buf[dest_idx * 3 + 1] = g;
                     out_buf[dest_idx * 3 + 2] = b;
@@ -111,7 +266,7 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
                 uint16_t r = proc->imgdata.image[i][0];
                 uint16_t g = proc->imgdata.image[i][1];
                 uint16_t b = proc->imgdata.image[i][2];
-                apply_crosstalk_correction(r, g, b, cc_matrix);
+                apply_crosstalk_correction(r, g, b, adjusted_cc);
                 out_buf[i * 3]     = r;
                 out_buf[i * 3 + 1] = g;
                 out_buf[i * 3 + 2] = b;
@@ -120,10 +275,18 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
 
         proc->recycle();
         delete proc;
-        return true;
+        success = true;
     }
 
-    return false;
+    if (success && !it8_profile_path.empty()) {
+        apply_gamma_to_buf(out_buf, post_correction_gamma);
+        if (!apply_lcms_profile(out_buf, out_w, out_h, it8_profile_path, output_profile_path)) {
+            std::cerr << "WARNING: Failed to apply LCMS profile." << std::endl;
+            return false;
+        }
+    }
+
+    return success;
 }
 
 std::unique_ptr<CapturedImage> capture_image(ImageCaptureType type, uint32_t shutterSpeedVal) {

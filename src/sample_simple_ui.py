@@ -149,11 +149,18 @@ class SimpleScanningAppWindow(Gtk.Window):
         title_label.set_xalign(0.0)
         sidebar_box.pack_start(title_label, False, False, 5)
 
-        # Camera Status
+        # Camera Status Row
+        camera_status_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.camera_status_label = Gtk.Label()
         self.camera_status_label.set_markup("<span><span foreground='#e6a23c'>●</span> Camera: Connecting...</span>")
         self.camera_status_label.set_xalign(0.0)
-        sidebar_box.pack_start(self.camera_status_label, False, False, 2)
+        camera_status_box.pack_start(self.camera_status_label, True, True, 0)
+        
+        self.connect_btn = Gtk.Button(label="Connect")
+        self.connect_btn.connect("clicked", lambda w: self.connect_camera(manual=True))
+        self.connect_btn.set_sensitive(False)
+        camera_status_box.pack_start(self.connect_btn, False, False, 0)
+        sidebar_box.pack_start(camera_status_box, False, False, 2)
 
         # Settings Section
         settings_frame = Gtk.Frame(label="Capture Settings")
@@ -233,26 +240,31 @@ class SimpleScanningAppWindow(Gtk.Window):
         self.camera_session = None
         self.is_connected = False
         self.is_connecting = False
+        self.was_physically_connected = False
         self.connect_camera()
         GLib.timeout_add_seconds(2, self.poll_camera_connection)
 
     def poll_camera_connection(self):
+        currently_physically_connected = negicc_station.is_camera_connected()
+        
         if self.is_connected:
-            # Check if camera was unplugged
-            if not negicc_station.is_camera_connected():
+            if not currently_physically_connected:
                 self.is_connected = False
                 self.update_connection_ui(False, "Camera unplugged.")
         elif not self.is_connecting:
-            # Check if camera was plugged in
-            if negicc_station.is_camera_connected():
+            # Only trigger auto-connect on rising edge of physical connection
+            if currently_physically_connected and not self.was_physically_connected:
                 self.connect_camera()
+                
+        self.was_physically_connected = currently_physically_connected
         return True
 
-    def connect_camera(self):
+    def connect_camera(self, manual=False):
         if self.is_connecting or self.is_connected:
             return
         self.is_connecting = True
         self.capture_button.set_sensitive(False)
+        self.connect_btn.set_sensitive(False)
         self.camera_status_label.set_markup("<span><span foreground='#e6a23c'>●</span> Camera: Connecting...</span>")
         
         def run():
@@ -279,10 +291,12 @@ class SimpleScanningAppWindow(Gtk.Window):
         if connected:
             self.camera_status_label.set_markup("<span foreground='#44ff44'>●</span> <b>Camera: Connected</b>")
             self.capture_button.set_sensitive(True)
+            self.connect_btn.set_sensitive(False)
             self.status_label.set_text("Status: Camera connected, ready.")
         else:
             self.camera_status_label.set_markup("<span foreground='#ff4444'>●</span> <b>Camera: Disconnected</b>")
             self.capture_button.set_sensitive(False)
+            self.connect_btn.set_sensitive(True)
             if error_msg:
                 self.status_label.set_text(f"Status: Connection failed ({error_msg})")
             else:

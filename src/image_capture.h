@@ -33,7 +33,14 @@ public:
 
     // Decodes the raw files and fills out_buf with linear RGB 16-bit values.
     // Dimensions out_w and out_h are set.
-    bool get_linear_rgb(bool half_size, int& out_w, int& out_h, std::vector<uint16_t>& out_buf, const std::vector<float>& cc_matrix = {}) const;
+    bool get_linear_rgb(bool half_size, int& out_w, int& out_h, std::vector<uint16_t>& out_buf,
+                        const std::vector<float>& cc_matrix = {},
+                        const std::string& it8_profile_path = "",
+                        const std::string& output_profile_path = "srgb",
+                        const std::vector<int>& profile_film_base = {},
+                        const std::vector<int>& film_base = {},
+                        float exposure_comp = 1.0f,
+                        float post_correction_gamma = 1.0f) const;
 
 private:
     ImageCaptureType m_type;

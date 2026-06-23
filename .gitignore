@@ -9,6 +9,6 @@ bin_out/
 venv/
 build/
 negicc_station.egg-info/
-
-
-
+__pycache__/
+*.pyc
+*.ARW
