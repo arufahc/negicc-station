@@ -664,6 +664,15 @@ class FilmProfilingAppWindow(Gtk.Window):
             label {
                 color: #ffffff;
             }
+            /* Dropdowns, menus, and popups */
+            combobox, combobox window, window.popup, menu, menuitem, list, row, popover {
+                background-image: none;
+                background-color: #1e1e1e;
+                color: #ffffff;
+            }
+            combobox label, window.popup label, menu label, popover label {
+                color: #ffffff;
+            }
             button {
                 background-image: none;
                 background-color: #2e2e2e;
