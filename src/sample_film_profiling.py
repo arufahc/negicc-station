@@ -85,7 +85,7 @@ def compute_hist_and_percentiles(arr):
     return (hist_r_norm, hist_g_norm, hist_b_norm), (p2_r, p2_g, p2_b), (p98_r, p98_g, p98_b), (dr_r, dr_g, dr_b, avg_dr), (mean_r, mean_g, mean_b, avg_mean)
 
 
-def draw_matplotlib_histogram(ax, hists, p2, p98, mean_metrics=None, show_overexposure=True):
+def draw_matplotlib_histogram(ax, hists, p2, p98, dr_metrics=None, mean_metrics=None, show_overexposure=True):
     ax.clear()
     ax.grid(True, color='#2c2c2c', linestyle='--', linewidth=0.5)
     
@@ -109,6 +109,7 @@ def draw_matplotlib_histogram(ax, hists, p2, p98, mean_metrics=None, show_overex
     # Plot 80% overexposure vertical bar of 16384 (0.8 * 16384 = 13107.2)
     if show_overexposure:
         ax.axvline(13107.2, color='#e74c3c', linestyle='-', alpha=0.8, linewidth=1.5)
+        # Add textual label next to the line since we don't have a legend
         ax.text(13107.2 - 200, 0.95, "Overexposure (80%)", color='#e74c3c', fontsize=7.5,
                 horizontalalignment='right', verticalalignment='top', rotation=90,
                 bbox=dict(boxstyle='round,pad=0.15', facecolor='#121212', alpha=0.6, edgecolor='none'))
@@ -126,17 +127,51 @@ def draw_matplotlib_histogram(ax, hists, p2, p98, mean_metrics=None, show_overex
         means = [mean_r, mean_g, mean_b]
         hists_norm = [hist_r_norm, hist_g_norm, hist_b_norm]
         colors = ['#ff6666', '#66ff66', '#66aaff']
+        channel_labels = ['R', 'G', 'B']
 
         # Sort indices by mean values to stack their labels vertically without overlap
         sorted_indices = np.argsort(means)
         for rank, idx in enumerate(sorted_indices):
             m_val = means[idx]
             h_norm = hists_norm[idx]
+            # Map mean value to corresponding bin index
             bin_idx = int(round(m_val / 16384.0 * (len(h_norm) - 1)))
             bin_idx = max(0, min(len(h_norm) - 1, bin_idx))
             y_val = h_norm[bin_idx]
 
+            # Draw cross marker ('x') at (mean_val, curve_height)
             ax.plot(m_val, y_val, marker='x', color=colors[idx], markersize=8, markeredgewidth=1.0)
+
+            # Vertically stagger labels to prevent overlaps (stacking between 0.50 and 0.74)
+            text_y = 0.5 + (rank * 0.12)
+
+            # Draw a faint vertical leader line connecting the cross marker to the label
+            ax.plot([m_val, m_val], [y_val, text_y], color=colors[idx], linestyle=':', alpha=0.5, linewidth=1.0)
+
+            # Draw value text centered horizontally at the mean value
+            ax.text(m_val, text_y, f"{channel_labels[idx]}_avg: {int(m_val)}",
+                    color=colors[idx], fontsize=8, fontweight='bold',
+                    horizontalalignment='center', verticalalignment='center',
+                    bbox=dict(boxstyle='round,pad=0.2', facecolor='#121212', alpha=0.85, edgecolor='none'))
+
+    ax.set_xlim(0, 16384)
+    ax.set_ylim(0, 1.05)
+
+    # Put the R, G, B and dynamic range values inside the graph using a textbox
+    if p2 is not None and p98 is not None and dr_metrics is not None:
+        dr_r, dr_g, dr_b, avg_dr = dr_metrics
+        mean_r, mean_g, mean_b, avg_mean = mean_metrics if mean_metrics is not None else (0, 0, 0, 0)
+        text_str = (
+            f"R: [2%:{int(p2[0])}, 98%:{int(p98[0])}] DR:{dr_r:.1f} Mean:{mean_r:.1f}\n"
+            f"G: [2%:{int(p2[1])}, 98%:{int(p98[1])}] DR:{dr_g:.1f} Mean:{mean_g:.1f}\n"
+            f"B: [2%:{int(p2[2])}, 98%:{int(p98[2])}] DR:{dr_b:.1f} Mean:{mean_b:.1f}\n"
+            f"Avg DR: {avg_dr:.1f} | Avg Value: {avg_mean:.1f}"
+        )
+        props = dict(boxstyle='round', facecolor='#1e1e1e', alpha=0.8, edgecolor='#333333')
+        ax.text(0.02, 0.98, text_str, transform=ax.transAxes, fontsize=8.5, color='#ffffff',
+                verticalalignment='top', bbox=props, family='monospace')
+
+    ax.figure.canvas.draw_idle()
 
 
 class FilmProfilingAppWindow(Gtk.Window):
@@ -648,10 +683,11 @@ class FilmProfilingAppWindow(Gtk.Window):
         def run():
             try:
                 arr_raw_crop, arr_cc_crop = self.get_active_crop(arr_raw, arr_cc, selection)
-                hists_raw, p2_raw, p98_raw, _, mean_raw = compute_hist_and_percentiles(arr_raw_crop)
-                hists_cc, p2_cc, p98_cc, _, mean_cc = compute_hist_and_percentiles(arr_cc_crop)
+                hists_raw, p2_raw, p98_raw, dr_raw, mean_raw = compute_hist_and_percentiles(arr_raw_crop)
+                hists_cc, p2_cc, p98_cc, dr_cc, mean_cc = compute_hist_and_percentiles(arr_cc_crop)
 
-                GLib.idle_add(self.draw_hists_main_thread, hists_raw, p2_raw, p98_raw, mean_raw, hists_cc, p2_cc, p98_cc, mean_cc)
+                GLib.idle_add(self.draw_hists_main_thread, hists_raw, p2_raw, p98_raw, dr_raw, mean_raw,
+                              hists_cc, p2_cc, p98_cc, dr_cc, mean_cc)
             except Exception as e:
                 print(f"Error drawing histograms: {e}")
 
@@ -659,11 +695,12 @@ class FilmProfilingAppWindow(Gtk.Window):
         t.daemon = True
         t.start()
 
-    def draw_hists_main_thread(self, hists_raw, p2_raw, p98_raw, mean_raw, hists_cc, p2_cc, p98_cc, mean_cc):
-        draw_matplotlib_histogram(self.raw_ax, hists_raw, p2_raw, p98_raw, mean_metrics=mean_raw, show_overexposure=True)
+    def draw_hists_main_thread(self, hists_raw, p2_raw, p98_raw, dr_raw, mean_raw,
+                               hists_cc, p2_cc, p98_cc, dr_cc, mean_cc):
+        draw_matplotlib_histogram(self.raw_ax, hists_raw, p2_raw, p98_raw, dr_metrics=dr_raw, mean_metrics=mean_raw, show_overexposure=True)
         self.raw_canvas.draw_idle()
 
-        draw_matplotlib_histogram(self.cc_ax, hists_cc, p2_cc, p98_cc, mean_metrics=mean_cc, show_overexposure=True)
+        draw_matplotlib_histogram(self.cc_ax, hists_cc, p2_cc, p98_cc, dr_metrics=dr_cc, mean_metrics=mean_cc, show_overexposure=True)
         self.cc_canvas.draw_idle()
 
     def on_notebook_page_changed(self, notebook, page, page_num):
