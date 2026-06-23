@@ -58,20 +58,23 @@ def parse_shutter_speed(shutter_str):
 class FilmProfile:
     """Represents a loaded film profile JSON with patch measurements and metadata."""
 
-    def __init__(self, profile_json_path):
+    def __init__(self, profile_json_path_or_dict):
         """Load profile JSON and extract all data.
 
         Parameters:
-            profile_json_path: Path to the film profile JSON file.
+            profile_json_path_or_dict: Path to the film profile JSON file or a dict.
         """
-        with open(profile_json_path, 'r') as f:
-            data = json.load(f)
+        if isinstance(profile_json_path_or_dict, dict):
+            data = profile_json_path_or_dict
+            self.path = None
+            basename = "Custom Profile"
+        else:
+            with open(profile_json_path_or_dict, 'r') as f:
+                data = json.load(f)
+            self.path = profile_json_path_or_dict
+            basename = os.path.splitext(os.path.basename(profile_json_path_or_dict))[0]
 
-        self.path = profile_json_path
         self.raw_data = data
-
-        # Film name from filename
-        basename = os.path.splitext(os.path.basename(profile_json_path))[0]
         # Strip the "profile_" prefix and timestamp suffix
         parts = basename.split('_')
         if parts[0] == 'profile' and len(parts) >= 2:
@@ -121,6 +124,12 @@ class FilmProfile:
         # Self-contained profile elements if present
         self.trc_curves = data.get('trc_curves', None)
         self.icc_profile_base64 = data.get('icc_profile_base64', None)
+
+        # Fallback to the first target if not found at root
+        if self.trc_curves is None and targets:
+            self.trc_curves = targets[0].get('trc_curves', None)
+        if self.icc_profile_base64 is None and targets:
+            self.icc_profile_base64 = targets[0].get('icc_profile_base64', None)
 
     def get_patch_rgb(self, patch_name):
         """Return (r, g, b) for a patch."""
