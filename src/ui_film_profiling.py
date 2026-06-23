@@ -665,6 +665,7 @@ class FilmProfilingAppWindow(Gtk.Window):
                 color: #ffffff;
             }
             button {
+                background-image: none;
                 background-color: #2e2e2e;
                 color: #ffffff;
                 border: 1px solid #484848;
@@ -674,13 +675,16 @@ class FilmProfilingAppWindow(Gtk.Window):
                 text-shadow: none;
             }
             button:hover {
+                background-image: none;
                 background-color: #3e3e3e;
                 border-color: #585858;
             }
             button:active {
+                background-image: none;
                 background-color: #1e1e1e;
             }
             button:disabled {
+                background-image: none;
                 color: #666666;
                 background-color: #1c1c1c;
                 border-color: #2c2c2c;
@@ -716,6 +720,7 @@ class FilmProfilingAppWindow(Gtk.Window):
                 color: #ffffff;
             }
             treeview header button {
+                background-image: none;
                 background-color: #2a2a2a;
                 color: #ffffff;
                 font-weight: bold;
@@ -749,6 +754,7 @@ class FilmProfilingAppWindow(Gtk.Window):
                 border-color: #2c2c2c;
             }
             .tool-btn {
+                background-image: none;
                 background-color: #2e2e2e;
                 color: #ffffff;
                 border: 1px solid #484848;
@@ -757,9 +763,11 @@ class FilmProfilingAppWindow(Gtk.Window):
                 font-weight: bold;
             }
             .tool-btn:hover {
+                background-image: none;
                 background-color: #3e3e3e;
             }
             .tool-btn:disabled {
+                background-image: none;
                 color: #666666;
                 background-color: #1c1c1c;
                 border-color: #2c2c2c;
