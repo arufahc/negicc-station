@@ -466,6 +466,31 @@ class FilmProfilingAppWindow(Gtk.Window):
         self.target_stack.add_named(self.image_view_target, "preview")
         self.target_stack.set_visible_child_name("placeholder")
 
+        # Store model for IT8 patch values: Patch (str), R (int), G (int), B (int)
+        self.it8_store = Gtk.ListStore(str, int, int, int)
+        self.it8_treeview = Gtk.TreeView(model=self.it8_store)
+        
+        # Add columns to TreeView
+        cols = [("Patch", 0), ("R (Linear)", 1), ("G (Linear)", 2), ("B (Linear)", 3)]
+        for col_title, col_idx in cols:
+            renderer = Gtk.CellRendererText()
+            if col_idx > 0:
+                renderer.set_property("xalign", 1.0)
+            col = Gtk.TreeViewColumn(col_title, renderer, text=col_idx)
+            if col_idx > 0:
+                col.set_alignment(1.0)
+            col.set_sort_column_id(col_idx)
+            self.it8_treeview.append_column(col)
+
+        self.it8_scroll = Gtk.ScrolledWindow()
+        self.it8_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        self.it8_scroll.set_min_content_height(180)
+        self.it8_scroll.add(self.it8_treeview)
+        
+        self.it8_frame = Gtk.Frame(label="Read IT8 Patch Values")
+        self.it8_frame.add(self.it8_scroll)
+        self.target_box.pack_start(self.it8_frame, False, False, 5)
+
         self.lbl_target_tab = Gtk.Label(label="Target (IT8)")
         self.lbl_target_tab.set_use_markup(True)
         self.notebook.append_page(self.target_box, self.lbl_target_tab)
@@ -1101,6 +1126,11 @@ class FilmProfilingAppWindow(Gtk.Window):
             self.target_stack.set_visible_child_name("preview")
             self.refresh_preview_image(0)
             self.notebook.set_current_page(0)
+            # Reset IT8 mask active status and tab label/table values
+            self.it8_mask_active = False
+            self.btn_layer_it8.set_label("Layer IT8 Mask")
+            self.lbl_target_tab.set_markup("Target (IT8)")
+            self.it8_store.clear()
         else:
             self.arr_raw_base = arr_raw
             self.arr_cc_base = arr_cc
@@ -1368,12 +1398,13 @@ class FilmProfilingAppWindow(Gtk.Window):
         self.it8_mask_active = not self.it8_mask_active
         if self.it8_mask_active:
             self.btn_layer_it8.set_label("Remove IT8 Mask")
-            self.lbl_target_tab.set_markup("<span foreground='#44ff44'><b>Target (IT8) [Masked]</b></span>")
+            self.lbl_target_tab.set_markup("<b>Target (IT8) [Masked]</b>")
             self.status_lbl.set_text("Status: IT8 mask active. Use Arrow keys to move, +/- to scale.")
         else:
             self.btn_layer_it8.set_label("Layer IT8 Mask")
             self.lbl_target_tab.set_markup("Target (IT8)")
             self.status_lbl.set_text("Status: IT8 mask removed.")
+            self.it8_store.clear()
         
         self.image_view_target.queue_draw()
         self.update_toolbar_sensitivities()
@@ -1384,6 +1415,8 @@ class FilmProfilingAppWindow(Gtk.Window):
         
         boxes = self.get_it8_boxes()
         h, w, _ = self.arr_cc_target.shape
+        
+        self.it8_store.clear()
         
         results = []
         # Print header matching read_it8.py output format
@@ -1407,10 +1440,16 @@ class FilmProfilingAppWindow(Gtk.Window):
             else:
                 r, g, b = 0.0, 0.0, 0.0
             
-            val_str = f"{patch} {int(round(r))} {int(round(g))} {int(round(b))}"
+            r_int = int(round(r))
+            g_int = int(round(g))
+            b_int = int(round(b))
+            self.it8_store.append([patch, r_int, g_int, b_int])
+            
+            val_str = f"{patch} {r_int} {g_int} {b_int}"
             results.append(val_str)
             print(val_str)
         print("=============================================================")
+        self.lbl_target_tab.set_markup("<span foreground='#44ff44'><b>Target (IT8) [Read]</b></span>")
 
         # Show inside a copyable text dialog
         dialog = Gtk.Dialog(title="IT8 Patch Values", parent=self, flags=0)
