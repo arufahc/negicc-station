@@ -115,3 +115,90 @@ def save_profile(filepath, camera_model, speed_r, means_r, stds_r, speed_g, mean
     }
     with open(filepath, 'w') as f:
         json.dump(profile, f, indent=4)
+
+
+class CrosstalkCalibration:
+    """
+    Object-oriented wrapper for crosstalk calibration profiles.
+    Allows loading, saving, calculating, and applying crosstalk calibration.
+    """
+    def __init__(self, camera_model=None, M=None, M_norm=None, M_corr=None, captured_data=None):
+        self.camera_model = camera_model
+        self.M = np.asarray(M) if M is not None else None
+        self.M_norm = np.asarray(M_norm) if M_norm is not None else None
+        self.M_corr = np.asarray(M_corr) if M_corr is not None else None
+        self.captured_data = captured_data or {}
+
+    @classmethod
+    def from_measurements(cls, camera_model, means_r, means_g, means_b,
+                          speed_r=None, stds_r=None,
+                          speed_g=None, stds_g=None,
+                          speed_b=None, stds_b=None):
+        """
+        Computes matrices and returns a CrosstalkCalibration instance.
+        """
+        M, M_norm, M_corr = compute_calibration_matrices(means_r, means_g, means_b)
+        captured_data = {
+            "Red": {
+                "shutter_speed": speed_r,
+                "means": list(means_r) if means_r is not None else None,
+                "stds": list(stds_r) if stds_r is not None else None
+            },
+            "Green": {
+                "shutter_speed": speed_g,
+                "means": list(means_g) if means_g is not None else None,
+                "stds": list(stds_g) if stds_g is not None else None
+            },
+            "Blue": {
+                "shutter_speed": speed_b,
+                "means": list(means_b) if means_b is not None else None,
+                "stds": list(stds_b) if stds_b is not None else None
+            }
+        }
+        return cls(camera_model, M, M_norm, M_corr, captured_data)
+
+    @classmethod
+    def load(cls, filepath):
+        """
+        Loads a crosstalk profile from a JSON file and returns a CrosstalkCalibration instance.
+        """
+        data = load_profile(filepath)
+        return cls(
+            camera_model=data.get("camera_model"),
+            M=data.get("crosstalk_matrix_raw"),
+            M_norm=data.get("crosstalk_matrix_normalized"),
+            M_corr=data.get("crosstalk_correction_matrix"),
+            captured_data=data.get("captured_data")
+        )
+
+    def save(self, filepath):
+        """
+        Saves the current profile to a JSON file.
+        """
+        if self.M is None or self.M_norm is None or self.M_corr is None:
+            raise ValueError("Incomplete calibration matrices; cannot save profile.")
+        save_profile(
+            filepath,
+            self.camera_model,
+            self.captured_data.get("Red", {}).get("shutter_speed"),
+            self.captured_data.get("Red", {}).get("means"),
+            self.captured_data.get("Red", {}).get("stds"),
+            self.captured_data.get("Green", {}).get("shutter_speed"),
+            self.captured_data.get("Green", {}).get("means"),
+            self.captured_data.get("Green", {}).get("stds"),
+            self.captured_data.get("Blue", {}).get("shutter_speed"),
+            self.captured_data.get("Blue", {}).get("means"),
+            self.captured_data.get("Blue", {}).get("stds"),
+            self.M,
+            self.M_norm,
+            self.M_corr
+        )
+
+    def apply(self, arr):
+        """
+        Applies the correction matrix to the input array/image.
+        """
+        if self.M_corr is None:
+            raise ValueError("No correction matrix available in this calibration profile.")
+        return apply_correction(arr, self.M_corr)
+

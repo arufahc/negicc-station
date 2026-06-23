@@ -595,22 +595,30 @@ class CrosstalkAppWindow(Gtk.Window):
         if response == Gtk.ResponseType.OK:
             filepath = dialog.get_filename()
             try:
-                crosstalk_calibration.save_profile(
-                    filepath=filepath,
+                calib = crosstalk_calibration.CrosstalkCalibration(
                     camera_model=self.camera_model,
-                    speed_r=self.speed_r,
-                    means_r=self.means_r,
-                    stds_r=self.stds_r,
-                    speed_g=self.speed_g,
-                    means_g=self.means_g,
-                    stds_g=self.stds_g,
-                    speed_b=self.speed_b,
-                    means_b=self.means_b,
-                    stds_b=self.stds_b,
                     M=self.M,
                     M_norm=self.M_norm,
-                    M_corr=self.correction_matrix
+                    M_corr=self.correction_matrix,
+                    captured_data={
+                        "Red": {
+                            "shutter_speed": self.speed_r,
+                            "means": list(self.means_r) if self.means_r is not None else None,
+                            "stds": list(self.stds_r) if self.stds_r is not None else None
+                        },
+                        "Green": {
+                            "shutter_speed": self.speed_g,
+                            "means": list(self.means_g) if self.means_g is not None else None,
+                            "stds": list(self.stds_g) if self.stds_g is not None else None
+                        },
+                        "Blue": {
+                            "shutter_speed": self.speed_b,
+                            "means": list(self.means_b) if self.means_b is not None else None,
+                            "stds": list(self.stds_b) if self.stds_b is not None else None
+                        }
+                    }
                 )
+                calib.save(filepath)
                 self.status_label.set_text(f"Status: Profile saved to {os.path.basename(filepath)}")
             except Exception as e:
                 self.status_label.set_text(f"Status: Error saving profile: {str(e)}")
@@ -639,11 +647,11 @@ class CrosstalkAppWindow(Gtk.Window):
         if response == Gtk.ResponseType.OK:
             filepath = dialog.get_filename()
             try:
-                profile = crosstalk_calibration.load_profile(filepath)
+                calib = crosstalk_calibration.CrosstalkCalibration.load(filepath)
                 
-                self.camera_model = profile.get("camera_model", "Unknown")
+                self.camera_model = calib.camera_model or "Unknown"
                 
-                captured_data = profile.get("captured_data", {})
+                captured_data = calib.captured_data or {}
                 
                 # Load Red
                 r_data = captured_data.get("Red", {})
@@ -692,9 +700,9 @@ class CrosstalkAppWindow(Gtk.Window):
                     self.val_b_stds.set_text("--")
                 
                 # Load matrix values
-                self.M = np.array(profile.get("crosstalk_matrix_raw", np.zeros((3,3))))
-                self.M_norm = np.array(profile.get("crosstalk_matrix_normalized", np.zeros((3,3))))
-                self.correction_matrix = np.array(profile.get("crosstalk_correction_matrix", np.zeros((3,3))))
+                self.M = calib.M
+                self.M_norm = calib.M_norm
+                self.correction_matrix = calib.M_corr
                 
                 # Format and display matrices
                 self.lbl_m_norm.set_text(self.format_matrix_with_labels(self.M_norm))

@@ -13,11 +13,11 @@ import crosstalk_calibration
 
 def main():
     profile_path = os.path.join(project_dir, "../profiles/ILCE-7RM4_crosstalk_profile.json")
-    profile = crosstalk_calibration.load_profile(profile_path)
+    calib = crosstalk_calibration.CrosstalkCalibration.load(profile_path)
     
-    matrix = profile["crosstalk_correction_matrix"]
-    matrix_np = np.array(matrix)
-    flat_matrix = [val for row in matrix for val in row]
+    matrix = calib.M_corr.tolist()
+    matrix_np = calib.M_corr
+    flat_matrix = calib.M_corr.flatten().tolist()
     
     print("=== Loaded Profile Correction Matrix ===")
     for row in matrix:
@@ -55,7 +55,7 @@ def main():
         mean_raw = np.mean(pixels_raw, axis=0)
 
         # 2. Apply correction in Python via NumPy dot product and clamp (matching C++ + 0.5f rounding)
-        pixels_cc_py = crosstalk_calibration.apply_correction(pixels_raw, matrix_np)
+        pixels_cc_py = calib.apply(pixels_raw)
         mean_cc_py = np.mean(pixels_cc_py, axis=0)
 
         # 3. Load corrected RAW from C++ backend directly
