@@ -124,3 +124,48 @@ Launch the application:
 4. The Sony camera remote captures the RAW file, transfers it to the Nvidia Jetson Nano, and the updated C++ tethering library processes the pixel data (applying the film base ratios, crosstalk matrix, post gamma, and custom ICC profile conversion) in C++.
 5. The display-ready positive sRGB image is returned directly to Python and drawn in the preview window!
 
+---
+
+## 7. Mathematical Profiling Steps
+
+The profiling pipeline in `src/film_profiling.py` processes raw IT8 patch values ($R_{\text{raw}}, G_{\text{raw}}, B_{\text{raw}}$) through the following mathematical steps to compile the lookup table for the custom ICC profile:
+
+### 1. Film Base Normalization (Transmittance Calculation)
+To calculate absolute transmittance relative to the unexposed film base, the raw patch values are scaled by the average film base readings ($fb_r, fb_g, fb_b$), mapping the film base reference level to a target of `55000.0` (towards the upper range of the 16-bit scale range):
+
+$$R_{\text{norm}} = R_{\text{raw}} \times \frac{55000.0}{fb_r}$$
+
+$$G_{\text{norm}} = G_{\text{raw}} \times \frac{55000.0}{fb_g}$$
+
+$$B_{\text{norm}} = B_{\text{raw}} \times \frac{55000.0}{fb_b}$$
+
+This scales the patch responses such that a transmittance of $100\%$ (equal to the unexposed film mask) corresponds exactly to a value of $55000.0$ across all channels.
+
+### 2. Grayscale Color Balancing (Neutral Alignment)
+To ensure consistent neutrality (gray tracking) across different density levels, a specific grayscale patch (the "color balance cell") is selected via optimization:
+* **Search:** The algorithm evaluates each grayscale patch $i \in [gs_0, gs_{23}]$ and simulates scaling the Green and Blue channel coefficients to match Red (forcing $R = G = B$ at patch $i$).
+* **MSE Minimization:** It computes the Mean Squared Error (MSE) of all grayscale patches relative to their average channel values:
+  
+  $$\text{MSE} = \text{mean}\left( (R_{\text{bal}} - \text{avg})^2 + (G_{\text{bal}} - \text{avg})^2 + (B_{\text{bal}} - \text{avg})^2 \right)$$
+
+* **Selection & Scaling:** The patch that minimizes this MSE is chosen as the optimal anchor (with normalized values $cb_r, cb_g, cb_b$). The final color-balanced values for all patches are calculated as:
+
+  $$R_{\text{bal}} = R_{\text{norm}}$$
+
+  $$G_{\text{bal}} = G_{\text{norm}} \times \frac{cb_r}{cb_g}$$
+
+  $$B_{\text{bal}} = B_{\text{norm}} \times \frac{cb_r}{cb_b}$$
+
+### 3. Preserving Transmittance (Bypassed Exposure Scaling)
+To preserve the absolute transmittance values normalized to the film base, the global mid-grey exposure scaling step is bypassed:
+
+$$S_{\text{global}} = 1.0$$
+
+The final corrected patch values used to build the TI3 file for `colprof` are simply:
+
+$$R_{\text{final}} = R_{\text{bal}}$$
+
+$$G_{\text{final}} = G_{\text{bal}}$$
+
+$$B_{\text{final}} = B_{\text{bal}}$$
+

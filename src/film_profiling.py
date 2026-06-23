@@ -75,8 +75,13 @@ class FilmProfile:
         # Camera name
         self.camera_name = data.get('camera_name', 'Unknown')
 
-        # Crosstalk correction matrix (3x3) - bypassed since linear values are already crosstalk corrected
-        self.crosstalk_matrix = np.eye(3, dtype=np.float64)
+        # Crosstalk correction matrix (3x3)
+        ct_profile = data.get('crosstalk_profile', {})
+        cc_matrix = ct_profile.get('crosstalk_correction_matrix', None)
+        if cc_matrix is not None:
+            self.crosstalk_matrix = np.array(cc_matrix, dtype=np.float64)
+        else:
+            self.crosstalk_matrix = np.eye(3, dtype=np.float64)
 
         # Targets — use first target by default
         targets = data.get('targets', [])
@@ -86,14 +91,37 @@ class FilmProfile:
         self.target_name = target.get('name', 'Target 1')
         self.target_iso = target.get('iso', 100)
         self.target_shutter = target.get('shutter', '1/8s')
-        self.patches = target.get('patches', {})
 
         # Film base values
         fb = data.get('film_base', {})
+        fb_r = fb.get('r', {}).get('avg', 0.0)
+        fb_g = fb.get('g', {}).get('avg', 0.0)
+        fb_b = fb.get('b', {}).get('avg', 0.0)
+
+        # Scale factors to map film base average values to 55000.0
+        scale_r = 55000.0 / fb_r if fb_r > 0 else 1.0
+        scale_g = 55000.0 / fb_g if fb_g > 0 else 1.0
+        scale_b = 55000.0 / fb_b if fb_b > 0 else 1.0
+
+        # Scale all patch values by the film base
+        self.patches = {}
+        for p_name, p_val in target.get('patches', {}).items():
+            self.patches[p_name] = {
+                'r': p_val.get('r', 0.0) * scale_r,
+                'g': p_val.get('g', 0.0) * scale_g,
+                'b': p_val.get('b', 0.0) * scale_b
+            }
+
+        # Set the normalized film base average values to 55000.0
         self.film_base = {
-            'r_avg': fb.get('r', {}).get('avg', 0.0),
-            'g_avg': fb.get('g', {}).get('avg', 0.0),
-            'b_avg': fb.get('b', {}).get('avg', 0.0),
+            'r_avg': 55000.0,
+            'g_avg': 55000.0,
+            'b_avg': 55000.0,
+        }
+        self.raw_film_base = {
+            'r_avg': fb_r,
+            'g_avg': fb_g,
+            'b_avg': fb_b,
         }
         self.film_base_iso = fb.get('iso', 100)
         self.film_base_shutter = fb.get('shutter', '1/8s')
@@ -479,18 +507,9 @@ def build_icc_profile(profile, ref_xyz_path, output_dir,
     gs = df.loc[gs_indices]
     gs_rgb = np.array([gs['r'].tolist(), gs['g'].tolist(), gs['b'].tolist()])
 
-    # Scale the correction matrix by mid-grey scaling
-    if mid_grey_patch in df.index:
-        mid_grey_rgb = df.loc[mid_grey_patch][['r', 'g', 'b']].to_numpy()
-        avg_corrected_mid = np.average(crosstalk_correction_mat.dot(mid_grey_rgb))
-        if avg_corrected_mid > 0:
-            global_scale_factor = mid_grey_scaling / avg_corrected_mid
-        else:
-            global_scale_factor = 1.0
-    else:
-        global_scale_factor = 1.0
-
-    log(f"  Scale correction matrix by: {global_scale_factor:.6f}")
+    # Bypassed mid-grey scaling to preserve transmittance relative to the film base
+    global_scale_factor = 1.0
+    log(f"  Scale correction matrix by: {global_scale_factor:.6f} (mid-grey scaling bypassed)")
     crosstalk_correction_mat *= global_scale_factor
 
     # Compute corrected grayscale values
@@ -863,3 +882,55 @@ def download_and_parse_reference_file(url_or_path, cache_dir, prompt_zip_callbac
         raise ValueError("No valid patch data parsed.")
         
     return patches, loaded_filename, reference_dir
+
+
+def convert_raw_image(img, profile, clut_path, shutter_str, exposure_comp=1.0, post_correction_gamma=1.0, half=True, film_base_rgb=None):
+    """Dynamically scales raw film base and converts RAW image to positive sRGB using the C++ backend."""
+    def parse_shutter_speed(shutter_str):
+        s = shutter_str.rstrip('s')
+        if '/' in s:
+            parts = s.split('/')
+            return int(parts[0]), int(parts[1])
+        else:
+            val = float(s)
+            if val.is_integer():
+                return int(val), 1
+            else:
+                return int(round(val * 10.0)), 10
+
+    # Calculate dynamic film base normalization factors based on scan exposure
+    if film_base_rgb is not None:
+        fb_r, fb_g, fb_b = film_base_rgb
+    else:
+        fb_r = profile.raw_film_base['r_avg']
+        fb_g = profile.raw_film_base['g_avg']
+        fb_b = profile.raw_film_base['b_avg']
+
+    # Compute exposure ratio between film base capture and final scan capture
+    base_num, base_den = parse_shutter_speed(profile.film_base_shutter)
+    scan_num, scan_den = parse_shutter_speed(shutter_str)
+    t_base = base_num / base_den
+    t_scan = scan_num / scan_den
+    exposure_ratio = t_base / t_scan
+
+    # Scale factors to map film base at current exposure to 55000.0
+    scale_r = (55000.0 / fb_r) * exposure_ratio if fb_r > 0 else 1.0
+    scale_g = (55000.0 / fb_g) * exposure_ratio if fb_g > 0 else 1.0
+    scale_b = (55000.0 / fb_b) * exposure_ratio if fb_b > 0 else 1.0
+
+    # Merge normalization scale factors into crosstalk matrix on the fly (column-wise)
+    raw_crosstalk = np.array(profile.crosstalk_matrix)
+    merged_matrix = raw_crosstalk * np.array([scale_r, scale_g, scale_b])
+    flat_merged_matrix = merged_matrix.flatten().tolist()
+
+    return img.to_numpy(
+        half=half,
+        crosstalk_matrix=flat_merged_matrix,
+        it8_profile_path=clut_path,
+        output_profile_path="srgb",
+        profile_film_base=None,
+        film_base=None,
+        exposure_comp=exposure_comp,
+        post_correction_gamma=post_correction_gamma
+    )
+

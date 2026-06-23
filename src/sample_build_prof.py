@@ -613,14 +613,17 @@ class ProfileBuilderAppWindow(Gtk.Window):
             profile = FilmProfile(profile_path)
             self.film_profile = profile
             
-            # Setup crosstalk matrix
-            self.crosstalk_matrix = profile.crosstalk_matrix.flatten().tolist()
+            # Setup raw film base values
+            fb_r = profile.raw_film_base['r_avg']
+            fb_g = profile.raw_film_base['g_avg']
+            fb_b = profile.raw_film_base['b_avg']
             
-            # Setup profile film base values
-            r_avg = int(round(profile.film_base['r_avg']))
-            g_avg = int(round(profile.film_base['g_avg']))
-            b_avg = int(round(profile.film_base['b_avg']))
-            self.profile_film_base = [r_avg, g_avg, b_avg]
+            # Setup profile film base values (raw measured values)
+            self.profile_film_base = [int(round(fb_r)), int(round(fb_g)), int(round(fb_b))]
+            r_avg, g_avg, b_avg = self.profile_film_base
+            
+            # Setup raw crosstalk matrix (to be merged with scale factors dynamically during capture)
+            self.crosstalk_matrix = profile.crosstalk_matrix.flatten().tolist()
 
 
 
@@ -747,7 +750,7 @@ class ProfileBuilderAppWindow(Gtk.Window):
         capture_thread.daemon = True
         capture_thread.start()
 
-    def background_capture_and_convert(self, start_shutter_str, is_ae, should_apply_it8, exposure_comp, gamma_val):
+    def background_capture_and_convert(self, start_shutter_str, is_ae, should_apply_it8, exposure_comp, gamma_val, film_base_rgb=None):
         if self.last_captured_image is not None:
             try:
                 self.last_captured_image.discard()
@@ -794,15 +797,15 @@ class ProfileBuilderAppWindow(Gtk.Window):
             
             if should_apply_it8:
                 print("[sample_build_prof] Applying C++ IT8 & Crosstalk Correction...")
-                arr = img.to_numpy(
-                    half=True,
-                    crosstalk_matrix=self.crosstalk_matrix,
-                    it8_profile_path=self.built_clut_icc_path,
-                    output_profile_path="srgb",
-                    profile_film_base=None,
-                    film_base=None,
+                arr = film_profiling.convert_raw_image(
+                    img=img,
+                    profile=self.film_profile,
+                    clut_path=self.built_clut_icc_path,
+                    shutter_str=final_shutter_str,
                     exposure_comp=exposure_comp,
-                    post_correction_gamma=gamma_val
+                    post_correction_gamma=gamma_val,
+                    half=True,
+                    film_base_rgb=film_base_rgb
                 )
             else:
                 print("[sample_build_prof] Fetching raw/uncorrected preview...")
