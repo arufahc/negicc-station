@@ -192,6 +192,22 @@ class FilmProfilingAppWindow(Gtk.Window):
                 border-radius: 6px;
                 padding: 10px;
             }
+            .tool-btn {
+                background-color: #2c2c2c;
+                color: #e0e0e0;
+                border: 1px solid #444444;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: bold;
+            }
+            .tool-btn:hover {
+                background-color: #3d3d3d;
+            }
+            .tool-btn:disabled {
+                color: #666666;
+                background-color: #1e1e1e;
+                border-color: #2a2a2a;
+            }
             .capture-btn:hover {
                 background-image: linear-gradient(to bottom, #30bc5a, #2ea44f);
             }
@@ -375,6 +391,35 @@ class FilmProfilingAppWindow(Gtk.Window):
         # Page 1: Target (IT8) Tab
         self.target_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         self.target_box.get_style_context().add_class("preview-container")
+
+        # Target Toolbar
+        target_tb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.target_box.pack_start(target_tb, False, False, 5)
+
+        self.btn_rotate_target = Gtk.Button(label="Rotate 90°")
+        self.btn_rotate_target.get_style_context().add_class("tool-btn")
+        self.btn_rotate_target.set_sensitive(False)
+        self.btn_rotate_target.connect("clicked", lambda w: self.rotate_active_tab())
+        target_tb.pack_start(self.btn_rotate_target, False, False, 0)
+
+        self.btn_hflip_target = Gtk.Button(label="H-Flip")
+        self.btn_hflip_target.get_style_context().add_class("tool-btn")
+        self.btn_hflip_target.set_sensitive(False)
+        self.btn_hflip_target.connect("clicked", lambda w: self.hflip_active_tab())
+        target_tb.pack_start(self.btn_hflip_target, False, False, 0)
+
+        self.btn_vflip_target = Gtk.Button(label="V-Flip")
+        self.btn_vflip_target.get_style_context().add_class("tool-btn")
+        self.btn_vflip_target.set_sensitive(False)
+        self.btn_vflip_target.connect("clicked", lambda w: self.vflip_active_tab())
+        target_tb.pack_start(self.btn_vflip_target, False, False, 0)
+
+        self.btn_crop_target = Gtk.Button(label="Crop to Selection")
+        self.btn_crop_target.get_style_context().add_class("tool-btn")
+        self.btn_crop_target.set_sensitive(False)
+        self.btn_crop_target.connect("clicked", lambda w: self.crop_active_tab())
+        target_tb.pack_start(self.btn_crop_target, False, False, 0)
+
         self.target_stack = Gtk.Stack()
         self.target_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
         self.target_stack.set_transition_duration(150)
@@ -408,6 +453,35 @@ class FilmProfilingAppWindow(Gtk.Window):
         # Page 2: Film Base Tab
         self.base_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         self.base_box.get_style_context().add_class("preview-container")
+
+        # Base Toolbar
+        base_tb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.base_box.pack_start(base_tb, False, False, 5)
+
+        self.btn_rotate_base = Gtk.Button(label="Rotate 90°")
+        self.btn_rotate_base.get_style_context().add_class("tool-btn")
+        self.btn_rotate_base.set_sensitive(False)
+        self.btn_rotate_base.connect("clicked", lambda w: self.rotate_active_tab())
+        base_tb.pack_start(self.btn_rotate_base, False, False, 0)
+
+        self.btn_hflip_base = Gtk.Button(label="H-Flip")
+        self.btn_hflip_base.get_style_context().add_class("tool-btn")
+        self.btn_hflip_base.set_sensitive(False)
+        self.btn_hflip_base.connect("clicked", lambda w: self.hflip_active_tab())
+        base_tb.pack_start(self.btn_hflip_base, False, False, 0)
+
+        self.btn_vflip_base = Gtk.Button(label="V-Flip")
+        self.btn_vflip_base.get_style_context().add_class("tool-btn")
+        self.btn_vflip_base.set_sensitive(False)
+        self.btn_vflip_base.connect("clicked", lambda w: self.vflip_active_tab())
+        base_tb.pack_start(self.btn_vflip_base, False, False, 0)
+
+        self.btn_crop_base = Gtk.Button(label="Crop to Selection")
+        self.btn_crop_base.get_style_context().add_class("tool-btn")
+        self.btn_crop_base.set_sensitive(False)
+        self.btn_crop_base.connect("clicked", lambda w: self.crop_active_tab())
+        base_tb.pack_start(self.btn_crop_base, False, False, 0)
+
         self.base_stack = Gtk.Stack()
         self.base_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
         self.base_stack.set_transition_duration(150)
@@ -595,6 +669,7 @@ class FilmProfilingAppWindow(Gtk.Window):
         has_profile = self.calib is not None
         self.capture_it8_btn.set_sensitive(sensitive and has_profile)
         self.capture_base_btn.set_sensitive(sensitive and has_profile)
+        self.update_toolbar_sensitivities()
 
     def on_ae_toggled(self, button):
         self.shutter_combo.set_sensitive(not button.get_active())
@@ -761,6 +836,7 @@ class FilmProfilingAppWindow(Gtk.Window):
                 else:
                     self.normalized_selection_target = None
                 self.update_histograms()
+                self.update_toolbar_sensitivities()
             widget.queue_draw()
             return True
         return False
@@ -820,6 +896,7 @@ class FilmProfilingAppWindow(Gtk.Window):
                 else:
                     self.normalized_selection_base = None
                 self.update_histograms()
+                self.update_toolbar_sensitivities()
             widget.queue_draw()
             return True
         return False
@@ -999,6 +1076,7 @@ class FilmProfilingAppWindow(Gtk.Window):
             self.notebook.set_current_page(1)
 
         self.update_histograms()
+        self.update_toolbar_sensitivities()
 
     def on_capture_failure(self, err_msg):
         self.spinner.stop()
@@ -1056,6 +1134,149 @@ class FilmProfilingAppWindow(Gtk.Window):
             self.refresh_preview_image(0)
         if self.current_pixbuf_base:
             self.refresh_preview_image(1)
+
+    def update_pixbuf_from_arr(self, page):
+        if page == 0:
+            arr_cc = self.arr_cc_target
+            if arr_cc is None:
+                self.current_pixbuf_target = None
+                return
+            h, w, c = arr_cc.shape
+            arr_8bit = (arr_cc >> 8).astype(np.uint8)
+            glib_bytes = GLib.Bytes.new(arr_8bit.tobytes())
+            self.current_pixbuf_target = GdkPixbuf.Pixbuf.new_from_bytes(
+                glib_bytes, GdkPixbuf.Colorspace.RGB, False, 8, w, h, w * 3
+            )
+        else:
+            arr_cc = self.arr_cc_base
+            if arr_cc is None:
+                self.current_pixbuf_base = None
+                return
+            h, w, c = arr_cc.shape
+            arr_8bit = (arr_cc >> 8).astype(np.uint8)
+            glib_bytes = GLib.Bytes.new(arr_8bit.tobytes())
+            self.current_pixbuf_base = GdkPixbuf.Pixbuf.new_from_bytes(
+                glib_bytes, GdkPixbuf.Colorspace.RGB, False, 8, w, h, w * 3
+            )
+
+    def rotate_active_tab(self):
+        page_num = self.notebook.get_current_page()
+        if page_num == 0:
+            if self.arr_cc_target is not None:
+                self.arr_raw_target = np.rot90(self.arr_raw_target, k=-1)
+                self.arr_cc_target = np.rot90(self.arr_cc_target, k=-1)
+                self.normalized_selection_target = None
+                self.update_pixbuf_from_arr(0)
+                self.refresh_preview_image(0)
+                self.update_histograms()
+                self.update_toolbar_sensitivities()
+        else:
+            if self.arr_cc_base is not None:
+                self.arr_raw_base = np.rot90(self.arr_raw_base, k=-1)
+                self.arr_cc_base = np.rot90(self.arr_cc_base, k=-1)
+                self.normalized_selection_base = None
+                self.update_pixbuf_from_arr(1)
+                self.refresh_preview_image(1)
+                self.update_histograms()
+                self.update_toolbar_sensitivities()
+
+    def hflip_active_tab(self):
+        page_num = self.notebook.get_current_page()
+        if page_num == 0:
+            if self.arr_cc_target is not None:
+                self.arr_raw_target = np.fliplr(self.arr_raw_target)
+                self.arr_cc_target = np.fliplr(self.arr_cc_target)
+                self.normalized_selection_target = None
+                self.update_pixbuf_from_arr(0)
+                self.refresh_preview_image(0)
+                self.update_histograms()
+                self.update_toolbar_sensitivities()
+        else:
+            if self.arr_cc_base is not None:
+                self.arr_raw_base = np.fliplr(self.arr_raw_base)
+                self.arr_cc_base = np.fliplr(self.arr_cc_base)
+                self.normalized_selection_base = None
+                self.update_pixbuf_from_arr(1)
+                self.refresh_preview_image(1)
+                self.update_histograms()
+                self.update_toolbar_sensitivities()
+
+    def vflip_active_tab(self):
+        page_num = self.notebook.get_current_page()
+        if page_num == 0:
+            if self.arr_cc_target is not None:
+                self.arr_raw_target = np.flipud(self.arr_raw_target)
+                self.arr_cc_target = np.flipud(self.arr_cc_target)
+                self.normalized_selection_target = None
+                self.update_pixbuf_from_arr(0)
+                self.refresh_preview_image(0)
+                self.update_histograms()
+                self.update_toolbar_sensitivities()
+        else:
+            if self.arr_cc_base is not None:
+                self.arr_raw_base = np.flipud(self.arr_raw_base)
+                self.arr_cc_base = np.flipud(self.arr_cc_base)
+                self.normalized_selection_base = None
+                self.update_pixbuf_from_arr(1)
+                self.refresh_preview_image(1)
+                self.update_histograms()
+                self.update_toolbar_sensitivities()
+
+    def crop_active_tab(self):
+        page_num = self.notebook.get_current_page()
+        if page_num == 0:
+            if self.arr_cc_target is not None and self.normalized_selection_target is not None:
+                nx1, ny1, nx2, ny2 = self.normalized_selection_target
+                h, w, _ = self.arr_cc_target.shape
+                x1, x2 = int(nx1 * w), int(nx2 * w)
+                y1, y2 = int(ny1 * h), int(ny2 * h)
+                if x2 > x1 and y2 > y1:
+                    self.arr_raw_target = self.arr_raw_target[y1:y2, x1:x2]
+                    self.arr_cc_target = self.arr_cc_target[y1:y2, x1:x2]
+                    self.normalized_selection_target = None
+                    self.update_pixbuf_from_arr(0)
+                    self.refresh_preview_image(0)
+                    self.update_histograms()
+                    self.update_toolbar_sensitivities()
+        else:
+            if self.arr_cc_base is not None and self.normalized_selection_base is not None:
+                nx1, ny1, nx2, ny2 = self.normalized_selection_base
+                h, w, _ = self.arr_cc_base.shape
+                x1, x2 = int(nx1 * w), int(nx2 * w)
+                y1, y2 = int(ny1 * h), int(ny2 * h)
+                if x2 > x1 and y2 > y1:
+                    self.arr_raw_base = self.arr_raw_base[y1:y2, x1:x2]
+                    self.arr_cc_base = self.arr_cc_base[y1:y2, x1:x2]
+                    self.normalized_selection_base = None
+                    self.update_pixbuf_from_arr(1)
+                    self.refresh_preview_image(1)
+                    self.update_histograms()
+                    self.update_toolbar_sensitivities()
+
+    def update_toolbar_sensitivities(self):
+        # Target tab buttons
+        has_target = self.arr_cc_target is not None
+        has_target_selection = self.normalized_selection_target is not None
+        if hasattr(self, 'btn_rotate_target'):
+            self.btn_rotate_target.set_sensitive(has_target)
+        if hasattr(self, 'btn_hflip_target'):
+            self.btn_hflip_target.set_sensitive(has_target)
+        if hasattr(self, 'btn_vflip_target'):
+            self.btn_vflip_target.set_sensitive(has_target)
+        if hasattr(self, 'btn_crop_target'):
+            self.btn_crop_target.set_sensitive(has_target and has_target_selection)
+
+        # Base tab buttons
+        has_base = self.arr_cc_base is not None
+        has_base_selection = self.normalized_selection_base is not None
+        if hasattr(self, 'btn_rotate_base'):
+            self.btn_rotate_base.set_sensitive(has_base)
+        if hasattr(self, 'btn_hflip_base'):
+            self.btn_hflip_base.set_sensitive(has_base)
+        if hasattr(self, 'btn_vflip_base'):
+            self.btn_vflip_base.set_sensitive(has_base)
+        if hasattr(self, 'btn_crop_base'):
+            self.btn_crop_base.set_sensitive(has_base and has_base_selection)
 
     def on_destroy(self, widget):
         if self.camera_session:
