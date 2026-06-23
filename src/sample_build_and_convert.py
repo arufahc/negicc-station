@@ -30,17 +30,14 @@ def parse_shutter_speed(shutter_str):
 
 def main():
     parser = argparse.ArgumentParser(description="Build profile and convert raw ARW image to TIFF.")
-    # Positional arguments (optional)
-    parser.add_argument("profile_pos", nargs='?', help="Path to the input film profile JSON.")
-    parser.add_argument("raw_pos", nargs='?', help="Path to the input raw image (e.g. sample.ARW).")
-    parser.add_argument("output_pos", nargs='?', help="Path to the output TIFF file.")
-
-    # Flag/Keyword arguments for backward compatibility
-    parser.add_argument("--profile", help="Path to the input film profile JSON.")
+    parser.add_argument("--profile", default="profiles/profile_Portra 400_20260623_000121.json",
+                        help="Path to the input film profile JSON.")
     parser.add_argument("--reference", default="http://www.colorreference.de/targets/R190808.zip",
                         help="URL or local path of the IT8 reference file.")
-    parser.add_argument("--raw", help="Path to the input raw image.")
-    parser.add_argument("--output", help="Path to the output TIFF file.")
+    parser.add_argument("--raw", default="sample.ARW",
+                        help="Path to the input raw image (e.g. sample.ARW).")
+    parser.add_argument("--output", default="build/sample_converted.tiff",
+                        help="Path to the output TIFF file.")
     parser.add_argument("--full", action="store_true",
                         help="Use full size rendering instead of half size.")
     parser.add_argument("--exposure-comp", type=float, default=1.0,
@@ -50,10 +47,10 @@ def main():
     
     args = parser.parse_args()
 
-    # Determine final values, prioritizing positional, then flag, then default
-    profile_path = args.profile_pos or args.profile or "profiles/profile_Portra 400_20260623_000121.json"
-    raw_path = args.raw_pos or args.raw or "sample.ARW"
-    output_path = args.output_pos or args.output or "build/sample_converted.tiff"
+    # Determine final values from named arguments
+    profile_path = args.profile
+    raw_path = args.raw
+    output_path = args.output
 
     # 1. Load film profile
     print(f"Loading Film Profile: {profile_path}")
