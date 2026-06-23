@@ -160,7 +160,7 @@ class FilmProfilingAppWindow(Gtk.Window):
             .capture-btn:hover {
                 background-image: linear-gradient(to bottom, #30bc5a, #2ea44f);
             }
-            .capture-btn:disabled, .capture-btn:insensitive {
+            .capture-btn:disabled {
                 background-image: none;
                 background-color: #444444;
                 color: #888888;
@@ -335,7 +335,6 @@ class FilmProfilingAppWindow(Gtk.Window):
         # CENTER NOTEBOOK
         # =====================================================================
         self.notebook = Gtk.Notebook()
-        self.notebook.connect("switch-page", self.on_notebook_page_changed)
         main_box.pack_start(self.notebook, True, True, 0)
 
         # Page 1: Target (IT8) Tab
@@ -486,7 +485,8 @@ class FilmProfilingAppWindow(Gtk.Window):
 
         self.show_all()
 
-        # Connect resize signal
+        # Connect signals after widgets are fully constructed
+        self.notebook.connect("switch-page", self.on_notebook_page_changed)
         self.connect("size-allocate", self.on_window_resized)
 
         # Camera polling initialization
@@ -614,6 +614,8 @@ class FilmProfilingAppWindow(Gtk.Window):
         return arr_raw, arr_cc
 
     def update_histograms(self):
+        if not hasattr(self, 'right_stack') or self.right_stack is None:
+            return
         page_num = self.notebook.get_current_page()
         if page_num == 0:
             arr_raw = self.arr_raw_target
