@@ -88,10 +88,51 @@ def main():
     clut_path = res['clut_icc_path']
     print(f"Built ICC Profile saved to: {clut_path}")
     
+    # Create self-contained JSON profile data
+    import base64
+    import copy
+    
+    with open(clut_path, 'rb') as f_icc:
+        icc_bytes = f_icc.read()
+    icc_b64 = base64.b64encode(icc_bytes).decode('utf-8')
+    
+    sc_data = copy.deepcopy(profile.raw_data)
+    sc_data['trc_curves'] = {
+        'r': list(res['trc_curves'][0]),
+        'g': list(res['trc_curves'][1]),
+        'b': list(res['trc_curves'][2])
+    }
+    sc_data['icc_profile_base64'] = icc_b64
+    
+    # Save to temp location
+    temp_json_fd, temp_json_path = tempfile.mkstemp(suffix=".json", prefix="self_contained_profile_")
+    with os.fdopen(temp_json_fd, 'w') as f_json:
+        json.dump(sc_data, f_json, indent=2)
+    print(f"Saved self-contained profile JSON to: {temp_json_path}")
+    
+    # Also save to a predictable workspace build/ location for easy inspection
+    workspace_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    inspection_json_path = os.path.join(workspace_root, "build", "self_contained_profile.json")
+    try:
+        os.makedirs(os.path.dirname(inspection_json_path), exist_ok=True)
+        with open(inspection_json_path, 'w') as f_inspect:
+            json.dump(sc_data, f_inspect, indent=2)
+        print(f"Saved a copy of self-contained profile JSON for inspection to: {inspection_json_path}")
+    except Exception as e:
+        print(f"Warning: could not write inspection JSON copy: {e}")
+    
+    # Load it cleanly again
+    print("Loading self-contained Film Profile from temp JSON...")
+    sc_profile = FilmProfile(temp_json_path)
+    
     # 4. Convert RAW to TIFF using C++ to_numpy and save with imageio
     print(f"Loading RAW image: {args.raw}")
     if not os.path.exists(args.raw):
         print(f"Error: Raw file {args.raw} not found.")
+        try:
+            os.remove(temp_json_path)
+        except Exception:
+            pass
         sys.exit(1)
         
     half_size = not args.full
@@ -102,31 +143,39 @@ def main():
         filepaths=[args.raw]
     )
     
-    if hasattr(film_profiling, 'convert_raw_image'):
-        print(f"Applying dynamic film base scaling and IT8 profile (half size: {half_size})...")
-        arr = film_profiling.convert_raw_image(
-            img=img,
-            profile=profile,
-            clut_path=clut_path,
-            shutter_str="1/8s",
-            exposure_comp=args.exposure_comp,
-            post_correction_gamma=args.gamma,
-            half=half_size
-        )
-    else:
-        print(f"Applying HEAD clean conversion (no dynamic scaling, half size: {half_size})...")
-        raw_crosstalk = np.array(profile.crosstalk_matrix)
-        flat_merged_matrix = raw_crosstalk.flatten().tolist()
-        arr = img.to_numpy(
-            half=half_size,
-            crosstalk_matrix=flat_merged_matrix,
-            it8_profile_path=clut_path,
-            output_profile_path="srgb",
-            profile_film_base=None,
-            film_base=None,
-            exposure_comp=args.exposure_comp,
-            post_correction_gamma=args.gamma
-        )
+    temp_json_file_to_remove = temp_json_path
+    try:
+        if hasattr(film_profiling, 'convert_raw_image'):
+            print(f"Applying dynamic film base scaling and IT8 profile from self-contained JSON (half size: {half_size})...")
+            arr = film_profiling.convert_raw_image(
+                img=img,
+                profile=sc_profile,
+                clut_path=None,
+                shutter_str="1/8s",
+                exposure_comp=args.exposure_comp,
+                post_correction_gamma=args.gamma,
+                half=half_size
+            )
+        else:
+            print(f"Applying HEAD clean conversion (no dynamic scaling, half size: {half_size})...")
+            raw_crosstalk = np.array(sc_profile.crosstalk_matrix)
+            flat_merged_matrix = raw_crosstalk.flatten().tolist()
+            arr = img.to_numpy(
+                half=half_size,
+                crosstalk_matrix=flat_merged_matrix,
+                it8_profile_path=clut_path,
+                output_profile_path="srgb",
+                profile_film_base=None,
+                film_base=None,
+                exposure_comp=args.exposure_comp,
+                post_correction_gamma=args.gamma
+            )
+    finally:
+        if temp_json_file_to_remove and os.path.exists(temp_json_file_to_remove):
+            try:
+                os.remove(temp_json_file_to_remove)
+            except Exception:
+                pass
     
     print(f"Output array shape: {arr.shape}, dtype: {arr.dtype}")
     print(f"Writing TIFF to: {args.output}")
