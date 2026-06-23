@@ -93,8 +93,9 @@ def compute_hist_and_percentiles(arr):
     return (hist_r_norm, hist_g_norm, hist_b_norm), (p2_r, p2_g, p2_b), (p98_r, p98_g, p98_b), (dr_r, dr_g, dr_b, avg_dr)
 
 class ProfileBuilderAppWindow(Gtk.Window):
-    def __init__(self):
+    def __init__(self, debug=False):
         super().__init__(title="Film Profile Builder & Scanning Client")
+        self.debug = debug
         self.set_default_size(1200, 800)
         self.connect("destroy", self.on_destroy)
 
@@ -670,7 +671,8 @@ class ProfileBuilderAppWindow(Gtk.Window):
                     self.film_profile,
                     self.reference_xyz_path,
                     output_profiles_dir,
-                    progress_callback=log_cb
+                    progress_callback=log_cb,
+                    debug=self.debug
                 )
                 
                 clut_path = res['clut_icc_path']
@@ -930,6 +932,8 @@ if __name__ == "__main__":
     # Support both boolean flag (--dry-run as switch) and string value for backwards compatibility
     parser.add_argument("--dry-run", nargs='?', const=True, default=False,
                         help="Run in dry-run mode (do not save final ICC files, print errors only). Can optionally specify profile JSON directly.")
+    parser.add_argument("--debug", action="store_true",
+                        help="Show debug/matplotlib plots and print extra logging details.")
     
     args = parser.parse_args()
     
@@ -1000,7 +1004,8 @@ if __name__ == "__main__":
                 film_profile,
                 out_json_path,
                 output_profiles_dir,
-                progress_callback=log_cb
+                progress_callback=log_cb,
+                debug=args.debug
             )
             
             clut_path = res['clut_icc_path']
@@ -1024,5 +1029,5 @@ if __name__ == "__main__":
             
     else:
         # Start GUI
-        win = ProfileBuilderAppWindow()
+        win = ProfileBuilderAppWindow(debug=args.debug)
         Gtk.main()

@@ -300,12 +300,13 @@ def _find_best_gs_cell(df, r_coef, g_coef, b_coef):
     return best_cell
 
 
-def _estimate_trc_curves(corrected_gs_rgb, luminance):
+def _estimate_trc_curves(corrected_gs_rgb, luminance, debug=False):
     """Estimate TRC curves using PchipInterpolator.
 
     Parameters:
         corrected_gs_rgb: 3xN array of corrected grayscale RGB values.
         luminance: 1D array of normalized luminance values.
+        debug: If True, plots characteristic and TRC curves using matplotlib.
 
     Returns:
         (r_curve, g_curve, b_curve) — each a 4096-point array.
@@ -336,6 +337,42 @@ def _estimate_trc_curves(corrected_gs_rgb, luminance):
     r_curve = np.clip(interp_r(xs), 0, 1)
     g_curve = np.clip(interp_g(xs), 0, 1)
     b_curve = np.clip(interp_b(xs), 0, 1)
+
+    if debug:
+        try:
+            import matplotlib.pyplot as plt
+            # Pick a o_min such that optical density of the lightest patch has OD=0.
+            o_min = corrected_gs_rgb.max()
+            r_density = np.vectorize(lambda x: math.log10(o_min / x) if x > 0 else 0.0)(corrected_gs_rgb[0])
+            g_density = np.vectorize(lambda x: math.log10(o_min / x) if x > 0 else 0.0)(corrected_gs_rgb[1])
+            b_density = np.vectorize(lambda x: math.log10(o_min / x) if x > 0 else 0.0)(corrected_gs_rgb[2])
+            log_lx = np.vectorize(lambda x: math.log10(x / luminance.max()) if x > 0 else -10.0)(luminance)
+
+            plt.figure("Measured Characteristic Curves")
+            plt.plot(log_lx, r_density, 'rx-', label='R density over Log(lx)')
+            plt.plot(log_lx, g_density, 'gx-', label='G density over Log(lx)')
+            plt.plot(log_lx, b_density, 'bx-', label='B density over Log(lx)')
+            plt.title('Measured Characteristic Curves')
+            plt.xlabel('Log-Exposure (lx)')
+            plt.ylabel('Density')
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+
+            # Plot a graph to show the interpolated tone curves.
+            plt.figure("Computed TRC Curves")
+            plt.title('Computed TRC Curves')
+            plt.plot(corrected_gs_r, train_gs_luminance, 'r*', xs, r_curve, 'r-')
+            plt.plot(corrected_gs_g, train_gs_luminance, 'g*', xs, g_curve, 'g-')
+            plt.plot(corrected_gs_b, train_gs_luminance, 'b*', xs, b_curve, 'b-')
+            plt.xlabel('Input value')
+            plt.ylabel('Output value')
+            plt.grid(True)
+            plt.show()
+        except ImportError:
+            print("Warning: matplotlib is required for plotting but could not be imported.")
+        except Exception as e:
+            print(f"Warning: Failed to plot graphs: {e}")
 
     return r_curve, g_curve, b_curve
 
@@ -369,7 +406,8 @@ def build_icc_profile(profile, ref_xyz_path, output_dir,
                       mid_grey_patch='gs14',
                       whitest_patch_scaling=0.75,
                       mid_grey_scaling=10000,
-                      progress_callback=None):
+                      progress_callback=None,
+                      debug=False):
     """Full ICC profile build pipeline.
 
     Follows the same steps as negicc/build_prof.py.
@@ -460,7 +498,7 @@ def build_icc_profile(profile, ref_xyz_path, output_dir,
 
     luminance = gs['refY'] / (gs['refY'].max() / whitest_patch_scaling)
 
-    r_curve, g_curve, b_curve = _estimate_trc_curves(corrected_gs_rgb, luminance)
+    r_curve, g_curve, b_curve = _estimate_trc_curves(corrected_gs_rgb, luminance, debug=debug)
     log(f"  TRC curves computed ({len(r_curve)} points each).")
 
     # Step 6: Compute positive RGB values for all patches
