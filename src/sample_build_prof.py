@@ -45,7 +45,7 @@ if os.path.exists(lib_path):
 import negicc_station
 import auto_exposure
 import film_profiling
-from film_profiling import FilmProfile
+from film_profiling import FilmProfile, download_and_parse_reference_file
 
 # Shutter speeds supported
 SHUTTER_SPEEDS = auto_exposure.SHUTTER_SPEEDS
@@ -61,138 +61,6 @@ def parse_shutter_speed(shutter_str):
             return int(val), 1
         else:
             return int(round(val * 10.0)), 10
-
-def download_and_parse_reference_file(url_or_path, cache_dir, prompt_zip_callback=None):
-    """
-    Downloads the file if it's a URL, or reads it from a local path,
-    caches it. If it is a zip file, lists the files inside and uses prompt_zip_callback
-    to ask the user which file to use (or selects a default if none provided/only one file).
-    If it is a .txt/.it8 file, parses it directly.
-    Returns: (patches_dict, loaded_filename)
-    """
-    if url_or_path.startswith(('http://', 'https://')):
-        os.makedirs(cache_dir, exist_ok=True)
-        filename = os.path.basename(url_or_path)
-        cache_path = os.path.join(cache_dir, filename)
-        
-        # Download if not already cached
-        if not os.path.exists(cache_path):
-            print(f"Downloading reference from {url_or_path}...")
-            urllib.request.urlretrieve(url_or_path, cache_path)
-        local_path = cache_path
-    else:
-        local_path = url_or_path
-
-    if not os.path.exists(local_path):
-        raise FileNotFoundError(f"Reference file not found: {local_path}")
-
-    # Check if zip file
-    is_zip = zipfile.is_zipfile(local_path)
-    
-    if is_zip:
-        with zipfile.ZipFile(local_path, 'r') as z:
-            ref_filenames = [name for name in z.namelist() if name.lower().endswith(('.txt', '.it8'))]
-            if not ref_filenames:
-                raise ValueError("No .txt or .it8 files found in the ZIP archive.")
-            
-            selected_file = None
-            if len(ref_filenames) == 1:
-                selected_file = ref_filenames[0]
-            else:
-                # If there are multiple files, use callback if provided, otherwise fallback to heuristics
-                if prompt_zip_callback:
-                    selected_file = prompt_zip_callback(ref_filenames)
-                
-                if not selected_file:
-                    # Fallback heuristics
-                    zip_basename = os.path.splitext(os.path.basename(url_or_path))[0]
-                    # 1. Prefer file matching base name and not in Extras
-                    for name in ref_filenames:
-                        if "extras" not in name.lower() and "macosx" not in name.lower():
-                            base_name_in_zip = os.path.splitext(os.path.basename(name))[0]
-                            if base_name_in_zip.lower() == zip_basename.lower():
-                                selected_file = name
-                                break
-                    # 2. Prefer any file not in Extras
-                    if not selected_file:
-                        for name in ref_filenames:
-                            if "extras" not in name.lower() and "liesmich" not in name.lower() and "readme" not in name.lower():
-                                selected_file = name
-                                break
-                    # 3. Fallback to first found
-                    if not selected_file:
-                        selected_file = ref_filenames[0]
-            
-            print(f"Selected reference file from ZIP: {selected_file}")
-            ref_content = z.read(selected_file).decode('utf-8', errors='ignore')
-            loaded_filename = os.path.basename(selected_file)
-    else:
-        with open(local_path, 'r', encoding='utf-8', errors='ignore') as f:
-            ref_content = f.read()
-        loaded_filename = os.path.basename(local_path)
-
-    lines = ref_content.splitlines()
-    
-    begin_data_idx = -1
-    fields = []
-    for idx, line in enumerate(lines):
-        line = line.strip()
-        if line == "BEGIN_DATA":
-            begin_data_idx = idx
-            break
-        if line.startswith("SAMPLE_ID"):
-            fields = re.split(r'\s+', line)
-    
-    if begin_data_idx == -1:
-        raise ValueError("Invalid format: BEGIN_DATA section not found in target file.")
-        
-    if not fields:
-        for idx in range(begin_data_idx - 1, -1, -1):
-            line = lines[idx].strip()
-            if "SAMPLE_ID" in line or "XYZ_X" in line:
-                fields = re.split(r'\s+', line)
-                break
-    
-    if not fields:
-        raise ValueError("Could not find column headers (e.g. SAMPLE_ID, XYZ_X).")
-        
-    col_map = {}
-    for i, col in enumerate(fields):
-        c_upper = col.upper()
-        if c_upper in ('SAMPLE_ID', 'PATCH'):
-            col_map['patch'] = i
-        elif c_upper in ('XYZ_X', 'REFX', 'X'):
-            col_map['X'] = i
-        elif c_upper in ('XYZ_Y', 'REFY', 'Y'):
-            col_map['Y'] = i
-        elif c_upper in ('XYZ_Z', 'REFZ', 'Z'):
-            col_map['Z'] = i
-            
-    if 'patch' not in col_map or 'X' not in col_map or 'Y' not in col_map or 'Z' not in col_map:
-        raise ValueError(f"Could not map all required columns. Found fields: {fields}")
-        
-    patches = {}
-    for idx in range(begin_data_idx + 1, len(lines)):
-        line = lines[idx].strip()
-        if not line or line.startswith("END_DATA"):
-            continue
-        parts = re.split(r'\s+', line)
-        if len(parts) <= max(col_map.values()):
-            continue
-        
-        patch_name = parts[col_map['patch']].lower()
-        try:
-            x_val = float(parts[col_map['X']])
-            y_val = float(parts[col_map['Y']])
-            z_val = float(parts[col_map['Z']])
-            patches[patch_name] = {'X': x_val, 'Y': y_val, 'Z': z_val}
-        except ValueError:
-            continue
-            
-    if not patches:
-        raise ValueError("No valid patch data parsed.")
-        
-    return patches, loaded_filename
 
 def compute_hist_and_percentiles(arr):
     bins = 256
@@ -675,14 +543,13 @@ class ProfileBuilderAppWindow(Gtk.Window):
         def run():
             try:
                 cache_dir = os.path.join(project_dir, "data")
-                patches, loaded_filename = download_and_parse_reference_file(
+                patches, loaded_filename, reference_dir = download_and_parse_reference_file(
                     zip_location, cache_dir, prompt_zip_callback=prompt_zip_callback
                 )
                 
-                # Write to f"{ref_base_name}_ref.json" instead of a hardcoded name
-                os.makedirs(cache_dir, exist_ok=True)
+                # Write to f"{ref_base_name}_ref.json" next to reference file
                 ref_base_name = os.path.splitext(os.path.basename(loaded_filename))[0]
-                out_json_path = os.path.join(cache_dir, f"{ref_base_name}_ref.json")
+                out_json_path = os.path.join(reference_dir, f"{ref_base_name}_ref.json")
                 ref_data = {
                     "description": "IT8.7/2 Reference XYZ values",
                     "source": zip_location,
@@ -1054,5 +921,105 @@ class ProfileBuilderAppWindow(Gtk.Window):
         Gtk.main_quit()
 
 if __name__ == "__main__":
-    win = ProfileBuilderAppWindow()
-    Gtk.main()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Film Profile Builder CLI / GUI")
+    parser.add_argument("--profile", type=str, help="Path to a film profile .json file.")
+    parser.add_argument("--reference", type=str, default="http://www.colorreference.de/targets/R190808.zip",
+                        help="URL or local path of the IT8 reference file (.zip or .txt/.it8). Defaults to R190808.zip.")
+    # Support both boolean flag (--dry-run as switch) and string value for backwards compatibility
+    parser.add_argument("--dry-run", nargs='?', const=True, default=False,
+                        help="Run in dry-run mode (do not save final ICC files, print errors only). Can optionally specify profile JSON directly.")
+    
+    args = parser.parse_args()
+    
+    profile_path = None
+    is_dry_run = False
+    
+    if args.profile:
+        profile_path = args.profile
+        is_dry_run = bool(args.dry_run)
+    elif args.dry_run and args.dry_run is not True:
+        profile_path = args.dry_run
+        is_dry_run = True
+        
+    if profile_path:
+        ref_location = args.reference
+        
+        if is_dry_run:
+            print(f"=== CLI DRY-RUN BUILD ===")
+        else:
+            print(f"=== CLI BUILD & GENERATE PROFILE ===")
+            
+        print(f"Loading Film Profile: {profile_path}")
+        print(f"Reference File: {ref_location}")
+        
+        try:
+            # 1. Download/parse reference target
+            cache_dir = tempfile.gettempdir()
+            patches, loaded_filename, reference_dir = download_and_parse_reference_file(ref_location, cache_dir, prompt_zip_callback=None)
+            
+            ref_base_name = os.path.splitext(os.path.basename(loaded_filename))[0]
+            out_json_path = os.path.join(reference_dir, f"{ref_base_name}_ref.json")
+            ref_data = {
+                "description": "IT8.7/2 Reference XYZ values",
+                "source": ref_location,
+                "patches": patches
+            }
+            with open(out_json_path, 'w') as f:
+                json.dump(ref_data, f, indent=2)
+            
+            print(f"Loaded {len(patches)} reference patches from {loaded_filename}")
+            
+            # 2. Load film profile
+            film_profile = FilmProfile(profile_path)
+            print(f"Film Profile Name: {film_profile.film_name}")
+            
+            # 3. Build ICC Profile
+            if is_dry_run:
+                # Use a temp directory so we do not save final ICC files to the profiles dir
+                tmp_output_dir = tempfile.mkdtemp(prefix="negicc_dry_run_")
+                output_profiles_dir = tmp_output_dir
+            else:
+                output_profiles_dir = os.path.join(project_dir, "profiles")
+                os.makedirs(output_profiles_dir, exist_ok=True)
+            
+            # Define progress callback
+            if is_dry_run:
+                # Do not log individual building steps to keep stdout clean
+                def log_cb(step, detail):
+                    pass
+            else:
+                def log_cb(step, detail):
+                    print(f"[{step}] {detail}")
+                
+            res = film_profiling.build_icc_profile(
+                film_profile,
+                out_json_path,
+                output_profiles_dir,
+                progress_callback=log_cb
+            )
+            
+            clut_path = res['clut_icc_path']
+            profcheck_out = res['profcheck_output']
+            
+            if is_dry_run:
+                print("\n=== DRY-RUN RESULTS ===")
+                shutil.rmtree(tmp_output_dir, ignore_errors=True)
+            else:
+                print("\n=== BUILD SUCCESSFUL ===")
+                print(f"ICC Profile Path: {clut_path}")
+            
+            # Print the results (errors) only
+            for line in profcheck_out.splitlines():
+                if "errors" in line or "Profile check complete" in line:
+                    print(line.strip())
+            
+        except Exception as e:
+            print(f"\nError during build: {e}")
+            sys.exit(1)
+            
+    else:
+        # Start GUI
+        win = ProfileBuilderAppWindow()
+        Gtk.main()

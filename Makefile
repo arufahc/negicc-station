@@ -30,10 +30,13 @@ test_parity: all
 test_live: all
 	./venv/bin/python3 tests/test_live_parity.py
 
+profile_gen_dry_run: all
+	./venv/bin/python3 src/sample_build_prof.py --profile "profiles/profile_Portra 400_20260623_000121.json" --dry-run
+
 clean:
 	rm -rf $(BIN_OUT) negicc_station.egg-info
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	if [ -d "venv" ]; then ./venv/bin/pip uninstall -y negicc_station || true; fi
 
 
-.PHONY: all clean python_lib test_parity test_live
+.PHONY: all clean python_lib test_parity test_live profile_gen_dry_run

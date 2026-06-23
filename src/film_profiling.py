@@ -20,6 +20,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.request
+import zipfile
+import re
 
 import numpy as np
 import pandas as pd
@@ -682,3 +685,143 @@ def apply_negative_correction(image_arr, profile, icc_profile_path=None):
         result = (normalized * 255).astype(np.uint8)
 
     return result
+
+
+def download_and_parse_reference_file(url_or_path, cache_dir, prompt_zip_callback=None):
+    """
+    Downloads the file if it's a URL, or reads it from a local path,
+    caches it. If it is a zip file, lists the files inside and uses prompt_zip_callback
+    to ask the user which file to use (or selects a default if none provided/only one file).
+    If it is a .txt/.it8 file, parses it directly.
+    Returns: (patches_dict, loaded_filename)
+    """
+    if url_or_path.startswith(('http://', 'https://')):
+        import hashlib
+        url_hash = hashlib.sha256(url_or_path.encode('utf-8')).hexdigest()
+        tmp_cache_dir = os.path.join("/tmp", f"negicc_ref_cache_{url_hash}")
+        os.makedirs(tmp_cache_dir, exist_ok=True)
+        filename = os.path.basename(url_or_path)
+        cache_path = os.path.join(tmp_cache_dir, filename)
+        
+        # Download if not already cached in /tmp
+        if not os.path.exists(cache_path):
+            print(f"Downloading reference from {url_or_path} to cache: {cache_path}...")
+            urllib.request.urlretrieve(url_or_path, cache_path)
+        else:
+            print(f"Using cached reference file from: {cache_path}")
+        local_path = cache_path
+        reference_dir = tmp_cache_dir
+    else:
+        local_path = url_or_path
+        reference_dir = os.path.dirname(os.path.abspath(url_or_path))
+
+    if not os.path.exists(local_path):
+        raise FileNotFoundError(f"Reference file not found: {local_path}")
+
+    # Check if zip file
+    is_zip = zipfile.is_zipfile(local_path)
+    
+    if is_zip:
+        with zipfile.ZipFile(local_path, 'r') as z:
+            ref_filenames = [name for name in z.namelist() if name.lower().endswith(('.txt', '.it8'))]
+            if not ref_filenames:
+                raise ValueError("No .txt or .it8 files found in the ZIP archive.")
+            
+            selected_file = None
+            if len(ref_filenames) == 1:
+                selected_file = ref_filenames[0]
+            else:
+                # If there are multiple files, use callback if provided, otherwise fallback to heuristics
+                if prompt_zip_callback:
+                    selected_file = prompt_zip_callback(ref_filenames)
+                
+                if not selected_file:
+                    # Fallback heuristics
+                    zip_basename = os.path.splitext(os.path.basename(url_or_path))[0]
+                    # 1. Prefer file matching base name and not in Extras
+                    for name in ref_filenames:
+                        if "extras" not in name.lower() and "macosx" not in name.lower():
+                            base_name_in_zip = os.path.splitext(os.path.basename(name))[0]
+                            if base_name_in_zip.lower() == zip_basename.lower():
+                                selected_file = name
+                                break
+                    # 2. Prefer any file not in Extras
+                    if not selected_file:
+                        for name in ref_filenames:
+                            if "extras" not in name.lower() and "liesmich" not in name.lower() and "readme" not in name.lower():
+                                selected_file = name
+                                break
+                    # 3. Fallback to first found
+                    if not selected_file:
+                        selected_file = ref_filenames[0]
+            
+            print(f"Selected reference file from ZIP: {selected_file}")
+            ref_content = z.read(selected_file).decode('utf-8', errors='ignore')
+            loaded_filename = os.path.basename(selected_file)
+    else:
+        with open(local_path, 'r', encoding='utf-8', errors='ignore') as f:
+            ref_content = f.read()
+        loaded_filename = os.path.basename(local_path)
+
+    lines = ref_content.splitlines()
+    
+    begin_data_idx = -1
+    fields = []
+    for idx, line in enumerate(lines):
+        line = line.strip()
+        if line == "BEGIN_DATA":
+            begin_data_idx = idx
+            break
+        if line.startswith("SAMPLE_ID"):
+            fields = re.split(r'\s+', line)
+    
+    if begin_data_idx == -1:
+        raise ValueError("Invalid format: BEGIN_DATA section not found in target file.")
+        
+    if not fields:
+        for idx in range(begin_data_idx - 1, -1, -1):
+            line = lines[idx].strip()
+            if "SAMPLE_ID" in line or "XYZ_X" in line:
+                fields = re.split(r'\s+', line)
+                break
+    
+    if not fields:
+        raise ValueError("Could not find column headers (e.g. SAMPLE_ID, XYZ_X).")
+        
+    col_map = {}
+    for i, col in enumerate(fields):
+        c_upper = col.upper()
+        if c_upper in ('SAMPLE_ID', 'PATCH'):
+            col_map['patch'] = i
+        elif c_upper in ('XYZ_X', 'REFX', 'X'):
+            col_map['X'] = i
+        elif c_upper in ('XYZ_Y', 'REFY', 'Y'):
+            col_map['Y'] = i
+        elif c_upper in ('XYZ_Z', 'REFZ', 'Z'):
+            col_map['Z'] = i
+            
+    if 'patch' not in col_map or 'X' not in col_map or 'Y' not in col_map or 'Z' not in col_map:
+        raise ValueError(f"Could not map all required columns. Found fields: {fields}")
+        
+    patches = {}
+    for idx in range(begin_data_idx + 1, len(lines)):
+        line = lines[idx].strip()
+        if not line or line.startswith("END_DATA"):
+            continue
+        parts = re.split(r'\s+', line)
+        if len(parts) <= max(col_map.values()):
+            continue
+        
+        patch_name = parts[col_map['patch']].lower()
+        try:
+            x_val = float(parts[col_map['X']])
+            y_val = float(parts[col_map['Y']])
+            z_val = float(parts[col_map['Z']])
+            patches[patch_name] = {'X': x_val, 'Y': y_val, 'Z': z_val}
+        except ValueError:
+            continue
+            
+    if not patches:
+        raise ValueError("No valid patch data parsed.")
+        
+    return patches, loaded_filename, reference_dir
