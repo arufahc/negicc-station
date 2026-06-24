@@ -9,7 +9,7 @@ from gi.repository import Gtk, Gdk, GLib
 class LauncherWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title="NEGICC Station Launcher")
-        self.set_default_size(700, 260)
+        self.set_default_size(700, 200)
         self.set_resizable(False)
         self.set_position(Gtk.WindowPosition.CENTER)
 
@@ -22,44 +22,44 @@ class LauncherWindow(Gtk.Window):
         css_provider.load_from_data(b"""
             .main-window {
                 background-color: #121212;
-                padding: 20px 24px;
+                padding: 15px 20px;
             }
             .header-title {
                 font-family: 'Inter', 'Outfit', 'sans-serif';
-                font-size: 26px;
+                font-size: 24px;
                 font-weight: 800;
                 color: #ffffff;
             }
             .header-subtitle {
                 font-family: 'Inter', 'Outfit', 'sans-serif';
-                font-size: 13px;
+                font-size: 12px;
                 color: #888888;
-                margin-bottom: 12px;
+                margin-bottom: 8px;
             }
             .card-box {
                 background-color: #1a1a1a;
                 border: 1px solid #2e2e2e;
                 border-radius: 8px;
-                padding: 15px;
+                padding: 10px 12px;
             }
             .card-title {
                 font-family: 'Inter', 'sans-serif';
-                font-size: 16px;
+                font-size: 15px;
                 font-weight: 600;
                 color: #ffffff;
             }
             .card-desc {
                 font-family: 'Inter', 'sans-serif';
-                font-size: 12px;
+                font-size: 11px;
                 color: #aaaaaa;
             }
             .btn-action {
                 font-family: 'Inter', 'sans-serif';
-                font-size: 13px;
+                font-size: 12px;
                 font-weight: bold;
                 color: white;
                 border-radius: 6px;
-                padding: 12px 16px;
+                padding: 8px 12px;
                 border: none;
             }
             .btn-blue {
@@ -88,6 +88,7 @@ class LauncherWindow(Gtk.Window):
         )
 
         self.init_ui()
+
 
 
     def init_ui(self):
@@ -150,7 +151,7 @@ class LauncherWindow(Gtk.Window):
 
     def create_launcher_card(self, title, desc, btn_label, btn_class, target_script):
         # Card container
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         card.get_style_context().add_class("card-box")
 
         # Card Title
