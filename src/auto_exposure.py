@@ -39,8 +39,10 @@ def capture_exposure_frame(shutter_str, half=True, session=None):
         img = session.capture(type=0, shutter_num=num, shutter_den=den)
     else:
         img = negicc_station.capture(type=0, shutter_num=num, shutter_den=den)
-    arr = img.to_numpy(half=half)
-    img.discard()
+    try:
+        arr = img.to_numpy(half=half)
+    finally:
+        img.discard()
     return arr
 
 def calculate_dynamic_range(arr):

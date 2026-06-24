@@ -297,7 +297,7 @@ static void query_and_print_supported_shutter_speeds(CrDeviceHandle deviceHandle
 bool SonyCameraSession::configure_settings() {
     if (m_impl->deviceHandle == 0) return false;
 
-    std::string abs_path = std::filesystem::current_path().string();
+    std::string abs_path = std::filesystem::temp_directory_path().string();
     if (abs_path.empty() || abs_path.back() != '/') {
         abs_path += "/";
     }

@@ -31,13 +31,13 @@ void clear_global_cache() {
 }
 
 CapturedImage::~CapturedImage() {
-    if (g_cached_image_ptr == this) {
+    if (g_cached_image_ptr == this || g_cached_filepaths == m_filepaths) {
         clear_global_cache();
     }
 }
 
 void CapturedImage::discard() {
-    if (g_cached_image_ptr == this) {
+    if (g_cached_image_ptr == this || g_cached_filepaths == m_filepaths) {
         clear_global_cache();
     }
     for (const auto& fp : m_filepaths) {
