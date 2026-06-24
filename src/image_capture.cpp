@@ -12,6 +12,42 @@
 #include "elle_icc_profiles/sRGB_elle_V2_srgbtrc.h"
 #include "dcraw/gamma_curve.h"
 #include "color_conversion.h"
+#include <mutex>
+#include <set>
+
+static std::mutex g_temp_files_mutex;
+static std::set<std::string> g_active_temp_files;
+
+void register_temp_file(const std::string& filepath) {
+    std::lock_guard<std::mutex> lock(g_temp_files_mutex);
+    g_active_temp_files.insert(filepath);
+}
+
+void unregister_temp_file(const std::string& filepath) {
+    std::lock_guard<std::mutex> lock(g_temp_files_mutex);
+    g_active_temp_files.erase(filepath);
+}
+
+bool is_registered_temp_file(const std::string& filepath) {
+    std::lock_guard<std::mutex> lock(g_temp_files_mutex);
+    return g_active_temp_files.find(filepath) != g_active_temp_files.end();
+}
+
+void cleanup_active_temp_files() {
+    std::lock_guard<std::mutex> lock(g_temp_files_mutex);
+    for (const auto& fp : g_active_temp_files) {
+        std::remove(fp.c_str());
+    }
+    g_active_temp_files.clear();
+}
+
+// Global static object to automatically clean up remaining files on module exit / unload
+struct TempFileRegistryDestructor {
+    ~TempFileRegistryDestructor() {
+        cleanup_active_temp_files();
+    }
+};
+static TempFileRegistryDestructor g_temp_file_registry_destructor;
 
 static const CapturedImage* g_cached_image_ptr = nullptr;
 static std::vector<std::string> g_cached_filepaths;
@@ -34,6 +70,12 @@ CapturedImage::~CapturedImage() {
     if (g_cached_image_ptr == this || g_cached_filepaths == m_filepaths) {
         clear_global_cache();
     }
+    for (const auto& fp : m_filepaths) {
+        if (is_registered_temp_file(fp)) {
+            std::remove(fp.c_str());
+            unregister_temp_file(fp);
+        }
+    }
 }
 
 void CapturedImage::discard() {
@@ -41,7 +83,10 @@ void CapturedImage::discard() {
         clear_global_cache();
     }
     for (const auto& fp : m_filepaths) {
-        std::remove(fp.c_str());
+        if (is_registered_temp_file(fp)) {
+            std::remove(fp.c_str());
+            unregister_temp_file(fp);
+        }
     }
     m_filepaths.clear();
 }

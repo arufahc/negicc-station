@@ -2,6 +2,7 @@
 #include "CameraRemote_SDK.h"
 #include "IDeviceCallback.h"
 #include "ICrCameraObjectInfo.h"
+#include "image_capture.h"
 #include <iostream>
 #include <chrono>
 #include <thread>
@@ -396,6 +397,7 @@ bool SonyCameraSession::capture(CaptureType type, CaptureOutput& output) {
 
         std::string filepath = m_impl->callback.downloadedFilename();
         std::cout << "Successfully downloaded: " << filepath << std::endl;
+        register_temp_file(filepath);
         output.filepaths.push_back(filepath);
 
         // Sleep between shots if doing multi-shot/pixel shift to allow sensor settle / processing

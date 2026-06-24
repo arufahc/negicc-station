@@ -23,8 +23,27 @@ project_dir = os.path.dirname(os.path.abspath(__file__))
 if project_dir not in sys.path:
     sys.path.insert(0, project_dir)
 
+import atexit
+import signal
 import negicc_station
 import auto_exposure
+
+def _register_cleanup_handlers():
+    def cleanup():
+        try:
+            negicc_station.cleanup_temp_files()
+        except Exception:
+            pass
+    atexit.register(cleanup)
+    
+    def sig_handler(signum, frame):
+        cleanup()
+        sys.exit(128 + signum)
+        
+    signal.signal(signal.SIGINT, sig_handler)
+    signal.signal(signal.SIGTERM, sig_handler)
+
+_register_cleanup_handlers()
 import crosstalk_calibration
 import base64
 import tempfile

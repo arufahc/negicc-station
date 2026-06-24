@@ -150,7 +150,6 @@ def run_auto_exposure(start_shutter_str, capture_func, progress_callback=None, c
         
         # Format metrics and print to stdout (showing uncompensated values)
         print(f"Auto-Exposure Step [Index {idx}] Shutter: {shutter_str} (ISO {iso}) -> R: {raw_drs[0]:.1f}, G: {raw_drs[1]:.1f}, B: {raw_drs[2]:.1f} | Avg DR: {raw_avg:.1f}")
-        sys.stdout.flush()
         
         if progress_callback:
             progress_callback(idx, shutter_str, iso, raw_drs, raw_avg)

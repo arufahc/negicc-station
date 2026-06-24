@@ -969,12 +969,17 @@ def convert_raw_image(img, profile, clut_path=None, shutter_str=None, exposure_c
             raise ValueError("clut_path is None and profile has no self-contained ICC profile bytes.")
 
     # 1. Determine scanned film base (crosstalk-corrected)
+    p_fb_r = profile.film_base['r_avg']
+    p_fb_g = profile.film_base['g_avg']
+    p_fb_b = profile.film_base['b_avg']
+    print(f"[Conversion] Profile Film Base RGB: R={p_fb_r:.6f}, G={p_fb_g:.6f}, B={p_fb_b:.6f}", file=sys.stdout)
     if film_base_rgb is not None:
         fb_r, fb_g, fb_b = film_base_rgb
+        print(f"[Conversion] Captured Film Base RGB: R={fb_r:.6f}, G={fb_g:.6f}, B={fb_b:.6f}", file=sys.stdout)
     else:
-        fb_r = profile.film_base['r_avg']
-        fb_g = profile.film_base['g_avg']
-        fb_b = profile.film_base['b_avg']
+        fb_r, fb_g, fb_b = p_fb_r, p_fb_g, p_fb_b
+        print("[Conversion] Captured Film Base RGB: None (using profile fallback)", file=sys.stdout)
+    sys.stdout.flush()
 
     # 2. Compute exposure ratio
     if shutter_str is not None:
@@ -1028,9 +1033,52 @@ def convert_raw_image(img, profile, clut_path=None, shutter_str=None, exposure_c
 
     return img.to_numpy(**kwargs)
 
+import sys
+
+def log_memory_usage(label=""):
+    """Logs the RAM (RSS) and GPU/CUDA memory usage to stdout."""
+    # 1. RAM Usage
+    ram_mb = 0.0
+    try:
+        with open('/proc/self/status', 'r') as f:
+            for line in f:
+                if line.startswith('VmRSS:'):
+                    parts = line.split()
+                    ram_mb = float(parts[1]) / 1024.0
+                    break
+    except Exception:
+        pass
+
+    # 2. GPU Memory Usage
+    gpu_str = "N/A"
+    try:
+        import ctypes
+        libcudart = None
+        for p in ['libcudart.so', '/usr/local/cuda/lib64/libcudart.so', 'libcudart.so.10.2', 'libcudart.so.10.0']:
+            try:
+                libcudart = ctypes.CDLL(p)
+                break
+            except OSError:
+                continue
+        if libcudart:
+            libcudart.cudaMemGetInfo.argtypes = [ctypes.POINTER(ctypes.c_size_t), ctypes.POINTER(ctypes.c_size_t)]
+            libcudart.cudaMemGetInfo.restype = ctypes.c_int
+            free_bytes = ctypes.c_size_t()
+            total_bytes = ctypes.c_size_t()
+            if libcudart.cudaMemGetInfo(ctypes.byref(free_bytes), ctypes.byref(total_bytes)) == 0:
+                used_bytes = total_bytes.value - free_bytes.value
+                gpu_str = f"Used: {used_bytes / (1024*1024):.1f} MB / Free: {free_bytes.value / (1024*1024):.1f} MB (Total: {total_bytes.value / (1024*1024):.1f} MB)"
+    except Exception:
+        pass
+
+    prefix = f"[{label}] " if label else ""
+    print(f"{prefix}Memory Status: RAM Process RSS: {ram_mb:.1f} MB | GPU Memory {gpu_str}", file=sys.stdout)
+    sys.stdout.flush()
 
 def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=None, shutter_str=None, exposure_comp=1.0, half=True, film_base_rgb=None, film_base_img=None, pipeline="cuda"):
     """Converts RAW image and saves directly to TIFF in C++ or CUDA without NumPy image copy."""
+    import time
+    t_start = time.time()
     if pipeline == "python":
         import color_conversion
         return color_conversion.convert_raw_to_tiff(
@@ -1105,4 +1153,87 @@ def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=
     else:
         kwargs['it8_profile_path'] = clut_path
 
-    return img.write_tiff(**kwargs)
+    res = img.write_tiff(**kwargs)
+    dur = time.time() - t_start
+    print(f"[Conversion] Finished raw image conversion ({pipeline} pipeline) | Time taken: {dur:.2f}s", file=sys.stdout)
+    log_memory_usage("Conversion")
+    sys.stdout.flush()
+    return res
+
+def convert_raw_to_numpy(img, profile, colorspace="srgb", clut_path=None, shutter_str=None, exposure_comp=1.0, half=True, film_base_rgb=None, film_base_img=None, pipeline="cuda"):
+    """Converts RAW image to NumPy array in C++ or CUDA without saving to disk."""
+    import time
+    t_start = time.time()
+    if pipeline == "python":
+        import color_conversion
+        return color_conversion.convert_raw_to_tiff(
+            img=img, profile=profile, output_path="", colorspace=colorspace,
+            clut_path=clut_path, shutter_str=shutter_str, exposure_comp=exposure_comp,
+            half=half, film_base_rgb=film_base_rgb, film_base_img=film_base_img
+        )
+
+    # Resolve ICC data: prefer in-memory bytes, then fall back to clut_path file
+    icc_bytes = None
+    if clut_path is None:
+        if getattr(profile, 'icc_profile_bytes', None):
+            icc_bytes = profile.icc_profile_bytes
+        else:
+            raise ValueError("clut_path is None and profile has no self-contained ICC profile bytes.")
+
+    if film_base_rgb is not None:
+        fb_r, fb_g, fb_b = film_base_rgb
+    else:
+        fb_r = profile.film_base['r_avg']
+        fb_g = profile.film_base['g_avg']
+        fb_b = profile.film_base['b_avg']
+
+    if shutter_str is not None:
+        scan_num, scan_den = parse_shutter_speed(shutter_str)
+        t_scan = scan_num / scan_den
+    else:
+        t_scan = img.shutter_speed
+
+    if film_base_img is not None:
+        t_base = film_base_img.shutter_speed
+        iso_base = film_base_img.iso
+    else:
+        base_num, base_den = parse_shutter_speed(profile.film_base_shutter)
+        t_base = base_num / base_den
+        iso_base = profile.film_base_iso
+
+    iso_scan = img.iso
+
+    exposure_profile = t_base * (iso_base / 100.0)
+    exposure_scan = t_scan * (iso_scan / 100.0)
+    exposure_ratio = exposure_profile / exposure_scan if exposure_scan > 0 else 1.0
+
+    target_val = profile.normalization_target
+    scale_r = (target_val / fb_r) * exposure_ratio if fb_r > 0 else 1.0
+    scale_g = (target_val / fb_g) * exposure_ratio if fb_g > 0 else 1.0
+    scale_b = (target_val / fb_b) * exposure_ratio if fb_b > 0 else 1.0
+
+    raw_crosstalk = np.array(profile.crosstalk_matrix)
+    scales = np.array([scale_r, scale_g, scale_b])
+    merged_matrix = raw_crosstalk * scales[:, np.newaxis]
+    flat_merged_matrix = merged_matrix.flatten().tolist()
+
+    kwargs = dict(
+        half=half,
+        crosstalk_matrix=flat_merged_matrix,
+        output_profile_path=colorspace,
+        profile_film_base=None,
+        film_base=None,
+        exposure_comp=exposure_comp,
+        pipeline=pipeline
+    )
+    if icc_bytes is not None:
+        kwargs['it8_profile_bytes'] = icc_bytes
+    else:
+        kwargs['it8_profile_path'] = clut_path
+
+    res_16 = img.to_numpy(**kwargs)
+    dur = time.time() - t_start
+    print(f"[Conversion] Finished raw image conversion ({pipeline} pipeline) | Time taken: {dur:.2f}s", file=sys.stdout)
+    log_memory_usage("Conversion")
+    sys.stdout.flush()
+    return res_16

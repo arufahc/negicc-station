@@ -256,6 +256,19 @@ $$V_{\text{scaled}} = M_{\text{merged}} \cdot V_{\text{raw}}$$
 Finally, the scaled camera RGB values are passed through the independent TRC curves and color-managed through the 3D cLUT ICC profile to produce the final sRGB output:
 $$V_{\text{sRGB}} = \text{ICC}_{\text{LUT}}\left(\begin{bmatrix} \text{TRC}_R(R_{\text{scaled}}) \\ \text{TRC}_G(G_{\text{scaled}}) \\ \text{TRC}_B(B_{\text{scaled}}) \end{bmatrix}\right)$$
 
+#### 5. Dynamic Profile Target Selection
+To support multi-target calibration profiles (profiles containing calibration targets captured at different exposure levels), the system implements a dynamic profile matching algorithm:
+1. **Region of Interest Extraction**: Extracts the $2/3$ center square of the shorter side from the raw image to focus on the calibration target area.
+2. **Crosstalk Correction**: Corrects the raw image patch using the profile's crosstalk matrix.
+3. **Percentile Calculation**: Computes the 2% and 98% intensity percentiles on the green channel to represent the density range of the scanned target.
+4. **Transmittance Mapping**: Normalizes the percentiles by the captured film base green channel and scales them by the exposure ratio between the base capture and the current scan:
+   $$t_{c} = \frac{P_c}{FB_G} \times \text{Ratio}_{\text{scan}}$$
+5. **Grayscale Alignment**: Maps the measured 2% and 98% transmittances against the 24 gray scale patches ($gs0 \dots gs23$) of each candidate target profile.
+6. **Luminance Matching**: Calculates the mid-grey distance metric:
+   $$\text{center\_idx} = \frac{\text{idx}_{98} + \text{idx}_2}{2.0}$$
+   $$\text{dist} = |\text{center\_idx} - 11.5|$$
+   The target profile with the minimum distance metric (closest mid-grey patch alignment to target index 11.5) is selected as the optimal conversion profile.
+
 ---
 
 ### 10. Color Space Conversion Pipeline & Multi-Backend Architecture

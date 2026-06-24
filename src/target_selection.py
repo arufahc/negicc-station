@@ -70,6 +70,24 @@ def find_best_target_index(profile, raw_image, film_base_rgb, scan_shutter=None,
         
     t_2 = (p2 / fb_g) * exposure_ratio
     t_98 = (p98 / fb_g) * exposure_ratio
+
+    fb_r = film_base_rgb[0] if film_base_rgb[0] > 0 else 1.0
+    fb_b = film_base_rgb[2] if film_base_rgb[2] > 0 else 1.0
+    p2_r = np.percentile(cc_img[..., 0], 2)
+    p98_r = np.percentile(cc_img[..., 0], 98)
+    p2_b = np.percentile(cc_img[..., 2], 2)
+    p98_b = np.percentile(cc_img[..., 2], 98)
+    t_2_r = (p2_r / fb_r) * exposure_ratio
+    t_98_r = (p98_r / fb_r) * exposure_ratio
+    t_2_b = (p2_b / fb_b) * exposure_ratio
+    t_98_b = (p98_b / fb_b) * exposure_ratio
+
+    import sys
+    print(f"[Profile Selection] Transmittance percentiles (2% / 98%):\n"
+          f"  Red:   2%={t_2_r:.6f}, 98%={t_98_r:.6f}\n"
+          f"  Green: 2%={t_2:.6f}, 98%={t_98:.6f} (Used for matching)\n"
+          f"  Blue:  2%={t_2_b:.6f}, 98%={t_98_b:.6f}", file=sys.stdout)
+    sys.stdout.flush()
     
     best_target_idx = 0
     min_dist_to_mid_grey = float('inf')

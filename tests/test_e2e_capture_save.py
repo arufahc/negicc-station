@@ -78,7 +78,7 @@ def test_e2e():
     assert os.path.exists(out_tiff), "TIFF not created!"
     
     # Test TIFF in-place editing
-    from ui_main import set_tiff_orientation_inplace, get_exif_orientation
+    from ui_capture import set_tiff_orientation_inplace, get_exif_orientation
     
     tag_val = get_exif_orientation(hflip=True, vflip=False, rot_cw=90)
     print(f"Setting EXIF orientation tag to {tag_val}...")

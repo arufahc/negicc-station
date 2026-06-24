@@ -733,10 +733,16 @@ static PyObject* PyNegiccStation_is_camera_connected(PyObject* /*self*/, PyObjec
     }
 }
 
+static PyObject* PyNegiccStation_cleanup_temp_files(PyObject* Py_UNUSED(self), PyObject* Py_UNUSED(args)) {
+    cleanup_active_temp_files();
+    Py_RETURN_NONE;
+}
+
 // Module method table
 static PyMethodDef NegiccStation_module_methods[] = {
     {"capture", (PyCFunction)PyNegiccStation_capture, METH_VARARGS | METH_KEYWORDS, "Capture an image from tethered camera"},
     {"is_camera_connected", (PyCFunction)PyNegiccStation_is_camera_connected, METH_NOARGS, "Check if a Sony camera is connected via USB"},
+    {"cleanup_temp_files", (PyCFunction)PyNegiccStation_cleanup_temp_files, METH_NOARGS, "Cleanup all active temporary RAW files"},
     {nullptr, nullptr, 0, nullptr}
 };
 

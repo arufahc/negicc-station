@@ -45,7 +45,7 @@ def test_selection():
     
     film_base_rgb = (10000.0, 10000.0, 10000.0)
     
-    best_idx, dist = find_best_target_index(profile, raw_img, film_base_rgb)
+    best_idx, dist = find_best_target_index(profile, raw_img, film_base_rgb, scan_shutter=0.125, base_shutter=0.125)
     print(f"Selected target index: {best_idx}, Distance to mid-grey: {dist}")
     
     # For this mock, Target 2 should be the best fit

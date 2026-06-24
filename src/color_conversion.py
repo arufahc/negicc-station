@@ -179,6 +179,8 @@ def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=
     Decodes and converts RAW image entirely in Python using Little CMS ctypes metadata extraction
     and NumPy-vectorized transformations. Saves output as 16-bit linear/sRGB TIFF with embedded ICC profile.
     """
+    import time
+    t_start = time.time()
     # 1. Resolve input Film ICC Profile bytes
     icc_bytes = None
     if clut_path is None:
@@ -212,12 +214,17 @@ def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=
             raise FileNotFoundError(f"Output colorspace profile not found: {colorspace}")
 
     # 3. Determine film base RGB values
+    p_fb_r = profile.film_base['r_avg']
+    p_fb_g = profile.film_base['g_avg']
+    p_fb_b = profile.film_base['b_avg']
+    print(f"[Conversion] Profile Film Base RGB: R={p_fb_r:.6f}, G={p_fb_g:.6f}, B={p_fb_b:.6f}", file=sys.stdout)
     if film_base_rgb is not None:
         fb_r, fb_g, fb_b = film_base_rgb
+        print(f"[Conversion] Captured Film Base RGB: R={fb_r:.6f}, G={fb_g:.6f}, B={fb_b:.6f}", file=sys.stdout)
     else:
-        fb_r = profile.film_base['r_avg']
-        fb_g = profile.film_base['g_avg']
-        fb_b = profile.film_base['b_avg']
+        fb_r, fb_g, fb_b = p_fb_r, p_fb_g, p_fb_b
+        print("[Conversion] Captured Film Base RGB: None (using profile fallback)", file=sys.stdout)
+    sys.stdout.flush()
 
     # 4. Compute exposure ratio
     if shutter_str is not None:
@@ -474,7 +481,13 @@ def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=
             lcms.lib.cmsCloseProfile(h_out_profile)
             lcms.lib.cmsCloseProfile(h_xyz_profile)
 
-    # 10. Save array to TIFF with the output profile embedded as Tag 34675
+    dur = time.time() - t_start
+    print(f"[Conversion] Finished raw image conversion (Python pipeline) | Time taken: {dur:.2f}s", file=sys.stdout)
+    sys.stdout.flush()
+
+    if output_path == "":
+        return srgb_uint16
+
     _tifffile.imsave(
         output_path,
         srgb_uint16,

@@ -26,8 +26,27 @@ if os.path.exists(lib_path):
     import ctypes
     ctypes.CDLL(lib_path)
 
+import atexit
+import signal
 import negicc_station
 import auto_exposure
+
+def _register_cleanup_handlers():
+    def cleanup():
+        try:
+            negicc_station.cleanup_temp_files()
+        except Exception:
+            pass
+    atexit.register(cleanup)
+    
+    def sig_handler(signum, frame):
+        cleanup()
+        sys.exit(128 + signum)
+        
+    signal.signal(signal.SIGINT, sig_handler)
+    signal.signal(signal.SIGTERM, sig_handler)
+
+_register_cleanup_handlers()
 import crosstalk_calibration
 
 def get_circle_stats(arr):

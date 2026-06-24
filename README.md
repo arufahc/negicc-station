@@ -301,7 +301,7 @@ This section details the workflow to perform tethered film negative scans, calib
    ```bash
    ./venv/bin/python3 src/ui_main.py
    ```
-2. Click **Open Capture** to launch the Scanning & Capture panel (or launch `./src/ui_capture.py` directly).
+2. Click **Open Capture** to launch the Scanning & Capture panel (the main launcher window will automatically close). Alternatively, you can run `./venv/bin/python3 src/ui_capture.py` directly.
 3. Confirm that the camera status indicator displays a green connected symbol:
    * `● Camera: Connected` (indicates successful communication with the Sony A7R4 over USB).
    * Orange (`●`) indicates a connection attempt is in progress.
@@ -313,7 +313,7 @@ To clean and neutralize the film base's orange tint, you must record a reference
 2. Position a clear, unexposed but developed frame of negative film (e.g., from the film's orange leader strip) in the scanner gate.
 3. Choose the capture parameters:
    * Select a manual shutter speed or check the **Auto Exposure** option.
-4. Click **Capture Film Base**.
+4. Click the unified yellow **Capture Film Base** button in the left sidebar (the capture button is now a single dynamic button whose label and color adapt to the selected notebook tab).
 5. Once the raw preview is displayed, drag a bounding box selection area over a clear portion of the film base.
 6. Click **Read Film Base Values**. The average RGB readings will populate, updating the active calibration values. The tab label will switch to a green **Film Base** status.
 
@@ -333,7 +333,7 @@ To clean and neutralize the film base's orange tint, you must record a reference
    * When the gain text entry is not focused, you can also press the `+` / `-` keys on your keyboard to quickly modify the gain in increments of `0.10`.
 7. Configure the crop orientation:
    * Use the rotation buttons (`0°`, `90°`, `180°`, `270°`) and toggles (`H-Flip`, `V-Flip`) to match the orientation of the physical negative.
-8. Click **Capture Image**.
+8. Click the unified green **Capture Image** button in the left sidebar.
 9. Analyze the captured image results:
    * **Histograms**: The right-hand sidebar displays the uncorrected RAW linear channel levels and the corrected, inverted positive preview histograms.
    * **Dynamic Range Display**: Shows the computed dynamic range per channel. If a channel overflows, the UI displays `Overexposed` for that channel rather than showing confusing raw negative values.

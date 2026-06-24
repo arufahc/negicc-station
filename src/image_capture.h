@@ -68,4 +68,9 @@ bool write_linear_tiff(const CapturedImage& img,
 
 void clear_global_cache();
 
+void register_temp_file(const std::string& filepath);
+void unregister_temp_file(const std::string& filepath);
+bool is_registered_temp_file(const std::string& filepath);
+void cleanup_active_temp_files();
+
 #endif // IMAGE_CAPTURE_H

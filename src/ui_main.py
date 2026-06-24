@@ -13,6 +13,8 @@ class LauncherWindow(Gtk.Window):
         self.set_resizable(False)
         self.set_position(Gtk.WindowPosition.CENTER)
 
+        self.is_launching = False
+
         # Force GTK dark theme for premium aesthetics
         settings = Gtk.Settings.get_default()
         settings.set_property("gtk-application-prefer-dark-theme", True)
@@ -206,16 +208,27 @@ class LauncherWindow(Gtk.Window):
         return card
 
     def on_launch_clicked(self, button, target_script):
+        if getattr(self, 'is_launching', False):
+            return
+        self.is_launching = True
+
         script_path = os.path.join(self.script_dir, target_script)
         if not os.path.exists(script_path):
             self.show_error_dialog(f"Target script not found:\n{script_path}")
+            self.is_launching = False
             return
 
         try:
             # Launch via subprocess using the same python interpreter (venv)
             subprocess.Popen([sys.executable, script_path])
+            if target_script == "ui_capture.py":
+                self.close()
+            else:
+                # Throttles double-clicks on calibration/profiling launch buttons
+                GLib.timeout_add(1000, lambda: setattr(self, 'is_launching', False) or False)
         except Exception as e:
             self.show_error_dialog(f"Failed to launch script:\n{str(e)}")
+            self.is_launching = False
 
     def show_error_dialog(self, message):
         dialog = Gtk.MessageDialog(

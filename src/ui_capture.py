@@ -23,11 +23,140 @@ import cairo
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_gtk3agg import FigureCanvasGTK3Agg as FigureCanvas
 
+import atexit
+import signal
+import zipfile
+import tarfile
+import shutil
 import negicc_station
 from film_profiling import FilmProfile
 import color_conversion
 from target_selection import find_best_target_index
 import auto_exposure
+
+def read_arw_metadata(filepath):
+    # Default fallback values
+    shutter_speed = 0.125
+    iso = 100
+    try:
+        with open(filepath, 'rb') as f:
+            f.seek(0)
+            byte_order = f.read(2)
+            if byte_order == b'II':
+                endian = '<'
+            elif byte_order == b'MM':
+                endian = '>'
+            else:
+                return shutter_speed, iso
+                
+            magic = struct.unpack(endian + 'H', f.read(2))[0]
+            if magic != 42:
+                return shutter_speed, iso
+                
+            f.seek(4)
+            ifd0_offset = struct.unpack(endian + 'I', f.read(4))[0]
+            
+            # Helper to parse tags in an IFD offset
+            def parse_ifd(offset):
+                f.seek(offset)
+                num_tags = struct.unpack(endian + 'H', f.read(2))[0]
+                tags_dict = {}
+                for i in range(num_tags):
+                    f.seek(offset + 2 + i * 12)
+                    tag_data = f.read(12)
+                    if len(tag_data) < 12:
+                        break
+                    tag, fmt, count, val_offset = struct.unpack(endian + 'HHII', tag_data)
+                    tags_dict[tag] = (fmt, count, val_offset)
+                return tags_dict
+                
+            ifd0 = parse_ifd(ifd0_offset)
+            
+            # Find EXIF IFD pointer: Tag 34665 (0x8769)
+            exif_ptr = ifd0.get(0x8769)
+            if exif_ptr:
+                exif_offset = exif_ptr[2]
+                exif_ifd = parse_ifd(exif_offset)
+                
+                # Tag 33434 (0x829A): ExposureTime (RATIONAL = 5)
+                exp_tag = exif_ifd.get(0x829a)
+                if exp_tag:
+                    fmt, count, offset = exp_tag
+                    f.seek(offset)
+                    num, den = struct.unpack(endian + 'II', f.read(8))
+                    if den > 0:
+                        shutter_speed = num / den
+                        
+                # Tag 34855 (0x8827): ISOSpeedRatings (SHORT = 3)
+                iso_tag = exif_ifd.get(0x8827)
+                if iso_tag:
+                    fmt, count, val = iso_tag
+                    if fmt == 3 and count == 1:
+                        if endian == '<':
+                            iso = val & 0xFFFF
+                        else:
+                            iso = (val >> 16) & 0xFFFF
+                    elif fmt == 3 and count > 1:
+                        f.seek(val)
+                        iso = struct.unpack(endian + 'H', f.read(2))[0]
+    except Exception as e:
+        print(f"[Metadata] Warning: Failed to parse EXIF metadata from {filepath}: {e}", file=sys.stderr)
+        
+    return shutter_speed, iso
+
+def unpack_archive_and_find_arws(archive_path, extract_dir):
+    """Unpack archive and return list of absolute/relative file paths to .ARW files."""
+    if os.path.exists(extract_dir):
+        try:
+            shutil.rmtree(extract_dir)
+        except Exception:
+            pass
+    os.makedirs(extract_dir, exist_ok=True)
+    
+    # Check if zip
+    if zipfile.is_zipfile(archive_path):
+        with zipfile.ZipFile(archive_path, 'r') as z:
+            z.extractall(extract_dir)
+    # Check if tar
+    elif tarfile.is_tarfile(archive_path):
+        with tarfile.open(archive_path, 'r:*') as t:
+            t.extractall(extract_dir)
+    else:
+        raise ValueError("Unsupported archive format. Supported formats: .zip, .tar, .tar.gz, .tgz, .tar.xz")
+        
+    # Find all .ARW files (case insensitive)
+    arw_files = []
+    for root, dirs, files in os.walk(extract_dir):
+        for f in files:
+            if f.lower().endswith('.arw'):
+                arw_files.append(os.path.join(root, f))
+                
+    # Sort them alphabetically to keep them in consistent order (important for pixel shift order)
+    arw_files.sort()
+    return arw_files
+
+def _register_cleanup_handlers():
+    def cleanup():
+        try:
+            negicc_station.cleanup_temp_files()
+        except Exception:
+            pass
+        try:
+            extract_dir = os.path.join(os.getcwd(), "build", "tmp_load_archive")
+            if os.path.exists(extract_dir):
+                shutil.rmtree(extract_dir)
+        except Exception:
+            pass
+    atexit.register(cleanup)
+    
+    def sig_handler(signum, frame):
+        cleanup()
+        sys.exit(128 + signum)
+        
+    signal.signal(signal.SIGINT, sig_handler)
+    signal.signal(signal.SIGTERM, sig_handler)
+
+_register_cleanup_handlers()
 
 # Resolve path for local imports
 src_dir = os.path.dirname(os.path.abspath(__file__))
@@ -131,29 +260,41 @@ class HistogramCanvas(Gtk.Box):
         self.ax.spines['bottom'].set_color('#444444')
         self.ax.tick_params(colors='#888888', labelsize=7)
         self.ax.grid(True, color='#2c2c2c', linestyle='--', linewidth=0.5)
-        self.figure.tight_layout()
+        self.figure.subplots_adjust(left=0.04, right=0.96, top=0.95, bottom=0.15)
         
-        # Connect size-allocate to dynamically force height as a 2:3 ratio of width
-        self.canvas.connect("size-allocate", self.on_size_allocate)
-
-    def on_size_allocate(self, widget, allocation):
-        # Enforce 2:3 height-to-width ratio
-        target_height = int(allocation.width * 2 // 3)
-        target_height = max(100, target_height)
-        if widget.get_size_request()[1] != target_height:
-            widget.set_size_request(-1, target_height)
+        # Explicitly set canvas height request to 220px to match the fixed 360px sidebar (330px width content)
+        self.canvas.set_size_request(-1, 220)
 
     def clear(self):
         self.ax.clear()
         self.ax.set_facecolor('#121212')
+        self.ax.spines['top'].set_visible(False)
+        self.ax.spines['right'].set_visible(False)
+        self.ax.spines['left'].set_color('#444444')
+        self.ax.spines['bottom'].set_color('#444444')
+        self.ax.tick_params(colors='#888888', labelsize=7)
         self.ax.grid(True, color='#2c2c2c', linestyle='--', linewidth=0.5)
+        self.ax.set_xlim(0, 16384)
+        self.ax.set_ylim(0, 1.05)
+        self.ax.set_yticks([])
         self.canvas.draw_idle()
 
     def plot_histogram(self, data, is_corrected, has_icc, show_overexposure=True):
         self.ax.clear()
+        self.ax.set_facecolor('#121212')
+        self.ax.spines['top'].set_visible(False)
+        self.ax.spines['right'].set_visible(False)
+        self.ax.spines['left'].set_color('#444444')
+        self.ax.spines['bottom'].set_color('#444444')
+        self.ax.tick_params(colors='#888888', labelsize=7)
         self.ax.grid(True, color='#2c2c2c', linestyle='--', linewidth=0.5)
         
+        max_val = 65535 if (is_corrected and has_icc) else 16384
+        
         if data is None or data.size == 0:
+            self.ax.set_xlim(0, max_val)
+            self.ax.set_ylim(0, 1.05)
+            self.ax.set_yticks([])
             self.canvas.draw_idle()
             return
             
@@ -267,6 +408,181 @@ class HistogramCanvas(Gtk.Box):
                      
         self.canvas.draw_idle()
 
+class AEGraphCanvas(Gtk.Box):
+    def __init__(self, select_callback=None):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self.select_callback = select_callback
+        
+        self.figure = Figure(figsize=(3.0, 1.8), dpi=100)
+        self.figure.patch.set_facecolor('#1e1e1e')
+        self.canvas = FigureCanvas(self.figure)
+        self.pack_start(self.canvas, True, True, 0)
+        
+        self.ax = self.figure.add_subplot(111)
+        self.ax.set_facecolor('#121212')
+        self.ax.spines['top'].set_visible(False)
+        self.ax.spines['right'].set_visible(False)
+        self.ax.spines['left'].set_color('#444444')
+        self.ax.spines['bottom'].set_color('#444444')
+        self.ax.tick_params(colors='#888888', labelsize=7)
+        self.ax.grid(True, color='#2c2c2c', linestyle='--', linewidth=0.5)
+        
+        self.figure.subplots_adjust(left=0.18, right=0.95, top=0.90, bottom=0.25)
+        self.canvas.set_size_request(-1, 140)
+        
+        # State
+        self.steps = []
+        self.current_tooltip = None
+        
+        # Connect matplotlib events
+        self.canvas.mpl_connect("motion_notify_event", self.on_motion)
+        self.canvas.mpl_connect("button_press_event", self.on_click)
+
+    def clear(self):
+        self.steps = []
+        self.canvas.set_tooltip_text(None)
+        self.current_tooltip = None
+        self.ax.clear()
+        self.ax.set_facecolor('#121212')
+        self.ax.spines['top'].set_visible(False)
+        self.ax.spines['right'].set_visible(False)
+        self.ax.spines['left'].set_color('#444444')
+        self.ax.spines['bottom'].set_color('#444444')
+        self.ax.tick_params(colors='#888888', labelsize=7)
+        self.ax.grid(True, color='#2c2c2c', linestyle='--', linewidth=0.5)
+        self.canvas.draw_idle()
+
+    def add_step(self, ss, iso, dr_r, dr_g, dr_b, avg_dr, overexposed=None):
+        try:
+            shutter_idx = auto_exposure.SHUTTER_SPEEDS.index(ss)
+        except ValueError:
+            shutter_idx = 0
+            
+        step_data = {
+            'shutter_idx': shutter_idx,
+            'shutter': ss,
+            'iso': iso,
+            'dr_r': dr_r,
+            'dr_g': dr_g,
+            'dr_b': dr_b,
+            'avg_dr': avg_dr,
+            'overexposed': overexposed or [False, False, False]
+        }
+        self.steps.append(step_data)
+        self.redraw()
+
+    def redraw(self):
+        self.ax.clear()
+        self.ax.set_facecolor('#121212')
+        self.ax.spines['top'].set_visible(False)
+        self.ax.spines['right'].set_visible(False)
+        self.ax.spines['left'].set_color('#444444')
+        self.ax.spines['bottom'].set_color('#444444')
+        self.ax.tick_params(colors='#888888', labelsize=7)
+        self.ax.grid(True, color='#2c2c2c', linestyle='--', linewidth=0.5)
+        
+        if not self.steps:
+            self.canvas.draw_idle()
+            return
+            
+        x = np.arange(1, len(self.steps) + 1)
+        
+        for i, step in enumerate(self.steps):
+            xi = x[i]
+            r, g, b = step['dr_r'], step['dr_g'], step['dr_b']
+            ymin = min(r, g, b)
+            ymax = max(r, g, b)
+            
+            # Draw wick
+            self.ax.plot([xi, xi], [ymin, ymax], color='#555555', linewidth=1.5, zorder=1)
+            
+            # Draw R, G, B markers
+            over_r, over_g, over_b = step.get('overexposed', [False, False, False])
+            marker_r = 'x' if over_r else '_'
+            marker_g = 'x' if over_g else '_'
+            marker_b = 'x' if over_b else '_'
+            
+            self.ax.plot(xi, r, marker=marker_r, color='#ff6666', markersize=10 if not over_r else 8, markeredgewidth=2.5 if over_r else 2.0, zorder=2)
+            self.ax.plot(xi, g, marker=marker_g, color='#66ff66', markersize=10 if not over_g else 8, markeredgewidth=2.5 if over_g else 2.0, zorder=2)
+            self.ax.plot(xi, b, marker=marker_b, color='#66aaff', markersize=10 if not over_b else 8, markeredgewidth=2.5 if over_b else 2.0, zorder=2)
+            
+            # Draw Avg DR point
+            self.ax.plot(xi, step['avg_dr'], marker='o', color='#ffffff', markersize=4, zorder=3)
+            
+        self.ax.set_xticks(x)
+        self.ax.set_xticklabels([step['shutter'] for step in self.steps], rotation=45, ha='right', fontsize=6.5)
+        
+        # Adjust Y limits
+        all_vals = []
+        for s in self.steps:
+            all_vals.extend([s['dr_r'], s['dr_g'], s['dr_b']])
+        if all_vals:
+            ymin, ymax = min(all_vals), max(all_vals)
+            padding = max(100.0, (ymax - ymin) * 0.1)
+            self.ax.set_ylim(max(0, ymin - padding), ymax + padding)
+            
+        self.ax.set_xlim(0.5, len(self.steps) + 0.5)
+        self.figure.subplots_adjust(left=0.12, right=0.95, top=0.90, bottom=0.25)
+        self.canvas.draw_idle()
+
+    def on_motion(self, event):
+        if not self.steps or event.inaxes != self.ax:
+            if self.current_tooltip is not None:
+                self.canvas.set_tooltip_text(None)
+                self.current_tooltip = None
+            return
+            
+        x_mouse = event.xdata
+        if x_mouse is None:
+            if self.current_tooltip is not None:
+                self.canvas.set_tooltip_text(None)
+                self.current_tooltip = None
+            return
+            
+        idx = int(round(x_mouse)) - 1
+        if 0 <= idx < len(self.steps):
+            step = self.steps[idx]
+            if abs(x_mouse - (idx + 1)) < 0.4:
+                r, g, b = step['dr_r'], step['dr_g'], step['dr_b']
+                avg = step['avg_dr']
+                
+                over_r, over_g, over_b = step.get('overexposed', [False, False, False])
+                r_txt = f"{r:.0f} (OVER!)" if over_r else f"{r:.0f}"
+                g_txt = f"{g:.0f} (OVER!)" if over_g else f"{g:.0f}"
+                b_txt = f"{b:.0f} (OVER!)" if over_b else f"{b:.0f}"
+                
+                text = (
+                    f"Shutter: {step['shutter']}\n"
+                    f"ISO: {step['iso']}\n"
+                    f"DR Red:   {r_txt}\n"
+                    f"DR Green: {g_txt}\n"
+                    f"DR Blue:  {b_txt}\n"
+                    f"DR Avg:   {avg:.0f}"
+                )
+                if self.current_tooltip != text:
+                    self.canvas.set_tooltip_text(text)
+                    self.current_tooltip = text
+                return
+                
+        if self.current_tooltip is not None:
+            self.canvas.set_tooltip_text(None)
+            self.current_tooltip = None
+
+    def on_click(self, event):
+        if not self.steps or event.inaxes != self.ax:
+            return
+            
+        x_mouse = event.xdata
+        if x_mouse is None:
+            return
+            
+        idx = int(round(x_mouse)) - 1
+        if 0 <= idx < len(self.steps):
+            if abs(x_mouse - (idx + 1)) < 0.4:
+                step = self.steps[idx]
+                if self.select_callback:
+                    GLib.idle_add(self.select_callback, step['shutter'])
+
 class ScanningAppWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title="Sony Film Scanning Station")
@@ -292,11 +608,15 @@ class ScanningAppWindow(Gtk.Window):
         self.film_base_img = None
         self.film_base_raw_linear = None
         self.film_base_rgb = None
-        self.lbl_capture_log = None
+        self.capture_converted_rgb_cache = None
+        self.capture_corr_hist_cache = None
+        self.base_converted_rgb_cache = None
+        self.ae_graph = None
         
         self.camera_session = None
         self.is_connected = False
         self.is_connecting = False
+        self.is_capturing = False
         
         self.gain = 1.0
         self.orientation = 0
@@ -334,6 +654,7 @@ class ScanningAppWindow(Gtk.Window):
         css_provider = Gtk.CssProvider()
         css_provider.load_from_data(b"""
             .sidebar { background-color: #1e1e1e; padding: 15px; }
+            .right-sidebar { background-color: #1e1e1e; padding: 15px 5px; }
             .preview-container { background-color: #121212; padding: 10px; }
             
             button {
@@ -375,6 +696,20 @@ class ScanningAppWindow(Gtk.Window):
                 box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
             }
             
+            .btn-blue { 
+                background-image: linear-gradient(to bottom, #1f77b4, #125c8d); 
+                color: white; 
+                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            }
+            .btn-blue:hover {
+                background-image: linear-gradient(to bottom, #3182bd, #1f77b4);
+                box-shadow: 0 4px 8px rgba(0,0,0,0.4);
+            }
+            .btn-blue:active {
+                background-image: linear-gradient(to bottom, #125c8d, #0b3d5e);
+                box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+            }
+            
             .meta-label { font-family: monospace; font-size: 11px; color: #b3b3b3; }
             .warning-label { color: #ffaa00; font-weight: bold; }
             .status-indicator { font-weight: bold; font-size: 14px; padding: 10px; background-color: #2b2b2b; border-radius: 5px; }
@@ -390,23 +725,29 @@ class ScanningAppWindow(Gtk.Window):
         # ================= LEFT SIDEBAR =================
         left_sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         left_sidebar.get_style_context().add_class("sidebar")
-        left_sidebar.set_size_request(260, -1)
+        left_sidebar.set_size_request(210, -1)
         main_box.pack_start(left_sidebar, False, False, 0)
         
         # Camera status indicator
         self.lbl_camera_status = Gtk.Label()
         self.lbl_camera_status.set_markup("<span><span foreground='#e6a23c'>●</span> <b>Camera: Connecting...</b></span>")
         self.lbl_camera_status.get_style_context().add_class("status-indicator")
+        self.lbl_camera_status.set_line_wrap(True)
+        self.lbl_camera_status.set_width_chars(25)
+        self.lbl_camera_status.set_max_width_chars(25)
+        self.lbl_camera_status.set_xalign(0.0)
         left_sidebar.pack_start(self.lbl_camera_status, False, False, 10)
         
         # Profile Section
         left_sidebar.pack_start(Gtk.Label(label="<b>Calibration Profile</b>", use_markup=True), False, False, 2)
-        btn_load = Gtk.Button(label="Load Profile...")
-        btn_load.connect("clicked", self.on_load_profile)
-        left_sidebar.pack_start(btn_load, False, False, 0)
+        self.btn_load = Gtk.Button(label="Load Profile...")
+        self.btn_load.connect("clicked", self.on_load_profile)
+        left_sidebar.pack_start(self.btn_load, False, False, 0)
         
-        self.lbl_profile_info = Gtk.Label(label="No profile loaded.")
+        self.lbl_profile_info = Gtk.Label(label="")
         self.lbl_profile_info.set_line_wrap(True)
+        self.lbl_profile_info.set_width_chars(25)
+        self.lbl_profile_info.set_max_width_chars(25)
         self.lbl_profile_info.set_xalign(0.0)
         self.lbl_profile_info.get_style_context().add_class("meta-label")
         left_sidebar.pack_start(self.lbl_profile_info, False, False, 2)
@@ -438,26 +779,25 @@ class ScanningAppWindow(Gtk.Window):
         
         left_sidebar.pack_start(Gtk.Separator(), False, False, 5)
         
-        # Capture Actions
-        self.btn_cap_base = Gtk.Button(label="Capture Film Base")
-        self.btn_cap_base.get_style_context().add_class("btn-action")
-        self.btn_cap_base.get_style_context().add_class("btn-yellow")
-        self.btn_cap_base.connect("clicked", self.on_capture_base_clicked)
-        left_sidebar.pack_start(self.btn_cap_base, False, False, 0)
-        
-        self.btn_cap_img = Gtk.Button(label="Capture Image")
-        self.btn_cap_img.get_style_context().add_class("btn-action")
-        self.btn_cap_img.get_style_context().add_class("btn-green")
-        self.btn_cap_img.connect("clicked", self.on_capture_image_clicked)
-        left_sidebar.pack_start(self.btn_cap_img, False, False, 0)
+        # Capture Action (Combined)
+        self.btn_capture = Gtk.Button(label="Capture Image")
+        self.btn_capture.get_style_context().add_class("btn-action")
+        self.btn_capture.get_style_context().add_class("btn-green")
+        self.btn_capture.connect("clicked", self.on_capture_clicked)
+        left_sidebar.pack_start(self.btn_capture, False, False, 0)
 
-        # Capture log label beneath Capture Image button
-        self.lbl_capture_log = Gtk.Label()
-        self.lbl_capture_log.set_use_markup(True)
-        self.lbl_capture_log.set_xalign(0.0)
-        self.lbl_capture_log.set_line_wrap(True)
-        self.lbl_capture_log.get_style_context().add_class("meta-label")
-        left_sidebar.pack_start(self.lbl_capture_log, False, False, 5)
+        # Load Image/Archive Action
+        self.btn_load_image = Gtk.Button(label="Load Image/Archive...")
+        self.btn_load_image.get_style_context().add_class("btn-action")
+        self.btn_load_image.get_style_context().add_class("btn-blue")
+        self.btn_load_image.connect("clicked", self.on_load_image_clicked)
+        left_sidebar.pack_start(self.btn_load_image, False, False, 5)
+
+        # AE Search Graph (replaces Capture Log)
+        self.ae_graph_frame = Gtk.Frame(label="AE Search Graph")
+        self.ae_graph = AEGraphCanvas(select_callback=self.on_ae_graph_bar_selected)
+        self.ae_graph_frame.add(self.ae_graph)
+        left_sidebar.pack_start(self.ae_graph_frame, False, False, 5)
 
         # AE Steps output display frame
         self.ae_steps_frame = Gtk.Frame(label="Auto-Exposure Steps")
@@ -479,6 +819,9 @@ class ScanningAppWindow(Gtk.Window):
         status_box.pack_start(self.spinner, False, False, 0)
         self.lbl_status = Gtk.Label(label="Status: Connecting")
         self.lbl_status.set_line_wrap(True)
+        self.lbl_status.set_width_chars(25)
+        self.lbl_status.set_max_width_chars(25)
+        self.lbl_status.set_xalign(0.0)
         status_box.pack_start(self.lbl_status, True, True, 0)
         left_sidebar.pack_end(status_box, False, False, 5)
 
@@ -501,8 +844,8 @@ class ScanningAppWindow(Gtk.Window):
 
         # ================= RIGHT SIDEBAR =================
         right_sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        right_sidebar.get_style_context().add_class("sidebar")
-        right_sidebar.set_size_request(540, -1)
+        right_sidebar.get_style_context().add_class("right-sidebar")
+        right_sidebar.set_size_request(360, -1)
         main_box.pack_start(right_sidebar, False, False, 0)
         
         lbl_hist_raw = Gtk.Label(label="RAW Linear (Uncorrected)")
@@ -542,6 +885,7 @@ class ScanningAppWindow(Gtk.Window):
         btn_g_down.connect("clicked", lambda x: self.adj_gain(-0.10))
         top_box.pack_start(btn_g_down, False, False, 0)
         self.entry_gain = Gtk.Entry()
+        self.entry_gain.set_editable(False)
         self.entry_gain.set_text("1.00")
         self.entry_gain.set_width_chars(5)
         self.entry_gain.connect("activate", self.on_gain_entry_activated)
@@ -567,6 +911,7 @@ class ScanningAppWindow(Gtk.Window):
         
         # PREVIEW SCREEN AREA
         preview_event_box = Gtk.EventBox()
+        preview_event_box.add_events(Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK | Gdk.EventMask.BUTTON_PRESS_MASK)
         preview_event_box.connect("button-press-event", self.on_capture_press)
         preview_event_box.connect("button-release-event", self.on_capture_release)
         preview_event_box.connect("motion-notify-event", self.on_capture_motion)
@@ -579,7 +924,10 @@ class ScanningAppWindow(Gtk.Window):
         
         # BOTTOM: Target Table list
         target_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        target_box.pack_start(Gtk.Label(label="Select Profile Target:"), False, False, 5)
+        lbl_tgt_title = Gtk.Label()
+        lbl_tgt_title.set_markup("<b>Calibration Targets</b>")
+        lbl_tgt_title.set_xalign(0.0)
+        target_box.pack_start(lbl_tgt_title, False, False, 5)
         
         self.target_liststore = Gtk.ListStore(int, str, str) # Index, Target Name, Mid-grey Match Distance
         self.target_treeview = Gtk.TreeView(model=self.target_liststore)
@@ -619,6 +967,7 @@ class ScanningAppWindow(Gtk.Window):
 
         # PREVIEW AREA
         preview_event_box = Gtk.EventBox()
+        preview_event_box.add_events(Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK | Gdk.EventMask.BUTTON_PRESS_MASK)
         preview_event_box.connect("button-press-event", self.on_base_press)
         preview_event_box.connect("button-release-event", self.on_base_release)
         preview_event_box.connect("motion-notify-event", self.on_base_motion)
@@ -643,8 +992,7 @@ class ScanningAppWindow(Gtk.Window):
         if self.is_connecting or self.is_connected:
             return
         self.is_connecting = True
-        self.btn_cap_img.set_sensitive(False)
-        self.btn_cap_base.set_sensitive(False)
+        self.btn_capture.set_sensitive(False)
         self.lbl_camera_status.set_markup("<span><span foreground='#e6a23c'>●</span> <b>Camera: Connecting...</b></span>")
         
         def run():
@@ -670,13 +1018,11 @@ class ScanningAppWindow(Gtk.Window):
         self.is_connecting = False
         if connected:
             self.lbl_camera_status.set_markup("<span foreground='#44ff44'>●</span> <b>Camera: Connected</b>")
-            self.btn_cap_img.set_sensitive(True)
-            self.btn_cap_base.set_sensitive(True)
+            self.update_capture_button_sensitivity()
             self.lbl_status.set_text("Status: Camera connected, ready.")
         else:
             self.lbl_camera_status.set_markup("<span foreground='#ff4444'>●</span> <b>Camera: Disconnected</b>")
-            self.btn_cap_img.set_sensitive(False)
-            self.btn_cap_base.set_sensitive(False)
+            self.btn_capture.set_sensitive(False)
             if error_msg:
                 self.lbl_status.set_text(f"Status: Disconnected ({error_msg})")
             else:
@@ -685,6 +1031,8 @@ class ScanningAppWindow(Gtk.Window):
     def adj_gain(self, delta):
         self.gain = max(0.1, self.gain + delta)
         self.entry_gain.set_text(f"{self.gain:.2f}")
+        self.capture_converted_rgb_cache = None
+        self.capture_corr_hist_cache = None
         self.update_capture_preview()
 
     def on_gain_entry_activated(self, entry):
@@ -693,6 +1041,8 @@ class ScanningAppWindow(Gtk.Window):
             val = float(text)
             self.gain = max(0.1, val)
             entry.set_text(f"{self.gain:.2f}")
+            self.capture_converted_rgb_cache = None
+            self.capture_corr_hist_cache = None
             self.update_capture_preview()
         except ValueError:
             entry.set_text(f"{self.gain:.2f}")
@@ -700,11 +1050,6 @@ class ScanningAppWindow(Gtk.Window):
     def on_key_press(self, widget, event):
         keyval = event.keyval
         
-        # Don't intercept gain keys if typing in entry
-        focus_widget = self.get_focus()
-        if focus_widget == self.entry_gain:
-            return False
-            
         if keyval in (Gdk.KEY_plus, Gdk.KEY_equal, Gdk.KEY_KP_Add):
             self.adj_gain(0.10)
             return True
@@ -751,12 +1096,31 @@ class ScanningAppWindow(Gtk.Window):
                 self.has_icc = bool(getattr(self.profile, 'icc_profile_bytes', None))
                 self.has_crosstalk = hasattr(self.profile, 'crosstalk_matrix') and self.profile.crosstalk_matrix is not None
                 
-                status_txt = f"Loaded: {self.profile.film_name}\n"
-                if self.has_icc: status_txt += "• Has ICC curves/targets\n"
-                if self.has_crosstalk: status_txt += "• Has Crosstalk matrix"
+                # Clip name to 10 chars
+                film_name = self.profile.film_name if self.profile.film_name else "Unknown"
+                name_clipped = film_name[:10] + "..." if len(film_name) > 10 else film_name
                 
-                self.lbl_profile_info.set_text(status_txt)
-                self.lbl_status.set_text(f"Status: Profile loaded: {os.path.basename(filepath)}")
+                # Determine tags
+                tags = []
+                if self.has_icc: tags.append("ICC")
+                if self.has_crosstalk: tags.append("XT")
+                tags_str = f" [{'+'.join(tags)}]" if tags else ""
+                
+                self.btn_load.set_label(f"Load: {name_clipped}{tags_str}")
+                self.lbl_profile_info.set_text("")
+                self.lbl_status.set_text("Status: Profile loaded.")
+                
+                targets_count = 0
+                if hasattr(self.profile, 'targets'):
+                    targets_count = len(self.profile.targets)
+                elif hasattr(self.profile, 'raw_data') and 'targets' in self.profile.raw_data:
+                    targets_count = len(self.profile.raw_data['targets'])
+                
+                print(f"[Profile] Loaded Film Profile: {self.profile.film_name}", file=sys.stdout)
+                print(f"[Profile]   Has ICC curves/targets: {'Yes' if self.has_icc else 'No'}", file=sys.stdout)
+                print(f"[Profile]   Has Crosstalk matrix: {'Yes' if self.has_crosstalk else 'No'}", file=sys.stdout)
+                print(f"[Profile]   Targets count loaded: {targets_count}", file=sys.stdout)
+                sys.stdout.flush()
                 
                 # Update targets table dropdown
                 self.target_liststore.clear()
@@ -765,6 +1129,9 @@ class ScanningAppWindow(Gtk.Window):
                         name = tgt.get('name', f"Target {idx}")
                         self.target_liststore.append([idx, name, "--"])
                         
+                self.capture_converted_rgb_cache = None
+                self.capture_corr_hist_cache = None
+                self.base_converted_rgb_cache = None
                 self.update_profile_dependencies()
                 self.update_capture_preview()
                 self.update_base_preview()
@@ -784,12 +1151,122 @@ class ScanningAppWindow(Gtk.Window):
         self.profile_filename = ""
         self.has_icc = False
         self.has_crosstalk = False
-        self.lbl_profile_info.set_text("No profile loaded.")
+        self.btn_load.set_label("Load Profile...")
+        self.lbl_profile_info.set_text("")
         self.lbl_status.set_text("Status: Profile cleared.")
         self.target_liststore.clear()
+        self.capture_converted_rgb_cache = None
+        self.capture_corr_hist_cache = None
+        self.base_converted_rgb_cache = None
         self.update_profile_dependencies()
         self.update_capture_preview()
         self.update_base_preview()
+
+    def on_load_image_clicked(self, widget):
+        current_page = self.notebook.get_current_page()
+        is_base = (current_page == 1)
+        
+        dialog = Gtk.FileChooserDialog(
+            title="Load Image or Archive", parent=self,
+            action=Gtk.FileChooserAction.OPEN
+        )
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
+        
+        # Add filters
+        filter_all = Gtk.FileFilter()
+        filter_all.set_name("All supported files (ARW, ZIP, TAR)")
+        filter_all.add_pattern("*.arw")
+        filter_all.add_pattern("*.ARW")
+        filter_all.add_pattern("*.zip")
+        filter_all.add_pattern("*.ZIP")
+        filter_all.add_pattern("*.tar")
+        filter_all.add_pattern("*.TAR")
+        filter_all.add_pattern("*.tar.gz")
+        filter_all.add_pattern("*.tgz")
+        filter_all.add_pattern("*.tar.xz")
+        dialog.add_filter(filter_all)
+        
+        filter_arw = Gtk.FileFilter()
+        filter_arw.set_name("Sony RAW Image (*.ARW)")
+        filter_arw.add_pattern("*.arw")
+        filter_arw.add_pattern("*.ARW")
+        dialog.add_filter(filter_arw)
+        
+        filter_archive = Gtk.FileFilter()
+        filter_archive.set_name("Archive Files (*.zip, *.tar*)")
+        filter_archive.add_pattern("*.zip")
+        filter_archive.add_pattern("*.ZIP")
+        filter_archive.add_pattern("*.tar")
+        filter_archive.add_pattern("*.TAR")
+        filter_archive.add_pattern("*.tar.gz")
+        filter_archive.add_pattern("*.tgz")
+        filter_archive.add_pattern("*.tar.xz")
+        dialog.add_filter(filter_archive)
+
+        if dialog.run() == Gtk.ResponseType.OK:
+            filepath = dialog.get_filename()
+            dialog.destroy()
+            
+            # Run loading and conversion in a background thread to keep UI responsive
+            self.lbl_status.set_text("Loading offline image...")
+            self.btn_capture.set_sensitive(False)
+            self.btn_load_image.set_sensitive(False)
+            self.spinner.start()
+            
+            def load_task():
+                try:
+                    # Check if archive
+                    is_archive = False
+                    lower_path = filepath.lower()
+                    for ext in ['.zip', '.tar', '.tgz', '.tar.gz', '.tar.xz']:
+                        if lower_path.endswith(ext):
+                            is_archive = True
+                            break
+                            
+                    if is_archive:
+                        extract_dir = os.path.join(os.getcwd(), "build", "tmp_load_archive")
+                        arw_files = unpack_archive_and_find_arws(filepath, extract_dir)
+                        if not arw_files:
+                            raise ValueError("No .ARW files found in the archive.")
+                    else:
+                        arw_files = [filepath]
+                        
+                    # Determine type
+                    if len(arw_files) == 4:
+                        cap_type = 1 # pixel shift
+                    else:
+                        cap_type = 0 # single shot
+                        
+                    # Read EXIF metadata from the first file to get real exposure settings
+                    shutter_speed, iso = read_arw_metadata(arw_files[0])
+                    
+                    # Create CapturedImage object
+                    loaded_img = negicc_station.CapturedImage(
+                        type=cap_type,
+                        shutter_speed=shutter_speed,
+                        iso=iso,
+                        filepaths=arw_files
+                    )
+                    
+                    # Process the image in main thread/GLib idle
+                    def success():
+                        self.process_captured_image(loaded_img, is_base=is_base, capture_duration=0.0)
+                        self.btn_load_image.set_sensitive(True)
+                        
+                    GLib.idle_add(success)
+                    
+                except Exception as e:
+                    def failure(err_msg):
+                        self.lbl_status.set_text(f"Error loading: {err_msg}")
+                        self.btn_capture.set_sensitive(True)
+                        self.btn_load_image.set_sensitive(True)
+                        self.spinner.stop()
+                        
+                    GLib.idle_add(failure, str(e))
+                    
+            threading.Thread(target=load_task, daemon=True).start()
+        else:
+            dialog.destroy()
 
     def on_target_selection_changed(self, selection):
         model, treeiter = selection.get_selected()
@@ -797,22 +1274,39 @@ class ScanningAppWindow(Gtk.Window):
             idx = model[treeiter][0]
             if idx != self.selected_target_idx:
                 self.selected_target_idx = idx
+                self.capture_converted_rgb_cache = None
+                self.capture_corr_hist_cache = None
                 self.update_capture_preview()
 
     def on_tab_changed(self, notebook, page, page_num):
         if page_num == 0:
             self.update_capture_histograms()
+            self.btn_capture.set_label("Capture Image")
+            self.btn_capture.get_style_context().remove_class("btn-yellow")
+            self.btn_capture.get_style_context().add_class("btn-green")
+            if hasattr(self, 'btn_load_image'):
+                self.btn_load_image.set_label("Load Image/Archive...")
         else:
             self.update_base_histograms()
+            self.btn_capture.set_label("Capture Film Base")
+            self.btn_capture.get_style_context().remove_class("btn-green")
+            self.btn_capture.get_style_context().add_class("btn-yellow")
+            if hasattr(self, 'btn_load_image'):
+                self.btn_load_image.set_label("Load Base/Archive...")
+        self.update_capture_button_sensitivity()
 
     def on_ae_toggled(self, checkbox):
         self.shutter_combo.set_sensitive(not checkbox.get_active())
 
-    def on_capture_image_clicked(self, widget):
-        self.on_capture(is_base=False)
+    def on_ae_graph_bar_selected(self, shutter_str):
+        self._set_shutter_combo(shutter_str)
 
-    def on_capture_base_clicked(self, widget):
-        self.on_capture(is_base=True)
+    def on_capture_clicked(self, widget):
+        current_page = self.notebook.get_current_page()
+        if current_page == 1:
+            self.on_capture(is_base=True)
+        else:
+            self.on_capture(is_base=False)
 
     def on_capture(self, is_base=False):
         if not self.is_connected or not self.camera_session:
@@ -825,9 +1319,11 @@ class ScanningAppWindow(Gtk.Window):
         
         self.lbl_status.set_text("Capturing...")
         self.clear_ae_steps()
+        self.ae_graph.clear()
+        self.ae_overexposed_states = {}
         
-        self.btn_cap_img.set_sensitive(False)
-        self.btn_cap_base.set_sensitive(False)
+        self.is_capturing = True
+        self.btn_capture.set_sensitive(False)
         self.btn_save_tiff.set_sensitive(False)
         self.spinner.start()
         
@@ -848,12 +1344,39 @@ class ScanningAppWindow(Gtk.Window):
                             raise RuntimeError("AE Capture returned Null. Camera capture or download failed.")
                         arr = ae_img.to_numpy(half=True)
                         arr_annotated = auto_exposure.AnnotatedArray(arr, iso=ae_img.iso)
+                        
+                        # Calculate overexposure flags
+                        H, W = arr.shape[:2]
+                        square_size = int(min(H, W) * 2 // 3)
+                        y_start = (H - square_size) // 2
+                        x_start = (W - square_size) // 2
+                        cropped = arr[y_start:y_start+square_size, x_start:x_start+square_size, :]
+                        
+                        # Decimate cropped array to keep performance snappy
+                        cH, cW = cropped.shape[:2]
+                        total_c = cH * cW
+                        if total_c > 200000:
+                            step = int(np.sqrt(total_c / 200000))
+                            step = max(1, step)
+                            cropped_sampled = cropped[::step, ::step, :]
+                        else:
+                            cropped_sampled = cropped
+                            
+                        OVEREXPOSURE_THRESHOLD = 13107.2
+                        over_flags = []
+                        for c in range(3):
+                            p95 = np.percentile(cropped_sampled[:, :, c], 95)
+                            over_flags.append(bool(p95 > OVEREXPOSURE_THRESHOLD))
+                            
+                        self.ae_overexposed_states[ss] = over_flags
+                        
                         ae_img.discard()
                         return arr_annotated
                     
                     def ae_progress(step_idx, ss, iso, ch_dr, avg_dr):
                         dr_r, dr_g, dr_b = ch_dr
-                        GLib.idle_add(self.add_ae_step, ss, iso, dr_r, dr_g, dr_b, avg_dr)
+                        over_flags = self.ae_overexposed_states.get(ss, [False, False, False])
+                        GLib.idle_add(self.add_ae_step, ss, iso, dr_r, dr_g, dr_b, avg_dr, over_flags)
                     
                     opt_shutter, steps = auto_exposure.run_auto_exposure(
                         start_shutter_str=shutter_str,
@@ -897,19 +1420,37 @@ class ScanningAppWindow(Gtk.Window):
         for child in self.ae_steps_listbox.get_children():
             self.ae_steps_listbox.remove(child)
 
-    def add_ae_step(self, ss, iso, dr_r, dr_g, dr_b, avg_dr):
+    def add_ae_step(self, ss, iso, dr_r, dr_g, dr_b, avg_dr, over_flags=None):
         row_label = Gtk.Label()
+        
+        # Color coding for R, G, B channels
+        r_color = '#ff6666'
+        g_color = '#66ff66'
+        b_color = '#66aaff'
+        
+        # Suffix with (O) if overexposed
+        over_r, over_g, over_b = over_flags if over_flags else [False, False, False]
+        r_txt = f"R:{dr_r:.0f}" + ("(O)" if over_r else "")
+        g_txt = f"G:{dr_g:.0f}" + ("(O)" if over_g else "")
+        b_txt = f"B:{dr_b:.0f}" + ("(O)" if over_b else "")
+        
         row_label.set_markup(
             f"<span size='small' font_family='monospace'>"
             f"Speed: <b>{ss}</b> (ISO {iso})\n"
-            f"DR: R:{dr_r:.0f} G:{dr_g:.0f} B:{dr_b:.0f} | <b>Avg:{avg_dr:.0f}</b>"
+            f"<span color='{r_color}'>{r_txt}</span> "
+            f"<span color='{g_color}'>{g_txt}</span> "
+            f"<span color='{b_color}'>{b_txt}</span>\n"
+            f"<b>Avg: {avg_dr:.0f}</b>"
             f"</span>"
         )
+        row_label.set_line_wrap(True)
+        row_label.set_max_width_chars(25)
         row_label.set_xalign(0.0)
         row = Gtk.ListBoxRow()
         row.add(row_label)
         self.ae_steps_listbox.add(row)
         self.ae_steps_listbox.show_all()
+        self.ae_graph.add_step(ss, iso, dr_r, dr_g, dr_b, avg_dr, over_flags)
 
     def process_captured_image(self, img_obj, is_base, capture_duration):
         self.lbl_status.set_text("Processing capture...")
@@ -922,6 +1463,7 @@ class ScanningAppWindow(Gtk.Window):
             if self.film_base_img: self.film_base_img.discard()
             self.film_base_img = img_obj
             self.film_base_raw_linear = raw_linear
+            self.base_converted_rgb_cache = None
             self.base_rect_start = None
             self.base_rect_end = None
             self.base_rect_raw = None
@@ -930,8 +1472,8 @@ class ScanningAppWindow(Gtk.Window):
             self.update_base_histograms()
             self.notebook.set_current_page(1)
             
-            self.btn_cap_img.set_sensitive(self.is_connected)
-            self.btn_cap_base.set_sensitive(self.is_connected)
+            self.is_capturing = False
+            self.update_capture_button_sensitivity()
             self.btn_save_tiff.set_sensitive(self.raw_image is not None)
             self.spinner.stop()
             self.lbl_status.set_text("Status: Film base updated.")
@@ -940,6 +1482,8 @@ class ScanningAppWindow(Gtk.Window):
             if self.raw_image: self.raw_image.discard()
             self.raw_image = img_obj
             self.raw_linear_pixels = raw_linear
+            self.capture_converted_rgb_cache = None
+            self.capture_corr_hist_cache = None
             self.capture_rect_start = None
             self.capture_rect_end = None
             self.capture_rect_raw = None
@@ -975,49 +1519,11 @@ class ScanningAppWindow(Gtk.Window):
             print(f"[Capture] ISO: {img_obj.iso} | Shutter: {img_obj.shutter_speed:.4f}s | Dimensions: {w}x{h}", file=sys.stdout)
             print(f"[Capture] Capture Duration: {capture_duration:.3f}s | Conversion Duration: {conv_duration:.3f}s", file=sys.stdout)
             sys.stdout.flush()
-            
-            # Calculate DR ranges for the capture log on center 2/3 square region of the shorter side
-            H, W = raw_linear.shape[:2]
-            square_size = int(min(H, W) * 2 // 3)
-            y_start = (H - square_size) // 2
-            x_start = (W - square_size) // 2
-            cropped = raw_linear[y_start:y_start+square_size, x_start:x_start+square_size, :]
-            
-            # Decimate cropped array to keep performance snappy
-            cH, cW = cropped.shape[:2]
-            total_c = cH * cW
-            if total_c > 200000:
-                step = int(np.sqrt(total_c / 200000))
-                step = max(1, step)
-                cropped_sampled = cropped[::step, ::step, :]
-            else:
-                cropped_sampled = cropped
-                
-            dr_vals = []
-            for c in range(3):
-                ch_data = cropped_sampled[:, :, c]
-                p95 = np.percentile(ch_data, 95)
-                p5 = np.percentile(ch_data, 5)
-                # Overexposure threshold is 13107.2 (80% of 16384)
-                if p95 > 13107.2:
-                    dr_vals.append("Over")
-                else:
-                    dr_vals.append(f"{p95 - p5:.0f}")
-            
-            # Update the capture log label
-            if hasattr(self, 'lbl_capture_log') and self.lbl_capture_log is not None:
-                self.lbl_capture_log.set_markup(
-                    f"<b>Last Capture:</b>\n"
-                    f"  ISO: {img_obj.iso} | Speed: {img_obj.shutter_speed:.4f}s\n"
-                    f"  Time: {capture_duration:.2f}s\n"
-                    f"  DR: R:{dr_vals[0]} G:{dr_vals[1]} B:{dr_vals[2]}"
-                )
-                
             self.update_capture_preview()
             self.notebook.set_current_page(0)
             
-            self.btn_cap_img.set_sensitive(self.is_connected)
-            self.btn_cap_base.set_sensitive(self.is_connected)
+            self.is_capturing = False
+            self.update_capture_button_sensitivity()
             self.btn_save_tiff.set_sensitive(True)
             self.spinner.stop()
             self.lbl_status.set_text("Status: Image updated successfully.")
@@ -1073,6 +1579,8 @@ class ScanningAppWindow(Gtk.Window):
                                     f"Corr: {corr_rgb[0]:.1f}, {corr_rgb[1]:.1f}, {corr_rgb[2]:.1f}")
                                     
         if self.raw_image:
+            self.capture_converted_rgb_cache = None
+            self.capture_corr_hist_cache = None
             self.update_capture_preview()
 
     def refresh_capture_preview(self):
@@ -1134,45 +1642,59 @@ class ScanningAppWindow(Gtk.Window):
         img_array = None
         corr_hist_array = None
         
-        if self.profile:
-            if self.has_icc and self.film_base_rgb:
-                prof_data = json.loads(json.dumps(self.profile.raw_data))
-                if 'targets' in prof_data and self.selected_target_idx < len(prof_data['targets']):
-                    prof_data['targets'] = [prof_data['targets'][self.selected_target_idx]]
-                    tgt = prof_data['targets'][0]
-                    if 'icc_profile_base64' in tgt:
-                        prof_data['icc_profile_base64'] = tgt['icc_profile_base64']
-                        
-                temp_profile = FilmProfile(prof_data)
-                if getattr(self.profile, 'icc_profile_bytes', None):
-                    temp_profile.icc_profile_bytes = self.profile.icc_profile_bytes
-                    
-                res = color_conversion.convert_raw_to_tiff(
-                    img=self.raw_image, profile=temp_profile, output_path="",
-                    exposure_comp=self.gain, half=True, film_base_rgb=self.film_base_rgb,
-                    film_base_img=self.film_base_img
-                )
-                img_array = res
-                corr_hist_array = res
-            else:
-                raw = self.raw_linear_pixels.astype(np.float32)
-                if self.has_crosstalk:
-                    raw = np.dot(raw, self.profile.crosstalk_matrix.T)
-                raw = np.clip(raw * self.gain, 0, 16384)
-                img_array = (raw / 16384.0 * 255).astype(np.uint8)
-                corr_hist_array = raw
+        if getattr(self, 'capture_converted_rgb_cache', None) is not None:
+            img_array = self.capture_converted_rgb_cache
+            corr_hist_array = self.capture_corr_hist_cache
         else:
-            raw = self.raw_linear_pixels.astype(np.float32) * self.gain
-            raw_c = np.clip(raw, 0, 16384)
-            img_array = (raw_c / 16384.0 * 255).astype(np.uint8)
-            corr_hist_array = raw_c
+            if self.profile:
+                if self.has_icc:
+                    prof_data = json.loads(json.dumps(self.profile.raw_data))
+                    if 'targets' in prof_data and self.selected_target_idx < len(prof_data['targets']):
+                        prof_data['targets'] = [prof_data['targets'][self.selected_target_idx]]
+                        tgt = prof_data['targets'][0]
+                        if 'icc_profile_base64' in tgt:
+                            prof_data['icc_profile_base64'] = tgt['icc_profile_base64']
+                            
+                    temp_profile = FilmProfile(prof_data)
+                    if temp_profile.icc_profile_bytes is None and getattr(self.profile, 'icc_profile_bytes', None):
+                        temp_profile.icc_profile_bytes = self.profile.icc_profile_bytes
+                        
+                    import film_profiling
+                    res = film_profiling.convert_raw_to_numpy(
+                        img=self.raw_image, profile=temp_profile,
+                        exposure_comp=self.gain, half=True, film_base_rgb=self.film_base_rgb,
+                        film_base_img=self.film_base_img, pipeline="cuda"
+                    )
+                    img_array = res
+                    corr_hist_array = res
+                else:
+                    raw = self.raw_linear_pixels.astype(np.float32)
+                    if self.has_crosstalk:
+                        raw = np.dot(raw, self.profile.crosstalk_matrix.T)
+                    img_array = np.clip(raw * self.gain, 0, 16384).astype(np.uint16)
+                    corr_hist_array = img_array
+            else:
+                raw = self.raw_linear_pixels.astype(np.float32) * self.gain
+                img_array = np.clip(raw, 0, 16384).astype(np.uint16)
+                corr_hist_array = img_array
+                
+            self.capture_converted_rgb_cache = img_array
+            self.capture_corr_hist_cache = corr_hist_array
             
-        img_array = apply_transforms_numpy(img_array, self.hflip, self.vflip, self.orientation)
+        # Convert to 8-bit strictly for display (GdkPixbuf requires 8-bit)
+        if self.profile and self.has_icc:
+            # Range is [0, 65535]
+            img_8bit = (img_array / 256.0).astype(np.uint8)
+        else:
+            # Range is [0, 16384]
+            img_8bit = (img_array / 64.0).astype(np.uint8)
+            
+        img_8bit = apply_transforms_numpy(img_8bit, self.hflip, self.vflip, self.orientation)
         
-        h, w, c = img_array.shape
-        img_array = np.ascontiguousarray(img_array)
+        h, w, c = img_8bit.shape
+        img_8bit = np.ascontiguousarray(img_8bit)
         self.capture_preview_pixbuf = GdkPixbuf.Pixbuf.new_from_data(
-            img_array.tobytes(), GdkPixbuf.Colorspace.RGB, False, 8, w, h, w * 3
+            img_8bit.tobytes(), GdkPixbuf.Colorspace.RGB, False, 8, w, h, w * 3
         )
         self.capture_corr_hist_data = apply_transforms_numpy(corr_hist_array, self.hflip, self.vflip, self.orientation)
         self.capture_raw_hist_data = apply_transforms_numpy(self.raw_linear_pixels, self.hflip, self.vflip, self.orientation)
@@ -1185,20 +1707,24 @@ class ScanningAppWindow(Gtk.Window):
         if self.film_base_raw_linear is None:
             return
             
-        if self.profile and self.has_crosstalk:
-            raw = self.film_base_raw_linear.astype(np.float32)
-            raw = np.dot(raw, self.profile.crosstalk_matrix.T)
-            raw = np.clip(raw, 0, 16384)
-            img_array = (raw / 16384.0 * 255).astype(np.uint8)
+        if getattr(self, 'base_converted_rgb_cache', None) is not None:
+            img_array = self.base_converted_rgb_cache
         else:
-            raw = np.clip(self.film_base_raw_linear, 0, 16384)
-            img_array = (raw / 16384.0 * 255).astype(np.uint8)
+            if self.profile and self.has_crosstalk:
+                raw = self.film_base_raw_linear.astype(np.float32)
+                raw = np.dot(raw, self.profile.crosstalk_matrix.T)
+                img_array = np.clip(raw, 0, 16384).astype(np.uint16)
+            else:
+                img_array = np.clip(self.film_base_raw_linear, 0, 16384).astype(np.uint16)
+            self.base_converted_rgb_cache = img_array
             
-        img_array = apply_transforms_numpy(img_array, self.hflip, self.vflip, self.orientation)
-        img_array = np.ascontiguousarray(img_array)
-        h, w, c = img_array.shape
+        # Convert to 8-bit strictly for display (GdkPixbuf requires 8-bit)
+        img_8bit = (img_array / 64.0).astype(np.uint8)
+        img_8bit = apply_transforms_numpy(img_8bit, self.hflip, self.vflip, self.orientation)
+        img_8bit = np.ascontiguousarray(img_8bit)
+        h, w, c = img_8bit.shape
         self.base_preview_pixbuf = GdkPixbuf.Pixbuf.new_from_data(
-            img_array.tobytes(), GdkPixbuf.Colorspace.RGB, False, 8, w, h, w * 3
+            img_8bit.tobytes(), GdkPixbuf.Colorspace.RGB, False, 8, w, h, w * 3
         )
         self.refresh_base_preview()
 
@@ -1210,8 +1736,26 @@ class ScanningAppWindow(Gtk.Window):
         if base_page:
             base_page.set_sensitive(has_full_profile)
             
-        # Update Capture Film Base button sensitivity
-        self.btn_cap_base.set_sensitive(self.is_connected and has_full_profile)
+        self.update_capture_button_sensitivity()
+
+    def update_capture_button_sensitivity(self):
+        has_full_profile = self.profile is not None and self.has_crosstalk and self.has_icc
+        
+        # Determine capture button sensitivity based on connection and capturing state
+        if not self.is_connected or getattr(self, 'is_capturing', False):
+            self.btn_capture.set_sensitive(False)
+        else:
+            current_page = self.notebook.get_current_page()
+            if current_page == 1: # Film Base Tab
+                self.btn_capture.set_sensitive(has_full_profile)
+            else: # Capture Tab
+                self.btn_capture.set_sensitive(True)
+
+        if hasattr(self, 'btn_load_image'):
+            if getattr(self, 'is_capturing', False):
+                self.btn_load_image.set_sensitive(False)
+            else:
+                self.btn_load_image.set_sensitive(True)
         
         # Update tab labels warnings/statuses
         if has_full_profile:
@@ -1635,8 +2179,7 @@ class ScanningAppWindow(Gtk.Window):
             dialog.destroy()
             
             self.lbl_status.set_text("Saving TIFF image...")
-            self.btn_cap_img.set_sensitive(False)
-            self.btn_cap_base.set_sensitive(False)
+            self.btn_capture.set_sensitive(False)
             self.btn_save_tiff.set_sensitive(False)
             self.spinner.start()
             
@@ -1651,13 +2194,14 @@ class ScanningAppWindow(Gtk.Window):
                             if 'icc_profile_base64' in tgt:
                                 prof_data['icc_profile_base64'] = tgt['icc_profile_base64']
                         temp_profile = FilmProfile(prof_data)
-                        if getattr(self.profile, 'icc_profile_bytes', None):
+                        if temp_profile.icc_profile_bytes is None and getattr(self.profile, 'icc_profile_bytes', None):
                             temp_profile.icc_profile_bytes = self.profile.icc_profile_bytes
                             
-                        color_conversion.convert_raw_to_tiff(
+                        import film_profiling
+                        film_profiling.convert_raw_to_tiff(
                             img=self.raw_image, profile=temp_profile, output_path=filepath,
                             exposure_comp=self.gain, half=False, film_base_rgb=self.film_base_rgb,
-                            film_base_img=self.film_base_img
+                            film_base_img=self.film_base_img, pipeline="cuda"
                         )
                     else:
                         matrix = None
@@ -1685,8 +2229,8 @@ class ScanningAppWindow(Gtk.Window):
 
     def on_save_success(self, filepath, duration):
         self.spinner.stop()
-        self.btn_cap_img.set_sensitive(self.is_connected)
-        self.btn_cap_base.set_sensitive(self.is_connected)
+        self.is_capturing = False
+        self.update_capture_button_sensitivity()
         self.btn_save_tiff.set_sensitive(True)
         self.lbl_status.set_text(f"Status: Saved {os.path.basename(filepath)}.")
         print(f"[Save TIFF] Image saved successfully to: {filepath} | Time taken: {duration:.2f}s", file=sys.stdout)
@@ -1694,8 +2238,8 @@ class ScanningAppWindow(Gtk.Window):
 
     def update_ui_failure(self, error_msg):
         self.spinner.stop()
-        self.btn_cap_img.set_sensitive(self.is_connected)
-        self.btn_cap_base.set_sensitive(self.is_connected)
+        self.is_capturing = False
+        self.update_capture_button_sensitivity()
         self.mode_combo.set_sensitive(True)
         self.shutter_combo.set_sensitive(not self.ae_checkbox.get_active())
         self.ae_checkbox.set_sensitive(True)
