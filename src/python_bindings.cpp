@@ -220,11 +220,26 @@ static PyObject* PyCapturedImage_write_tiff(PyCapturedImage* self, PyObject* arg
         return nullptr;
     }
 
-    static const char* kwlist[] = {"output_path", "half", "crosstalk_matrix", nullptr};
+    static const char* kwlist[] = {
+        "output_path", "half", "crosstalk_matrix", "it8_profile_path", "output_profile_path",
+        "profile_film_base", "film_base", "exposure_comp", "post_correction_gamma",
+        "it8_profile_bytes", nullptr
+    };
     const char* output_path = nullptr;
     int half = 0;
     PyObject* py_matrix = nullptr;
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|pO", const_cast<char**>(kwlist), &output_path, &half, &py_matrix)) {
+    const char* it8_profile_path = nullptr;
+    const char* output_profile_path = nullptr;
+    PyObject* py_profile_film_base = nullptr;
+    PyObject* py_film_base = nullptr;
+    float exposure_comp = 1.0f;
+    float post_correction_gamma = 1.0f;
+    PyObject* py_icc_bytes = nullptr;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|pOzzOOffO", const_cast<char**>(kwlist),
+                                     &output_path, &half, &py_matrix, &it8_profile_path, &output_profile_path,
+                                     &py_profile_film_base, &py_film_base, &exposure_comp,
+                                     &post_correction_gamma, &py_icc_bytes)) {
         return nullptr;
     }
 
@@ -249,7 +264,64 @@ static PyObject* PyCapturedImage_write_tiff(PyCapturedImage* self, PyObject* arg
         }
     }
 
-    bool success = write_linear_tiff(*self->cpp_img, output_path, half != 0, cc_matrix);
+    std::vector<int> profile_film_base;
+    if (py_profile_film_base && py_profile_film_base != Py_None) {
+        if (!PyList_Check(py_profile_film_base)) {
+            PyErr_SetString(PyExc_TypeError, "profile_film_base must be a list of 3 integers.");
+            return nullptr;
+        }
+        if (PyList_Size(py_profile_film_base) != 3) {
+            PyErr_SetString(PyExc_ValueError, "profile_film_base must contain exactly 3 elements.");
+            return nullptr;
+        }
+        for (Py_ssize_t i = 0; i < 3; ++i) {
+            PyObject* item = PyList_GetItem(py_profile_film_base, i);
+            if (!PyLong_Check(item)) {
+                PyErr_SetString(PyExc_TypeError, "All elements of profile_film_base must be integers.");
+                return nullptr;
+            }
+            profile_film_base.push_back((int)PyLong_AsLong(item));
+        }
+    }
+
+    std::vector<int> film_base;
+    if (py_film_base && py_film_base != Py_None) {
+        if (!PyList_Check(py_film_base)) {
+            PyErr_SetString(PyExc_TypeError, "film_base must be a list of 3 integers.");
+            return nullptr;
+        }
+        if (PyList_Size(py_film_base) != 3) {
+            PyErr_SetString(PyExc_ValueError, "film_base must contain exactly 3 elements.");
+            return nullptr;
+        }
+        for (Py_ssize_t i = 0; i < 3; ++i) {
+            PyObject* item = PyList_GetItem(py_film_base, i);
+            if (!PyLong_Check(item)) {
+                PyErr_SetString(PyExc_TypeError, "All elements of film_base must be integers.");
+                return nullptr;
+            }
+            film_base.push_back((int)PyLong_AsLong(item));
+        }
+    }
+
+    const uint8_t* icc_data = nullptr;
+    Py_ssize_t icc_data_size = 0;
+    if (py_icc_bytes && py_icc_bytes != Py_None) {
+        if (!PyBytes_Check(py_icc_bytes)) {
+            PyErr_SetString(PyExc_TypeError, "it8_profile_bytes must be a bytes object.");
+            return nullptr;
+        }
+        icc_data = reinterpret_cast<const uint8_t*>(PyBytes_AS_STRING(py_icc_bytes));
+        icc_data_size = PyBytes_GET_SIZE(py_icc_bytes);
+    }
+
+    std::string it8_path = (it8_profile_path && !icc_data) ? it8_profile_path : "";
+    std::string out_path = output_profile_path ? output_profile_path : "srgb";
+
+    bool success = write_linear_tiff(*self->cpp_img, output_path, half != 0, cc_matrix,
+                                     it8_path, out_path, profile_film_base, film_base,
+                                     exposure_comp, post_correction_gamma,
+                                     icc_data, (size_t)icc_data_size);
     return PyBool_FromLong(success ? 1 : 0);
 }
 

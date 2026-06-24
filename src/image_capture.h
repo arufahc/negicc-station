@@ -57,6 +57,17 @@ private:
 std::unique_ptr<CapturedImage> capture_image(ImageCaptureType type, uint32_t shutterSpeedVal);
 
 // Stores the linear image from CapturedImage to a 16-bit RGB TIFF file
-bool write_linear_tiff(const CapturedImage& img, const std::string& output_path, bool half_size, const std::vector<float>& cc_matrix = {});
+bool write_linear_tiff(const CapturedImage& img,
+                       const std::string& output_path,
+                       bool half_size,
+                       const std::vector<float>& cc_matrix = {},
+                       const std::string& it8_profile_path = "",
+                       const std::string& output_profile_path = "srgb",
+                       const std::vector<int>& profile_film_base = {},
+                       const std::vector<int>& film_base = {},
+                       float exposure_comp = 1.0f,
+                       float post_correction_gamma = 1.0f,
+                       const uint8_t* it8_profile_data = nullptr,
+                       size_t it8_profile_data_size = 0);
 
 #endif // IMAGE_CAPTURE_H

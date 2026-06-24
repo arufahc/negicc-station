@@ -44,6 +44,8 @@ def main():
                         help="Exposure compensation factor.")
     parser.add_argument("--gamma", type=float, default=1.0,
                         help="Post correction gamma.")
+    parser.add_argument("--colorspace", choices=["srgb", "srgb-g10"], default="srgb",
+                        help="Working space profile (default: srgb)")
     
     args = parser.parse_args()
 
@@ -146,20 +148,23 @@ def main():
         filepaths=[actual_raw_path]
     )
     
-    arr = film_profiling.convert_raw_image(
-            img=img,
-            profile=sc_profile,
-            clut_path=None,
-            shutter_str="1/8s",
-            exposure_comp=args.exposure_comp,
-            post_correction_gamma=args.gamma,
-            half=half_size
-        )
-    
-    print(f"Output array shape: {arr.shape}, dtype: {arr.dtype}")
-    print(f"Writing TIFF to: {output_path}")
-    imageio.imwrite(output_path, arr)
-    print("TIFF written successfully!")
+    print(f"Converting and saving TIFF to: {output_path} (working space: {args.colorspace})...")
+    success = film_profiling.convert_raw_to_tiff(
+        img=img,
+        profile=sc_profile,
+        output_path=output_path,
+        colorspace=args.colorspace,
+        clut_path=None,
+        shutter_str="1/8s",
+        exposure_comp=args.exposure_comp,
+        post_correction_gamma=args.gamma,
+        half=half_size
+    )
+    if success:
+        print("TIFF written successfully entirely in C++!")
+    else:
+        print("Error: TIFF conversion failed.")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

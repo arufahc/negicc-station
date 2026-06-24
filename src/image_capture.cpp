@@ -341,9 +341,21 @@ std::unique_ptr<CapturedImage> capture_image(ImageCaptureType type, uint32_t shu
     return std::make_unique<CapturedImage>(type, shutterSec, 100, output.filepaths);
 }
 
-bool write_linear_tiff(const CapturedImage& img, const std::string& output_path, bool half_size, const std::vector<float>& cc_matrix) {
+bool write_linear_tiff(const CapturedImage& img,
+                       const std::string& output_path,
+                       bool half_size,
+                       const std::vector<float>& cc_matrix,
+                       const std::string& it8_profile_path,
+                       const std::string& output_profile_path,
+                       const std::vector<int>& profile_film_base,
+                       const std::vector<int>& film_base,
+                       float exposure_comp,
+                       float post_correction_gamma,
+                       const uint8_t* it8_profile_data,
+                       size_t it8_profile_data_size) {
     if (img.filepaths().empty()) return false;
 
+    // 1. Load RAW once (single or pixel shift)
     LibRaw* proc = nullptr;
     if (img.capture_type() == ImageCaptureType::SINGLE) {
         proc = RawProcessor::load_raw(img.filepaths()[0], /*debayer*/ true, /*half_size*/ half_size, /*qual*/ 0, /*crop*/ false);
@@ -365,18 +377,124 @@ bool write_linear_tiff(const CapturedImage& img, const std::string& output_path,
 
     if (!proc) return false;
 
-    const unsigned height = proc->imgdata.sizes.iheight;
-    const unsigned width = proc->imgdata.sizes.iwidth;
-    struct tiff_hdr header;
-    unsigned profile_size = 0;
-
-    if (half_size && img.capture_type() == ImageCaptureType::SINGLE) {
-        tiff_head(proc, &header, profile_size);
-    } else if (half_size && img.capture_type() == ImageCaptureType::SONY_PIXEL_SHIFT_4) {
-        tiff_head(proc, &header, profile_size, width / 2, height / 2);
-    } else {
-        tiff_head(proc, &header, profile_size);
+    // 2. Determine output dimensions and configure
+    int w = proc->imgdata.sizes.iwidth;
+    int h = proc->imgdata.sizes.iheight;
+    int out_w = w;
+    int out_h = h;
+    if (half_size && img.capture_type() == ImageCaptureType::SONY_PIXEL_SHIFT_4) {
+        out_w = w / 2;
+        out_h = h / 2;
     }
+
+    // 3. Resolve crosstalk/scaling matrix
+    std::vector<float> adjusted_cc = cc_matrix;
+    bool has_profile = !it8_profile_path.empty() || (it8_profile_data != nullptr && it8_profile_data_size > 0);
+    if (has_profile) {
+        if (adjusted_cc.empty()) {
+            adjusted_cc = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+        }
+        std::vector<int> p_fb = profile_film_base;
+        std::vector<int> c_fb = film_base;
+        if (p_fb.empty() || c_fb.empty()) {
+            p_fb = {1, 1, 1};
+            c_fb = {1, 1, 1};
+        }
+        std::vector<float> r_coef = {adjusted_cc[0], adjusted_cc[1], adjusted_cc[2]};
+        std::vector<float> g_coef = {adjusted_cc[3], adjusted_cc[4], adjusted_cc[5]};
+        std::vector<float> b_coef = {adjusted_cc[6], adjusted_cc[7], adjusted_cc[8]};
+        adjust_correction_matrix(r_coef, g_coef, b_coef, exposure_comp, p_fb, c_fb);
+        adjusted_cc = {
+            r_coef[0], r_coef[1], r_coef[2],
+            g_coef[0], g_coef[1], g_coef[2],
+            b_coef[0], b_coef[1], b_coef[2]
+        };
+    }
+
+    // 4. Fill buffer and apply crosstalk correction
+    std::vector<uint16_t> buf(out_w * out_h * 3);
+    if (img.capture_type() == ImageCaptureType::SINGLE) {
+        for (int i = 0; i < out_w * out_h; ++i) {
+            uint16_t r = proc->imgdata.image[i][0];
+            uint16_t g = proc->imgdata.image[i][1];
+            uint16_t b = proc->imgdata.image[i][2];
+            apply_crosstalk_correction(r, g, b, adjusted_cc);
+            buf[i * 3]     = r;
+            buf[i * 3 + 1] = g;
+            buf[i * 3 + 2] = b;
+        }
+    } else {
+        if (half_size) {
+            for (int row = 0; row < out_h; ++row) {
+                for (int col = 0; col < out_w; ++col) {
+                    long r_sum = 0, g_sum = 0, b_sum = 0;
+                    for (int dy = 0; dy < 2; ++dy) {
+                        for (int dx = 0; dx < 2; ++dx) {
+                            int src_idx = (row * 2 + dy) * w + (col * 2 + dx);
+                            r_sum += proc->imgdata.image[src_idx][0];
+                            g_sum += proc->imgdata.image[src_idx][1];
+                            b_sum += proc->imgdata.image[src_idx][2];
+                        }
+                    }
+                    int dest_idx = row * out_w + col;
+                    uint16_t r = static_cast<uint16_t>(r_sum / 4);
+                    uint16_t g = static_cast<uint16_t>(g_sum / 4);
+                    uint16_t b = static_cast<uint16_t>(b_sum / 4);
+                    apply_crosstalk_correction(r, g, b, adjusted_cc);
+                    buf[dest_idx * 3]     = r;
+                    buf[dest_idx * 3 + 1] = g;
+                    buf[dest_idx * 3 + 2] = b;
+                }
+            }
+        } else {
+            for (int i = 0; i < out_w * out_h; ++i) {
+                uint16_t r = proc->imgdata.image[i][0];
+                uint16_t g = proc->imgdata.image[i][1];
+                uint16_t b = proc->imgdata.image[i][2];
+                apply_crosstalk_correction(r, g, b, adjusted_cc);
+                buf[i * 3]     = r;
+                buf[i * 3 + 1] = g;
+                buf[i * 3 + 2] = b;
+            }
+        }
+    }
+
+    // 5. Apply gamma and LCMS colorspace transform on the buffer
+    if (has_profile) {
+        apply_gamma_to_buf(buf, post_correction_gamma);
+        if (!apply_lcms_profile(buf, out_w, out_h, it8_profile_path, output_profile_path,
+                                it8_profile_data, it8_profile_data_size)) {
+            std::cerr << "WARNING: Failed to apply LCMS profile." << std::endl;
+            proc->recycle();
+            delete proc;
+            return false;
+        }
+    }
+
+    // 6. Resolve output ICC profile data to attach to the TIFF file
+    const uint8_t* output_profile_bytes = nullptr;
+    size_t profile_size = 0;
+    std::vector<uint8_t> custom_profile_buf;
+
+    if (output_profile_path == "srgb") {
+        output_profile_bytes = sRGB_elle_V2_srgbtrc_icc;
+        profile_size = sRGB_elle_V2_srgbtrc_icc_len;
+    } else if (output_profile_path == "srgb-g10") {
+        output_profile_bytes = sRGB_elle_V2_g10_icc;
+        profile_size = sRGB_elle_V2_g10_icc_len;
+    } else if (!output_profile_path.empty()) {
+        unsigned* prof_ptr = nullptr;
+        unsigned read_size = 0;
+        if (read_profile_from_file(output_profile_path, &prof_ptr, &read_size) == 0) {
+            custom_profile_buf.assign(reinterpret_cast<uint8_t*>(prof_ptr), reinterpret_cast<uint8_t*>(prof_ptr) + read_size);
+            free(prof_ptr);
+            output_profile_bytes = custom_profile_buf.data();
+            profile_size = read_size;
+        }
+    }
+
+    struct tiff_hdr header;
+    tiff_head(proc, &header, profile_size, out_w, out_h);
 
     FILE* fp = fopen(output_path.c_str(), "wb+");
     if (!fp) {
@@ -387,53 +505,11 @@ bool write_linear_tiff(const CapturedImage& img, const std::string& output_path,
 
     fwrite(&header, sizeof(header), 1, fp);
 
-    if (half_size && img.capture_type() == ImageCaptureType::SONY_PIXEL_SHIFT_4) {
-        const unsigned output_width = width / 2;
-        std::vector<ushort> row_buf(output_width * 3);
-        for (unsigned row = 0; row < height; ++row) {
-            if (row % 2 == 0) {
-                for (unsigned col = 0; col < output_width; ++col) {
-                    row_buf[col * 3]     = (proc->imgdata.image[row * width + 2 * col][0] +
-                                            proc->imgdata.image[row * width + 2 * col + 1][0]);
-                    row_buf[col * 3 + 1] = (proc->imgdata.image[row * width + 2 * col][1] +
-                                            proc->imgdata.image[row * width + 2 * col + 1][1]);
-                    row_buf[col * 3 + 2] = (proc->imgdata.image[row * width + 2 * col][2] +
-                                            proc->imgdata.image[row * width + 2 * col + 1][2]);
-                }
-            } else {
-                for (unsigned col = 0; col < output_width; ++col) {
-                    uint16_t r = (row_buf[col * 3] +
-                                  proc->imgdata.image[row * width + 2 * col][0] +
-                                  proc->imgdata.image[row * width + 2 * col + 1][0]) / 4;
-                    uint16_t g = (row_buf[col * 3 + 1] +
-                                  proc->imgdata.image[row * width + 2 * col][1] +
-                                  proc->imgdata.image[row * width + 2 * col + 1][1]) / 4;
-                    uint16_t b = (row_buf[col * 3 + 2] +
-                                  proc->imgdata.image[row * width + 2 * col][2] +
-                                  proc->imgdata.image[row * width + 2 * col + 1][2]) / 4;
-                    apply_crosstalk_correction(r, g, b, cc_matrix);
-                    row_buf[col * 3]     = r;
-                    row_buf[col * 3 + 1] = g;
-                    row_buf[col * 3 + 2] = b;
-                }
-                fwrite(row_buf.data(), 2 * 3, output_width, fp);
-            }
-        }
-    } else {
-        std::vector<ushort> row_buf(width * 3);
-        for (unsigned row = 0; row < height; ++row) {
-            for (unsigned col = 0; col < width; ++col) {
-                uint16_t r = proc->imgdata.image[row * width + col][0];
-                uint16_t g = proc->imgdata.image[row * width + col][1];
-                uint16_t b = proc->imgdata.image[row * width + col][2];
-                apply_crosstalk_correction(r, g, b, cc_matrix);
-                row_buf[col * 3]     = r;
-                row_buf[col * 3 + 1] = g;
-                row_buf[col * 3 + 2] = b;
-            }
-            fwrite(row_buf.data(), 2 * 3, width, fp);
-        }
+    if (profile_size && output_profile_bytes) {
+        fwrite(output_profile_bytes, 1, profile_size, fp);
     }
+
+    fwrite(buf.data(), 2 * 3, out_w * out_h, fp);
 
     fclose(fp);
     proc->recycle();

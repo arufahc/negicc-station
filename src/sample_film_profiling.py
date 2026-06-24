@@ -26,6 +26,7 @@ if project_dir not in sys.path:
 import negicc_station
 import auto_exposure
 import crosstalk_calibration
+from film_profiling import DEFAULT_NORMALIZATION_TARGET
 
 
 def parse_shutter_speed(shutter_str):
@@ -1087,7 +1088,8 @@ class FilmProfilingAppWindow(Gtk.Window):
                     "camera_name": self.calib.camera_model,
                     "crosstalk_profile": calib_dict,
                     "targets": targets_data,
-                    "film_base": self.base_values
+                    "film_base": self.base_values,
+                    "normalization_target": DEFAULT_NORMALIZATION_TARGET
                 }
                 
                 with open(filepath, 'w') as f:

@@ -1667,7 +1667,8 @@ class FilmProfilingAppWindow(Gtk.Window):
                                 "shutter": tab.shutter if tab.shutter is not None else "1/8s",
                                 "patches": patches
                             }],
-                            "film_base": self.base_values
+                            "film_base": self.base_values,
+                            "normalization_target": film_profiling.DEFAULT_NORMALIZATION_TARGET
                         }
                         
                         temp_profile = FilmProfile(temp_profile_dict)
@@ -1740,7 +1741,8 @@ class FilmProfilingAppWindow(Gtk.Window):
                         "camera_name": self.calib.camera_model,
                         "crosstalk_profile": calib_dict,
                         "targets": targets_json_list,
-                        "film_base": self.base_values
+                        "film_base": self.base_values,
+                        "normalization_target": film_profiling.DEFAULT_NORMALIZATION_TARGET
                     }
                     
                     with open(filepath, 'w') as f:
