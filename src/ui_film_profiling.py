@@ -184,6 +184,7 @@ class TargetTabState:
         self.index = index
         self.label_text = label_text
         self.arr_raw = None
+        self.img_obj = None
         self.arr_cc = None
         self.filepaths = None
         self.current_pixbuf = None
@@ -383,60 +384,29 @@ class ProfileReportWindow(Gtk.Window):
         
         import html
         prof_text = target_data["profcheck_output"] or "No profcheck output."
+        lines = [l.strip() for l in prof_text.split('\n') if l.strip()]
+        last_line = lines[-1] if lines else "No profcheck output."
+        
         lbl_prof = Gtk.Label()
         lbl_prof.set_xalign(0.0)
         lbl_prof.set_yalign(0.5)
         lbl_prof.set_selectable(True)
-        lbl_prof.set_markup(f"<span font_family='monospace'>{html.escape(prof_text)}</span>")
-        
-        scroll_prof = Gtk.ScrolledWindow()
-        scroll_prof.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        scroll_prof.set_min_content_height(100)
-        scroll_prof.add(lbl_prof)
-        vbox_prof.pack_start(scroll_prof, True, True, 0)
+        lbl_prof.set_markup(f"<span font_family='monospace'>{html.escape(last_line)}</span>")
+        vbox_prof.pack_start(lbl_prof, False, False, 4)
         vbox_right.pack_start(frame_prof, False, False, 0)
         
-        # 2. Interactive Conversion Preview
-        frame_prev = Gtk.Frame(label="On-The-Fly Conversion Preview")
+        # 2. Target Converted Preview
+        frame_prev = Gtk.Frame(label="Target Converted")
         vbox_prev = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         vbox_prev.set_border_width(8)
         frame_prev.add(vbox_prev)
         
         # Image area
         preview_img_widget = Gtk.Image()
-        preview_img_widget.set_size_request(-1, 280)
+        preview_img_widget.set_size_request(-1, 350)
         align = Gtk.Alignment(xalign=0.5, yalign=0.5, xscale=0, yscale=0)
         align.add(preview_img_widget)
         vbox_prev.pack_start(align, True, True, 0)
-        
-        # Sliders box
-        grid_ctrl = Gtk.Grid()
-        grid_ctrl.set_column_spacing(10)
-        grid_ctrl.set_row_spacing(6)
-        
-        # Exposure slider
-        lbl_exp = Gtk.Label(label="Exposure Compensation (EV):")
-        lbl_exp.set_xalign(1.0)
-        grid_ctrl.attach(lbl_exp, 0, 0, 1, 1)
-        
-        adj_exp = Gtk.Adjustment(value=1.0, lower=-3.0, upper=3.0, step_increment=0.1, page_increment=0.5)
-        scale_exp = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=adj_exp)
-        scale_exp.set_digits(2)
-        scale_exp.set_hexpand(True)
-        grid_ctrl.attach(scale_exp, 1, 0, 1, 1)
-        
-        # Gamma slider
-        lbl_gamma = Gtk.Label(label="Post-Correction Gamma:")
-        lbl_gamma.set_xalign(1.0)
-        grid_ctrl.attach(lbl_gamma, 0, 1, 1, 1)
-        
-        adj_gamma = Gtk.Adjustment(value=1.0, lower=0.5, upper=3.0, step_increment=0.05, page_increment=0.2)
-        scale_gamma = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=adj_gamma)
-        scale_gamma.set_digits(2)
-        scale_gamma.set_hexpand(True)
-        grid_ctrl.attach(scale_gamma, 1, 1, 1, 1)
-        
-        vbox_prev.pack_start(grid_ctrl, False, False, 0)
         vbox_right.pack_start(frame_prev, True, True, 0)
         
         # 3. Log Details (Expander)
@@ -453,81 +423,42 @@ class ProfileReportWindow(Gtk.Window):
         expander.add(scroll_logs)
         vbox_right.pack_start(expander, False, False, 0)
         
-        # --- Connect events to update preview on the fly ---
-        preview_state = {
-            "exposure": 1.0,
-            "gamma": 1.0,
-            "updating": False,
-            "pending": False
-        }
+        # --- Run conversion in background thread once ---
+        def conversion_thread():
+            try:
+                img_obj = target_data.get("img_obj")
+                if not img_obj:
+                    arr_raw = target_data.get("arr_raw")
+                    if arr_raw is not None:
+                        arr_8bit = np.clip(arr_raw / 256.0, 0, 255).astype(np.uint8)
+                        h, w, c = arr_8bit.shape
+                        GLib.idle_add(set_image_from_arr, arr_8bit, w, h)
+                    return
+                
+                shutter_speed_str = target_data.get("shutter") or "1/8s"
+                sc_profile = target_data["sc_profile"]
+                
+                arr_converted = film_profiling.convert_raw_image(
+                    img=img_obj,
+                    profile=sc_profile,
+                    clut_path=None,
+                    shutter_str=shutter_speed_str,
+                    exposure_comp=1.0,
+                    post_correction_gamma=1.0,
+                    half=True
+                )
+                
+                arr_8bit = np.clip(arr_converted / 256.0, 0, 255).astype(np.uint8)
+                h, w, c = arr_8bit.shape
+                GLib.idle_add(set_image_from_arr, arr_8bit, w, h)
+                
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print(f"[ERROR] Target conversion failed: {e}")
         
-        def update_preview_callback(*args):
-            preview_state["exposure"] = adj_exp.get_value()
-            preview_state["gamma"] = adj_gamma.get_value()
-            
-            if preview_state["updating"]:
-                preview_state["pending"] = True
-                return
-            
-            preview_state["updating"] = True
-            
-            def conversion_thread():
-                try:
-                    filepaths = target_data.get("filepaths")
-                    if not filepaths:
-                        arr_raw = target_data.get("arr_raw")
-                        if arr_raw is not None:
-                            arr_8bit = np.clip(arr_raw / 256.0, 0, 255).astype(np.uint8)
-                            h, w, c = arr_8bit.shape
-                            GLib.idle_add(set_image_from_arr, arr_8bit, w, h)
-                        return
-                    
-                    shutter_speed_str = target_data.get("shutter") or "1/8s"
-                    num, den = parse_shutter_speed(shutter_speed_str)
-                    shutter_val = num / den if den > 0 else 0.125
-                    iso_val = target_data.get("iso") or 100
-                    
-                    img_obj = negicc_station.CapturedImage(
-                        type=0, # CAPTURE_SINGLE
-                        shutter_speed=shutter_val,
-                        iso=iso_val,
-                        filepaths=list(filepaths)
-                    )
-                    
-                    sc_profile = target_data["sc_profile"]
-                    
-                    arr_converted = film_profiling.convert_raw_image(
-                        img=img_obj,
-                        profile=sc_profile,
-                        clut_path=None,
-                        shutter_str=shutter_speed_str,
-                        exposure_comp=preview_state["exposure"],
-                        post_correction_gamma=preview_state["gamma"],
-                        half=True
-                    )
-                    
-                    img_obj.discard()
-                    
-                    arr_8bit = np.clip(arr_converted / 256.0, 0, 255).astype(np.uint8)
-                    h, w, c = arr_8bit.shape
-                    GLib.idle_add(set_image_from_arr, arr_8bit, w, h)
-                    
-                except Exception as e:
-                    import traceback
-                    traceback.print_exc()
-                    print(f"[ERROR] On-the-fly preview conversion failed: {e}")
-                finally:
-                    preview_state["updating"] = False
-                    if preview_state["pending"]:
-                        preview_state["pending"] = False
-                        GLib.idle_add(update_preview_callback)
-            
-            t_conv = threading.Thread(target=conversion_thread)
-            t_conv.daemon = True
-            t_conv.start()
-            
         def set_image_from_arr(arr, w, h):
-            max_h = 280
+            max_h = 350
             scale = max_h / h
             new_h = max_h
             new_w = int(w * scale)
@@ -545,10 +476,9 @@ class ProfileReportWindow(Gtk.Window):
             scaled_pixbuf = pixbuf.scale_simple(new_w, new_h, GdkPixbuf.InterpType.BILINEAR)
             preview_img_widget.set_from_pixbuf(scaled_pixbuf)
             
-        adj_exp.connect("value-changed", update_preview_callback)
-        adj_gamma.connect("value-changed", update_preview_callback)
-        
-        update_preview_callback()
+        t_conv = threading.Thread(target=conversion_thread)
+        t_conv.daemon = True
+        t_conv.start()
         
         scrolled.add(hbox)
         return scrolled
@@ -557,13 +487,12 @@ class ProfileReportWindow(Gtk.Window):
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         
-        hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18)
-        hbox.set_border_width(12)
+        align = Gtk.Alignment(xalign=0.5, yalign=0.1, xscale=0, yscale=0)
         
-        # --- Left Column: Stats ---
         vbox_left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        vbox_left.set_border_width(12)
         vbox_left.set_size_request(450, -1)
-        hbox.pack_start(vbox_left, False, False, 0)
+        align.add(vbox_left)
         
         lbl_title = Gtk.Label()
         lbl_title.set_markup("<b>Scanned Film Base Statistics</b>")
@@ -605,48 +534,7 @@ class ProfileReportWindow(Gtk.Window):
         
         vbox_left.pack_start(grid, False, False, 0)
         
-        # --- Right Column: Preview of the raw film base image ---
-        vbox_right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        hbox.pack_start(vbox_right, True, True, 0)
-        
-        lbl_prev_title = Gtk.Label()
-        lbl_prev_title.set_markup("<b>Raw Preview (Uncorrected)</b>")
-        lbl_prev_title.set_xalign(0.0)
-        vbox_right.pack_start(lbl_prev_title, False, False, 0)
-        
-        preview_img_widget = Gtk.Image()
-        preview_img_widget.set_size_request(-1, 450)
-        align = Gtk.Alignment(xalign=0.5, yalign=0.5, xscale=0, yscale=0)
-        align.add(preview_img_widget)
-        vbox_right.pack_start(align, True, True, 0)
-        
-        if arr_raw_base is not None:
-            arr_8bit = np.clip(arr_raw_base / 256.0, 0, 255).astype(np.uint8)
-            h, w, c = arr_8bit.shape
-            
-            # Scale to fits 450px height
-            max_h = 450
-            scale = max_h / h
-            new_h = max_h
-            new_w = int(w * scale)
-            
-            glib_bytes = GLib.Bytes.new(arr_8bit.tobytes())
-            pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
-                glib_bytes,
-                GdkPixbuf.Colorspace.RGB,
-                False,
-                8,
-                w,
-                h,
-                w * 3
-            )
-            scaled_pixbuf = pixbuf.scale_simple(new_w, new_h, GdkPixbuf.InterpType.BILINEAR)
-            preview_img_widget.set_from_pixbuf(scaled_pixbuf)
-        else:
-            lbl_no_base = Gtk.Label(label="No raw base image captured.")
-            vbox_right.pack_start(lbl_no_base, True, True, 0)
-            
-        scrolled.add(hbox)
+        scrolled.add(align)
         return scrolled
 
 
@@ -815,6 +703,7 @@ class FilmProfilingAppWindow(Gtk.Window):
         self.camera_session = None
         self.is_connected = False
         self.is_connecting = False
+        self.base_img_obj = None
 
         # Target tabs and film base state
         self.target_tabs = []
@@ -1835,6 +1724,7 @@ class FilmProfilingAppWindow(Gtk.Window):
                             "sc_profile": FilmProfile(temp_profile_dict),
                             "arr_raw": tab.arr_raw,
                             "filepaths": getattr(tab, 'filepaths', None),
+                            "img_obj": getattr(tab, 'img_obj', None),
                             "iso": tab.iso,
                             "shutter": tab.shutter,
                             "cc_matrix": temp_profile.crosstalk_matrix,
@@ -2535,7 +2425,6 @@ class FilmProfilingAppWindow(Gtk.Window):
                 # Get uncorrected linear RAW
                 arr_raw = img.to_numpy(half=True)
                 captured_filepaths = img.filepaths
-                img.discard()
 
                 # Correct crosstalk using loaded profile in 32-bit float space
                 GLib.idle_add(self.status_lbl.set_text, "Status: Correcting crosstalk...")
@@ -2552,7 +2441,7 @@ class FilmProfilingAppWindow(Gtk.Window):
                 }
 
                 target_tab_or_base = active_target if is_target else "base"
-                GLib.idle_add(self.on_capture_success, target_tab_or_base, raw_bytes, w, h, arr_raw, arr_cc, exposure_info, captured_filepaths)
+                GLib.idle_add(self.on_capture_success, target_tab_or_base, raw_bytes, w, h, arr_raw, arr_cc, exposure_info, captured_filepaths, img)
             except Exception as e:
                 GLib.idle_add(self.on_capture_failure, str(e))
 
@@ -2560,7 +2449,7 @@ class FilmProfilingAppWindow(Gtk.Window):
         t.daemon = True
         t.start()
 
-    def on_capture_success(self, target_tab_or_base, raw_bytes, w, h, arr_raw, arr_cc, exposure_info, filepaths):
+    def on_capture_success(self, target_tab_or_base, raw_bytes, w, h, arr_raw, arr_cc, exposure_info, filepaths, img_obj):
         self.spinner.stop()
 
         glib_bytes = GLib.Bytes.new(raw_bytes)
@@ -2575,6 +2464,12 @@ class FilmProfilingAppWindow(Gtk.Window):
         )
 
         if isinstance(target_tab_or_base, TargetTabState):
+            if getattr(target_tab_or_base, 'img_obj', None) is not None:
+                try:
+                    target_tab_or_base.img_obj.discard()
+                except Exception:
+                    pass
+            target_tab_or_base.img_obj = img_obj
             target_tab_or_base.arr_raw = arr_raw
             target_tab_or_base.arr_cc = arr_cc
             target_tab_or_base.filepaths = filepaths
@@ -2595,6 +2490,12 @@ class FilmProfilingAppWindow(Gtk.Window):
             target_tab_or_base.lbl_tab.set_markup(target_tab_or_base.label_text)
             target_tab_or_base.it8_store.clear()
         else:
+            if getattr(self, 'base_img_obj', None) is not None:
+                try:
+                    self.base_img_obj.discard()
+                except Exception:
+                    pass
+            self.base_img_obj = img_obj
             self.arr_raw_base = arr_raw
             self.arr_cc_base = arr_cc
             self.base_filepaths = filepaths
@@ -2988,6 +2889,17 @@ class FilmProfilingAppWindow(Gtk.Window):
         return True
 
     def on_destroy(self, widget):
+        for tab in self.target_tabs:
+            if getattr(tab, 'img_obj', None) is not None:
+                try:
+                    tab.img_obj.discard()
+                except Exception:
+                    pass
+        if getattr(self, 'base_img_obj', None) is not None:
+            try:
+                self.base_img_obj.discard()
+            except Exception:
+                pass
         if self.camera_session:
             try:
                 self.camera_session.close()
