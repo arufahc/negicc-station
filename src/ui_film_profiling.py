@@ -2009,9 +2009,9 @@ class FilmProfilingAppWindow(Gtk.Window):
         b_std = np.std(arr_cc_crop[:, :, 2])
         
         self.base_store.clear()
-        self.base_store.append(["Red", int(round(r_avg)), float(r_std)])
-        self.base_store.append(["Green", int(round(g_avg)), float(g_std)])
-        self.base_store.append(["Blue", int(round(b_avg)), float(b_std)])
+        self.base_store.append(["Red", float(r_avg), float(r_std)])
+        self.base_store.append(["Green", float(g_avg), float(g_std)])
+        self.base_store.append(["Blue", float(b_avg), float(b_std)])
         
         self.base_values = {
             "iso": self.base_iso if self.base_iso is not None else 100,
