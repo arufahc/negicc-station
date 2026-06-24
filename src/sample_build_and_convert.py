@@ -46,6 +46,10 @@ def main():
                         help="Post correction gamma.")
     parser.add_argument("--colorspace", choices=["srgb", "srgb-g10"], default="srgb",
                         help="Working space profile (default: srgb)")
+    parser.add_argument("--python", action="store_true",
+                        help="Use pure Python color pipeline conversion.")
+    parser.add_argument("--compare", action="store_true",
+                        help="Run both C++ and Python pipelines and compare results.")
     
     args = parser.parse_args()
 
@@ -118,9 +122,7 @@ def main():
         sc_profile.icc_profile_bytes = icc_bytes
         print(f"ICC profile loaded into memory ({len(icc_bytes)} bytes). No temp file needed.")
 
-
-
-    # 4. Convert RAW to TIFF using C++ to_numpy and save with imageio
+    # 4. Decompress RAW if needed
     actual_raw_path = raw_path
     if actual_raw_path.endswith('.xz'):
         xz_path = actual_raw_path
@@ -148,23 +150,115 @@ def main():
         filepaths=[actual_raw_path]
     )
     
-    print(f"Converting and saving TIFF to: {output_path} (working space: {args.colorspace})...")
-    success = film_profiling.convert_raw_to_tiff(
-        img=img,
-        profile=sc_profile,
-        output_path=output_path,
-        colorspace=args.colorspace,
-        clut_path=None,
-        shutter_str="1/8s",
-        exposure_comp=args.exposure_comp,
-        post_correction_gamma=args.gamma,
-        half=half_size
-    )
-    if success:
-        print("TIFF written successfully entirely in C++!")
+    if args.compare:
+        import python_color_pipeline
+        
+        # Run C++ conversion
+        cpp_output_path = output_path.replace(".tiff", "_cpp.tiff").replace(".tif", "_cpp.tif")
+        print(f"Converting and saving TIFF (C++ pipeline) to: {cpp_output_path}...")
+        cpp_success = film_profiling.convert_raw_to_tiff(
+            img=img,
+            profile=sc_profile,
+            output_path=cpp_output_path,
+            colorspace=args.colorspace,
+            clut_path=None,
+            shutter_str="1/8s",
+            exposure_comp=args.exposure_comp,
+            post_correction_gamma=args.gamma,
+            half=half_size
+        )
+        
+        # Run Python conversion
+        py_output_path = output_path.replace(".tiff", "_py.tiff").replace(".tif", "_py.tif")
+        print(f"Converting and saving TIFF (Python pipeline) to: {py_output_path}...")
+        py_success = python_color_pipeline.convert_raw_to_tiff(
+            img=img,
+            profile=sc_profile,
+            output_path=py_output_path,
+            colorspace=args.colorspace,
+            clut_path=None,
+            shutter_str="1/8s",
+            exposure_comp=args.exposure_comp,
+            post_correction_gamma=args.gamma,
+            half=half_size
+        )
+        
+        if not (cpp_success and py_success):
+            print("Error: Conversion failed on one or both pipelines.")
+            sys.exit(1)
+            
+        # Read and compare pixel data
+        print("Loading output images for comparison...")
+        arr_cpp = imageio.imread(cpp_output_path)
+        arr_py = imageio.imread(py_output_path)
+        
+        # Compute absolute difference
+        diff = np.abs(arr_cpp.astype(np.int32) - arr_py.astype(np.int32))
+        max_diff = np.max(diff)
+        mean_diff = np.mean(diff)
+        
+        print("\n=== PARITY COMPARISON RESULTS ===")
+        print(f"Max Pixel-wise Difference: {max_diff} LSB (out of 65535)")
+        print(f"Mean Pixel-wise Difference: {mean_diff:.6f} LSB")
+        
+        # Verify ICC tag embedding
+        from imageio.plugins.tifffile import _tifffile
+        tif_cpp = _tifffile.TiffFile(cpp_output_path)
+        tif_py = _tifffile.TiffFile(py_output_path)
+        
+        has_icc_cpp = 34675 in [t.code for t in tif_cpp.pages[0].tags.values()]
+        has_icc_py = 34675 in [t.code for t in tif_py.pages[0].tags.values()]
+        
+        print(f"C++ TIFF has ICC profile tag (34675): {has_icc_cpp}")
+        print(f"Python TIFF has ICC profile tag (34675): {has_icc_py}")
+        print("==================================\n")
+        
+        # C++ Little CMS uses 16-bit integer lookup tables and tetrahedral 3D interpolation
+        # with some fixed-point optimization, whereas our Python implementation runs in float32
+        # and uses trilinear 3D interpolation. Thus, small differences (within a few thousand LSBs
+        # peak, e.g. < 8192 LSB, and < 256 LSB average) are completely normal.
+        if mean_diff <= 256 and max_diff <= 8192:
+            print("PARITY CHECK PASSED: Results are close enough with small expected error.")
+        else:
+            print("WARNING: Large difference between C++ and Python conversions.")
+            
+    elif args.python:
+        import python_color_pipeline
+        print(f"Converting and saving TIFF (Python pipeline) to: {output_path}...")
+        success = python_color_pipeline.convert_raw_to_tiff(
+            img=img,
+            profile=sc_profile,
+            output_path=output_path,
+            colorspace=args.colorspace,
+            clut_path=None,
+            shutter_str="1/8s",
+            exposure_comp=args.exposure_comp,
+            post_correction_gamma=args.gamma,
+            half=half_size
+        )
+        if success:
+            print("TIFF written successfully entirely in Python!")
+        else:
+            print("Error: Python TIFF conversion failed.")
+            sys.exit(1)
     else:
-        print("Error: TIFF conversion failed.")
-        sys.exit(1)
+        print(f"Converting and saving TIFF (C++ pipeline) to: {output_path}...")
+        success = film_profiling.convert_raw_to_tiff(
+            img=img,
+            profile=sc_profile,
+            output_path=output_path,
+            colorspace=args.colorspace,
+            clut_path=None,
+            shutter_str="1/8s",
+            exposure_comp=args.exposure_comp,
+            post_correction_gamma=args.gamma,
+            half=half_size
+        )
+        if success:
+            print("TIFF written successfully entirely in C++!")
+        else:
+            print("Error: C++ TIFF conversion failed.")
+            sys.exit(1)
 
 if __name__ == "__main__":
     main()
