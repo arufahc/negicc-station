@@ -10,7 +10,7 @@ Implements the full negative-film profiling pipeline:
 5. Apply negative-to-positive correction to captured images
 
 This module ports the logic from ../negicc/build_prof.py to work with the
-JSON profile format produced by sample_film_profiling.py.
+JSON profile format produced by ui_film_profiling.py.
 """
 
 import json

@@ -1,6 +1,6 @@
 # Film Profiling Guide
 
-This document describes the step-by-step procedure for capturing film base calibration data and IT8 targets using the `sample_film_profiling.py` utility to prepare for generation of a 32-bit floating-point film stock inversion profile.
+This document describes the step-by-step procedure for capturing film base calibration data and IT8 targets using the `ui_film_profiling.py` utility to prepare for generation of a 32-bit floating-point film stock inversion profile.
 
 ---
 
@@ -17,7 +17,7 @@ Before starting the profiling session, ensure that:
 
 Launch the desktop profiling application:
 ```bash
-./venv/bin/python3 src/sample_film_profiling.py
+./venv/bin/python3 src/ui_film_profiling.py
 ```
 Upon startup, the application will automatically attempt to connect to the Sony camera. The status indicator in the left sidebar will change to green: **Camera: Connected**.
 
@@ -32,7 +32,15 @@ To apply real-time crosstalk correction:
 
 ---
 
-## 3. Calibrate Film Base
+## 3. Load/Download IT8 Reference target
+
+To compute accurate color conversions and verify profile quality:
+1. In the sidebar under **IT8 Target Reference**, specify the URL or local file path to the IT8 reference certificate. It supports both `.txt`/`.it8` raw reference files and `.zip` archives. (The default is `http://www.colorreference.de/targets/R190808.zip`).
+2. Click **DOWNLOAD REFERENCE IT8**. The app downloads the file, caches it inside the project's `data/` directory. If it is a ZIP archive, it lists the contents and prompts you to select which file to use. The app parses the selected `.txt`/`.it8` reference file, displays the actual loaded filename in the UI, and creates the corresponding JSON cache.
+
+---
+
+## 4. Calibrate Film Base
 
 Measuring the film base (unexposed developed film) is required to calibrate the scanner's light source response relative to the film's mask.
 
@@ -46,7 +54,7 @@ Measuring the film base (unexposed developed film) is required to calibrate the 
 
 ---
 
-## 4. Capture IT8 Targets
+## 5. Capture IT8 Targets
 
 Next, capture one or more IT8 target slides under different exposure conditions or color targets to sample film dye responses.
 
@@ -72,55 +80,20 @@ If you need to capture multiple targets (e.g. for multi-exposure blending or pro
 
 ---
 
-## 5. Saving the Session Profile
+## 6. Saving the Profile and Generating Custom ICC Profile
 
 Once you have completed all target measurements and film base readings:
 1. Click the **SAVE PROFILE** button in the left sidebar under *Profile Management*.
 2. A prompt will appear asking for the **Film Stock Name** (e.g. `Portra400`, `Gold200`).
 3. A save file dialog will open, default-named with the stock name and timestamp. Save the session profile to a JSON file.
-4. The output JSON file will contain:
-   - Top-level camera model name.
-   - The original crosstalk correction profile.
-   - The Film Base exposure settings (ISO, shutter speed) and float32 color values.
-   - A list of all captured Target sessions, each containing its exposure info (ISO, shutter speed) and the float32 average and standard deviation measurements for every IT8 cell.
-
-This JSON file is ready to be loaded by downstream profiling scripts to compile the final inversion mapping.
-
----
-
-## 6. Building the Custom ICC Profile and Scanning Positive Previews
-
-Once you have saved the film stock session profile JSON, you can use the `sample_build_prof.py` application to compile the final ICC profile and verify positive image rendering directly:
-
-### Step 1: Start the Profile Builder App
-Launch the application:
-```bash
-./venv/bin/python3 src/sample_build_prof.py
-```
-
-### Step 2: Download & Parse Reference IT8 File
-1. In the sidebar under **1. Reference IT8 File**, specify the URL or local file path to the IT8 reference certificate. It supports both `.txt`/`.it8` raw reference files and `.zip` archives. (The default is `http://www.colorreference.de/targets/R190808.zip`).
-2. Click **Download Reference IT8 File**. The app downloads the file, caches it inside the project's `data/` directory. If it is a ZIP archive, it lists the contents and prompts you to select which file to use. The app parses the selected `.txt`/`.it8` reference file, displays the actual loaded filename in the UI, and creates the corresponding JSON cache.
-
-### Step 3: Load the Film Profile JSON
-1. Under **2. Loaded Film Profile JSON**, click **Load Profile JSON...**.
-2. Select the JSON file you saved in Step 5.
-3. The app loads the profile, parses the crosstalk correction matrix and average film base RGB values, and fills the adjustment parameters.
-
-### Step 4: Compile the Custom ICC Profile
-1. Under **3. Generate Custom ICC Profile**, click **Compile Custom ICC Profile**.
-2. The application performs the following steps automatically:
-   - Generates a configuration header file `build_prof.h` containing your film's tone response curves (TRC) and crosstalk correction matrix.
-   - Compiles `src/make_icc.c` using the C compiler and links it with `lcms2`.
-   - Runs ArgyllCMS `colprof` to compute the raw color look-up table (cLUT) and matrix profiles.
-   - Runs the compiled `make_icc` tool to merge the tone curves, crosstalk matrix, and Argyll's cLUT into a final custom color profile.
-   - Saves the final profile to `profiles/<FilmName> cLUT.icc`.
-   - Runs `profcheck` to evaluate error rates, displaying the average and maximum Delta E values directly in the sidebar.
-
-### Step 5: Capture and Render Corrected Positive Previews
-1. Check the **Apply IT8 & CC Corrections** checkbox under adjustments.
-2. In the adjustment fields, you can tune the **Exposure Comp** and **Post Gamma** scaling. The **Custom Film Base** values default to the averages loaded from the film profile, but can be customized manually.
-3. Set your target shutter speed and click **TETHERED CAPTURE PREVIEW**.
-4. The Sony camera remote captures the RAW file, transfers it to the Nvidia Jetson Nano, and the updated C++ tethering library processes the pixel data (applying the film base ratios, crosstalk matrix, post gamma, and custom ICC profile conversion) in C++.
-5. The display-ready positive sRGB image is returned directly to Python and drawn in the preview window!
-
+4. In the background, the application automatically performs the following compilation steps:
+   - Computes tone response curves (TRC) and crosstalk correction matrices.
+   - Compiles the custom C++ profiling utilities.
+   - Invokes ArgyllCMS `colprof` to compute the raw color lookup table (cLUT).
+   - Generates the final self-contained ICC profile and embeds it directly into the saved JSON profile.
+5. Once complete, a **Film Profiling Report** window automatically opens to verify the profile quality:
+   - **Tone Response Curves (TRC)**: Shows the measured TRC curves for Red, Green, and Blue.
+   - **Characteristic Curve**: Compares the measured RGB values against the reference Y values.
+   - **IT8 Profile Quality (profcheck)**: Shows the Delta E color accuracy stats.
+   - **Target Converted**: Displays a real-time, inverted positive rendering of the captured IT8 targets using the compiled custom ICC profile.
+   - **Compilation Logs**: Provides detailed output logs of the profile generation process.
