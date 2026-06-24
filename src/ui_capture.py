@@ -542,13 +542,7 @@ class ScanningAppWindow(Gtk.Window):
         self.hist_corr = HistogramCanvas()
         right_sidebar.pack_start(self.hist_corr, False, False, 0)
         
-        # Dynamic Range per channel display
-        self.lbl_dr = Gtk.Label()
-        self.lbl_dr.set_use_markup(True)
-        self.lbl_dr.set_xalign(0.0)
-        self.lbl_dr.set_line_wrap(True)
-        self.lbl_dr.get_style_context().add_class("meta-label")
-        right_sidebar.pack_start(self.lbl_dr, False, False, 0)
+
 
         # Tab switch listener
         self.notebook.connect("switch-page", self.on_tab_changed)
@@ -1234,44 +1228,7 @@ class ScanningAppWindow(Gtk.Window):
         self.hist_raw.plot_histogram(raw_d, is_corrected=False, has_icc=False, show_overexposure=True)
         self.hist_corr.plot_histogram(corr_d, is_corrected=True, has_icc=self.has_icc, show_overexposure=False)
         
-        self._update_dr_label(raw_d)
 
-    def _update_dr_label(self, raw_data):
-        if not hasattr(self, 'lbl_dr') or self.lbl_dr is None:
-            return
-        if raw_data is None or raw_data.size == 0:
-            self.lbl_dr.set_text("")
-            return
-        
-        # Decimate if raw_data is large to ensure snappy UI responsiveness
-        H, W = raw_data.shape[:2]
-        total_pixels = H * W
-        if total_pixels > 200000:
-            step = int(np.sqrt(total_pixels / 200000))
-            step = max(1, step)
-            raw_data_sampled = raw_data[::step, ::step, :]
-        else:
-            raw_data_sampled = raw_data
-            
-        # Calculate raw uncompensated dynamic range (p95 - p5)
-        H_c, W_c = raw_data_sampled.shape[:2]
-        hb_c = int(H_c * 0.05)
-        wb_c = int(W_c * 0.05)
-        cropped_c = raw_data_sampled[hb_c:H_c-hb_c, wb_c:W_c-wb_c, :]
-        
-        dr_ch = []
-        for c in range(3):
-            ch_data = cropped_c[:, :, c]
-            p95 = np.percentile(ch_data, 95)
-            p5 = np.percentile(ch_data, 5)
-            dr_ch.append(p95 - p5)
-        avg_dr = sum(dr_ch) / 3.0
-        
-        self.lbl_dr.set_markup(
-            f"<b>Dynamic Range</b> (p5-p95)\n"
-            f"  R: {dr_ch[0]:.0f}  G: {dr_ch[1]:.0f}  B: {dr_ch[2]:.0f}\n"
-            f"  Avg: {avg_dr:.0f}"
-        )
 
     def on_draw_capture(self, widget, cr):
         if hasattr(self, 'scaled_capture_pixbuf') and self.scaled_capture_pixbuf is not None:
