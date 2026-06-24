@@ -1658,6 +1658,10 @@ class ScanningAppWindow(Gtk.Window):
         self.lbl_base_vals.set_text(f"Raw: {rgb[0]:.1f}, {rgb[1]:.1f}, {rgb[2]:.1f} | "
                                     f"Corr: {corr_rgb[0]:.1f}, {corr_rgb[1]:.1f}, {corr_rgb[2]:.1f}")
                                     
+        val_str = f"raw: {rgb[0]:.1f}, {rgb[1]:.1f}, {rgb[2]:.1f} | Corr: {corr_rgb[0]:.1f}, {corr_rgb[1]:.1f}, {corr_rgb[2]:.1f}"
+        print(val_str, file=sys.stdout)
+        sys.stdout.flush()
+                                    
         if self.raw_image:
             self.capture_converted_rgb_cache = None
             self.capture_corr_hist_cache = None
