@@ -131,7 +131,7 @@ make
 ./venv/bin/python3 src/ui_film_profiling.py
 
 # Run the crosstalk calibration UI
-./venv/bin/python3 src/crosstalk_calibration.py
+./venv/bin/python3 src/ui_crosstalk_correction.py
 
 # Run the basic scanner control UI
 ./venv/bin/python3 src/sample_ui.py
@@ -195,7 +195,7 @@ Before scanning negative film, you must capture the camera sensor's specific cha
 
 1. Launch the crosstalk calibration script:
    ```bash
-   ./venv/bin/python3 src/crosstalk_calibration.py
+   ./venv/bin/python3 src/ui_crosstalk_correction.py
    ```
 2. Place a white diffusion target in the scanning gate.
 3. Capture three individual flat-field calibration frames:
