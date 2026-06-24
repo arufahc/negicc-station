@@ -292,6 +292,7 @@ class ScanningAppWindow(Gtk.Window):
         self.film_base_img = None
         self.film_base_raw_linear = None
         self.film_base_rgb = None
+        self.lbl_capture_log = None
         
         self.camera_session = None
         self.is_connected = False
@@ -449,6 +450,14 @@ class ScanningAppWindow(Gtk.Window):
         self.btn_cap_img.get_style_context().add_class("btn-green")
         self.btn_cap_img.connect("clicked", self.on_capture_image_clicked)
         left_sidebar.pack_start(self.btn_cap_img, False, False, 0)
+
+        # Capture log label beneath Capture Image button
+        self.lbl_capture_log = Gtk.Label()
+        self.lbl_capture_log.set_use_markup(True)
+        self.lbl_capture_log.set_xalign(0.0)
+        self.lbl_capture_log.set_line_wrap(True)
+        self.lbl_capture_log.get_style_context().add_class("meta-label")
+        left_sidebar.pack_start(self.lbl_capture_log, False, False, 5)
 
         # AE Steps output display frame
         self.ae_steps_frame = Gtk.Frame(label="Auto-Exposure Steps")
@@ -967,6 +976,43 @@ class ScanningAppWindow(Gtk.Window):
             print(f"[Capture] Capture Duration: {capture_duration:.3f}s | Conversion Duration: {conv_duration:.3f}s", file=sys.stdout)
             sys.stdout.flush()
             
+            # Calculate DR ranges for the capture log on center 2/3 square region of the shorter side
+            H, W = raw_linear.shape[:2]
+            square_size = int(min(H, W) * 2 // 3)
+            y_start = (H - square_size) // 2
+            x_start = (W - square_size) // 2
+            cropped = raw_linear[y_start:y_start+square_size, x_start:x_start+square_size, :]
+            
+            # Decimate cropped array to keep performance snappy
+            cH, cW = cropped.shape[:2]
+            total_c = cH * cW
+            if total_c > 200000:
+                step = int(np.sqrt(total_c / 200000))
+                step = max(1, step)
+                cropped_sampled = cropped[::step, ::step, :]
+            else:
+                cropped_sampled = cropped
+                
+            dr_vals = []
+            for c in range(3):
+                ch_data = cropped_sampled[:, :, c]
+                p95 = np.percentile(ch_data, 95)
+                p5 = np.percentile(ch_data, 5)
+                # Overexposure threshold is 13107.2 (80% of 16384)
+                if p95 > 13107.2:
+                    dr_vals.append("Over")
+                else:
+                    dr_vals.append(f"{p95 - p5:.0f}")
+            
+            # Update the capture log label
+            if hasattr(self, 'lbl_capture_log') and self.lbl_capture_log is not None:
+                self.lbl_capture_log.set_markup(
+                    f"<b>Last Capture:</b>\n"
+                    f"  ISO: {img_obj.iso} | Speed: {img_obj.shutter_speed:.4f}s\n"
+                    f"  Time: {capture_duration:.2f}s\n"
+                    f"  DR: R:{dr_vals[0]} G:{dr_vals[1]} B:{dr_vals[2]}"
+                )
+                
             self.update_capture_preview()
             self.notebook.set_current_page(0)
             
