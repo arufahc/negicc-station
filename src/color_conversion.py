@@ -164,6 +164,16 @@ def adjust_correction_matrix(cc_matrix, exposure_comp, profile_film_base=None, f
 # Core Pipeline Conversion Function
 # =============================================================================
 
+# Python pipeline design notes:
+# - For colorspace in ("srgb", "srgb-g10"):
+#   - Manually parses the film profile stages (TRCs and cLUT) using Little CMS via ctypes.
+#   - Applies them manually, projects XYZ to sRGB via a hardcoded Bradford matrix (D50->D65) and XYZ-to-sRGB matrix.
+#   - Applies a predefined sRGB gamma curve.
+#   - Saves the output TIFF file and embeds/attaches the sRGB profile bytes (elle profile) as Tag 34675.
+#     The profile file itself is NOT used for pixel conversion (only as metadata).
+# - For custom colorspaces (non-sRGB paths):
+#   - Uses a real Little CMS transform (cmsCreateTransform/cmsDoTransform) from XYZ to the custom output colorspace profile.
+#   - In this case, the output profile is actually used for pixel conversion.
 def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=None, shutter_str=None, exposure_comp=1.0, half=True, film_base_rgb=None, film_base_img=None):
     """
     Decodes and converts RAW image entirely in Python using Little CMS ctypes metadata extraction

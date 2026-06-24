@@ -109,7 +109,7 @@ static PyObject* PyCapturedImage_to_numpy(PyCapturedImage* self, PyObject* args,
     PyObject* py_profile_film_base = nullptr;
     PyObject* py_film_base = nullptr;
     float exposure_comp = 1.0f;
-    const char* pipeline = "cpp";
+    const char* pipeline = "cuda";
     PyObject* py_icc_bytes = nullptr;
 
     if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|pOzzOOfzO", const_cast<char**>(kwlist),
@@ -197,7 +197,7 @@ static PyObject* PyCapturedImage_to_numpy(PyCapturedImage* self, PyObject* args,
 
     int w = 0, h = 0;
     std::vector<uint16_t> buf;
-    std::string pipe_str = pipeline ? pipeline : "cpp";
+    std::string pipe_str = pipeline ? pipeline : "cuda";
     if (!self->cpp_img->get_linear_rgb(half != 0, w, h, buf, cc_matrix, it8_path, out_path,
                                        profile_film_base, film_base, exposure_comp,
                                        pipe_str, icc_data, (size_t)icc_data_size)) {
@@ -234,7 +234,7 @@ static PyObject* PyCapturedImage_write_tiff(PyCapturedImage* self, PyObject* arg
     PyObject* py_profile_film_base = nullptr;
     PyObject* py_film_base = nullptr;
     float exposure_comp = 1.0f;
-    const char* pipeline = "cpp";
+    const char* pipeline = "cuda";
     PyObject* py_icc_bytes = nullptr;
 
     if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|pOzzOOfzO", const_cast<char**>(kwlist),
@@ -319,7 +319,7 @@ static PyObject* PyCapturedImage_write_tiff(PyCapturedImage* self, PyObject* arg
     std::string it8_path = (it8_profile_path && !icc_data) ? it8_profile_path : "";
     std::string out_path = output_profile_path ? output_profile_path : "srgb";
 
-    std::string pipe_str = pipeline ? pipeline : "cpp";
+    std::string pipe_str = pipeline ? pipeline : "cuda";
     bool success = write_linear_tiff(*self->cpp_img, output_path, half != 0, cc_matrix,
                                      it8_path, out_path, profile_film_base, film_base,
                                      exposure_comp, pipe_str,

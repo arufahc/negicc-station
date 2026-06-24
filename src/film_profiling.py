@@ -942,7 +942,7 @@ def download_and_parse_reference_file(url_or_path, cache_dir, prompt_zip_callbac
     return patches, loaded_filename, reference_dir
 
 
-def convert_raw_image(img, profile, clut_path=None, shutter_str=None, exposure_comp=1.0, half=True, film_base_rgb=None, film_base_img=None, pipeline="cpp"):
+def convert_raw_image(img, profile, clut_path=None, shutter_str=None, exposure_comp=1.0, half=True, film_base_rgb=None, film_base_img=None, pipeline="cuda"):
     """Converts RAW image to positive sRGB using the C++ backend and row-wise film base scaling."""
     if pipeline == "python":
         import color_conversion
@@ -1022,7 +1022,7 @@ def convert_raw_image(img, profile, clut_path=None, shutter_str=None, exposure_c
     return img.to_numpy(**kwargs)
 
 
-def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=None, shutter_str=None, exposure_comp=1.0, half=True, film_base_rgb=None, film_base_img=None, pipeline="cpp"):
+def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=None, shutter_str=None, exposure_comp=1.0, half=True, film_base_rgb=None, film_base_img=None, pipeline="cuda"):
     """Converts RAW image and saves directly to TIFF in C++ or CUDA without NumPy image copy."""
     if pipeline == "python":
         import color_conversion

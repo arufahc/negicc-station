@@ -7,6 +7,9 @@
 // Returns true if CUDA driver/devices are available and functional
 bool is_cuda_available();
 
+// Clears the cached CUDA device float32 raw image buffer
+void clear_cuda_device_cache();
+
 // Runs the CUDA-based color conversion pipeline
 bool run_cuda_color_pipeline(
     const uint16_t* host_input_pixels,

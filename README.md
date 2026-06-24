@@ -121,6 +121,7 @@ Once the system dependencies are installed and the Sony SDK files are populated 
 | `make profile_gen_dry_run` | Dry-runs the profile build pipeline against an existing `.json` profile and IT8 reference — prints metrics without saving. Edit the profile path in the Makefile before use. |
 | `make profile_gen_dry_run_graph` | Same as above but also opens debug plots of the TRC curves and D-log H curves. |
 | `make profile_gen_and_convert` | Converts `sample.ARW` using an existing profile, writing the result to `build/sample_converted.tiff`. Decompresses `test_imgs/sample_portra400.ARW.xz` automatically if `sample.ARW` is absent. Edit the profile path in the Makefile before use. |
+| `make compare_pipelines` | Runs a multi-backend comparison benchmark on a sample RAW image, contrasting Python, C++ CPU, and CUDA execution speeds and logging parity metrics. |
 | `make clean` | Removes all build artifacts from `build/`. |
 
 ```bash
@@ -136,6 +137,27 @@ make
 # Run the basic scanner control UI
 ./venv/bin/python3 src/ui_capture.py
 ```
+
+### CUDA Acceleration & Pipeline Benchmarking
+
+#### 1. CUDA Compiler Environment Configuration
+The [Makefile](Makefile) automatically searches for the NVIDIA CUDA compiler (`nvcc`) in your system executable path. On NVIDIA Jetson platforms, `nvcc` resides in `/usr/local/cuda/bin`. If detected, the build system automatically compiles the CUDA pipeline object (`build/color_conversion_cuda.o`), linking the GPU color conversion backend and setting `HAVE_CUDA=1` flags.
+
+Ensure that the CUDA toolkit binary directory is added to your environment variables:
+```bash
+export PATH=/usr/local/cuda/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+```
+
+#### 2. Running the Performance Benchmark
+To run the performance benchmark comparing processing times and verify parity across Python (NumPy), C++ CPU (Little CMS), and CUDA GPU pipelines:
+```bash
+make compare_pipelines
+```
+This target decompresses the reference RAW image `test_imgs/sample_portra400.ARW.xz`, processes it through all three pipeline modes, and displays:
+* Parity deviation metrics (Maximum LSB difference and Mean LSB difference).
+* Backend processing times in seconds.
+* Speedup factors achieved by CUDA relative to CPU and NumPy.
 
 ---
 

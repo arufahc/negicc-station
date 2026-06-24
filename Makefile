@@ -75,9 +75,16 @@ compare_pipelines: all
 	fi
 	./venv/bin/python3 src/sample_build_and_convert.py --profile "profiles/profile_Portra400_20260623_170610.json" --reference "http://www.colorreference.de/targets/R190808.zip" --raw "sample.ARW" --output "build/sample_converted.tiff" --compare
 
+benchmark_cache: all
+	@if [ ! -f "sample.ARW" ] && [ -f "test_imgs/sample_portra400.ARW.xz" ]; then \
+		echo "Decompressing reference sample from test_imgs..."; \
+		xz -d -c test_imgs/sample_portra400.ARW.xz > sample.ARW; \
+	fi
+	./venv/bin/python3 src/sample_cuda_bench.py
+
 clean:
 	rm -rf $(BIN_OUT) negicc_station.egg-info src/color_conversion_cuda.o
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	if [ -d "venv" ]; then ./venv/bin/pip uninstall -y negicc_station || true; fi
 
-.PHONY: all clean python_lib test_parity test_live profile_gen_dry_run profile_gen_dry_run_graph profile_gen_and_convert compare_pipelines
+.PHONY: all clean python_lib test_parity test_live profile_gen_dry_run profile_gen_dry_run_graph profile_gen_and_convert compare_pipelines benchmark_cache

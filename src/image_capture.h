@@ -16,6 +16,7 @@ class CapturedImage {
 public:
     CapturedImage(ImageCaptureType type, double shutter_speed, int iso, const std::vector<std::string>& filepaths)
         : m_type(type), m_shutter_speed(shutter_speed), m_iso(iso), m_filepaths(filepaths) {}
+    ~CapturedImage();
 
     ImageCaptureType capture_type() const { return m_type; }
     double shutter_speed() const { return m_shutter_speed; }
@@ -24,12 +25,7 @@ public:
     std::string camera_model() const;
 
     // Deletes the temporary raw files from disk
-    void discard() {
-        for (const auto& fp : m_filepaths) {
-            std::remove(fp.c_str());
-        }
-        m_filepaths.clear();
-    }
+    void discard();
 
     // Decodes the raw files and fills out_buf with linear RGB 16-bit values.
     // Dimensions out_w and out_h are set.
@@ -42,7 +38,7 @@ public:
                         const std::vector<int>& profile_film_base = {},
                         const std::vector<int>& film_base = {},
                         float exposure_comp = 1.0f,
-                        const std::string& pipeline = "cpp",
+                        const std::string& pipeline = "cuda",
                         const uint8_t* it8_profile_data = nullptr,
                         size_t it8_profile_data_size = 0) const;
 
@@ -66,8 +62,10 @@ bool write_linear_tiff(const CapturedImage& img,
                        const std::vector<int>& profile_film_base = {},
                        const std::vector<int>& film_base = {},
                        float exposure_comp = 1.0f,
-                       const std::string& pipeline = "cpp",
+                       const std::string& pipeline = "cuda",
                        const uint8_t* it8_profile_data = nullptr,
                        size_t it8_profile_data_size = 0);
+
+void clear_global_cache();
 
 #endif // IMAGE_CAPTURE_H

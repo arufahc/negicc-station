@@ -13,6 +13,156 @@
 #include "dcraw/gamma_curve.h"
 #include "color_conversion.h"
 
+static const CapturedImage* g_cached_image_ptr = nullptr;
+static std::vector<std::string> g_cached_filepaths;
+static bool g_cached_half = false;
+static std::vector<uint16_t> g_cached_host_raw_buf;
+static int g_cached_w = 0;
+static int g_cached_h = 0;
+
+void clear_global_cache() {
+    g_cached_image_ptr = nullptr;
+    g_cached_filepaths.clear();
+    g_cached_half = false;
+    g_cached_host_raw_buf.clear();
+    g_cached_w = 0;
+    g_cached_h = 0;
+    clear_cuda_device_cache();
+}
+
+CapturedImage::~CapturedImage() {
+    if (g_cached_image_ptr == this) {
+        clear_global_cache();
+    }
+}
+
+void CapturedImage::discard() {
+    if (g_cached_image_ptr == this) {
+        clear_global_cache();
+    }
+    for (const auto& fp : m_filepaths) {
+        std::remove(fp.c_str());
+    }
+    m_filepaths.clear();
+}
+
+static bool ensure_decoded_raw(const CapturedImage& img, bool half_size, int& out_w, int& out_h, std::vector<uint16_t>& out_raw_buf) {
+    if (g_cached_image_ptr == &img && g_cached_filepaths == img.filepaths() && g_cached_half == half_size && !g_cached_host_raw_buf.empty()) {
+        out_w = g_cached_w;
+        out_h = g_cached_h;
+        out_raw_buf = g_cached_host_raw_buf;
+        return true;
+    }
+
+    clear_global_cache();
+
+    if (img.filepaths().empty()) {
+        std::cerr << "ERROR: No filepaths available in CapturedImage." << std::endl;
+        return false;
+    }
+
+    bool success = false;
+    if (img.capture_type() == ImageCaptureType::SINGLE) {
+        std::cout << "[CapturedImage] Loading single frame to linear buffer..." << std::endl;
+        LibRaw* proc = RawProcessor::load_raw(img.filepaths()[0], /*debayer*/ true, /*half_size*/ half_size, /*qual*/ 0, /*crop*/ false);
+        if (!proc) {
+            std::cerr << "ERROR: Failed to load single raw frame." << std::endl;
+            return false;
+        }
+
+        out_w = proc->imgdata.sizes.iwidth;
+        out_h = proc->imgdata.sizes.iheight;
+        out_raw_buf.resize(out_w * out_h * 3);
+
+        for (int i = 0; i < out_w * out_h; ++i) {
+            out_raw_buf[i * 3]     = proc->imgdata.image[i][0];
+            out_raw_buf[i * 3 + 1] = proc->imgdata.image[i][1];
+            out_raw_buf[i * 3 + 2] = proc->imgdata.image[i][2];
+        }
+
+        proc->recycle();
+        delete proc;
+        success = true;
+
+    } else if (img.capture_type() == ImageCaptureType::SONY_PIXEL_SHIFT_4) {
+        if (img.filepaths().size() < 4) {
+            std::cerr << "ERROR: Sony 4-shot pixel shift requires 4 frames, but only got " << img.filepaths().size() << std::endl;
+            return false;
+        }
+        std::cout << "[CapturedImage] Loading and merging 4 pixel-shift frames..." << std::endl;
+
+        LibRaw* procs[4];
+        for (int i = 0; i < 4; ++i) {
+            procs[i] = RawProcessor::load_raw(img.filepaths()[i], /*debayer*/ false, /*half_size*/ false, /*qual*/ 0, /*crop*/ false);
+            if (!procs[i]) {
+                std::cerr << "ERROR: Failed to load raw frame " << i << std::endl;
+                for (int j = 0; j < i; ++j) {
+                    procs[j]->recycle();
+                    delete procs[j];
+                }
+                return false;
+            }
+        }
+
+        LibRaw* proc = RawProcessor::merge_pixel_shift_raw(procs);
+        if (!proc) {
+            std::cerr << "ERROR: Failed to merge pixel shift frames." << std::endl;
+            return false;
+        }
+
+        int w = proc->imgdata.sizes.iwidth;
+        int h = proc->imgdata.sizes.iheight;
+
+        if (half_size) {
+            out_w = w / 2;
+            out_h = h / 2;
+            out_raw_buf.resize(out_w * out_h * 3);
+
+            for (int row = 0; row < out_h; ++row) {
+                for (int col = 0; col < out_w; ++col) {
+                    long r_sum = 0, g_sum = 0, b_sum = 0;
+                    for (int dy = 0; dy < 2; ++dy) {
+                        for (int dx = 0; dx < 2; ++dx) {
+                            int src_idx = (row * 2 + dy) * w + (col * 2 + dx);
+                            r_sum += proc->imgdata.image[src_idx][0];
+                            g_sum += proc->imgdata.image[src_idx][1];
+                            b_sum += proc->imgdata.image[src_idx][2];
+                        }
+                    }
+                    int dest_idx = row * out_w + col;
+                    out_raw_buf[dest_idx * 3]     = static_cast<uint16_t>(r_sum / 4);
+                    out_raw_buf[dest_idx * 3 + 1] = static_cast<uint16_t>(g_sum / 4);
+                    out_raw_buf[dest_idx * 3 + 2] = static_cast<uint16_t>(b_sum / 4);
+                }
+            }
+        } else {
+            out_w = w;
+            out_h = h;
+            out_raw_buf.resize(out_w * out_h * 3);
+            for (int i = 0; i < out_w * out_h; ++i) {
+                out_raw_buf[i * 3]     = proc->imgdata.image[i][0];
+                out_raw_buf[i * 3 + 1] = proc->imgdata.image[i][1];
+                out_raw_buf[i * 3 + 2] = proc->imgdata.image[i][2];
+            }
+        }
+
+        proc->recycle();
+        delete proc;
+        success = true;
+    }
+
+    if (success) {
+        g_cached_image_ptr = &img;
+        g_cached_filepaths = img.filepaths();
+        g_cached_half = half_size;
+        g_cached_host_raw_buf = out_raw_buf;
+        g_cached_w = out_w;
+        g_cached_h = out_h;
+    }
+
+    return success;
+}
+
 static int read_profile_from_file(const std::string& prof_name, unsigned **prof_out, unsigned *size);
 static bool apply_lcms_profile(std::vector<uint16_t>& buf, int width, int height,
                               const std::string& input_prof_path,
@@ -67,6 +217,27 @@ static void adjust_correction_matrix(std::vector<float>& r_coef,
 
 // Private cmsStage structs are now imported via lcms2_plugin.h
 
+/*
+ * Color conversion pipelines design notes:
+ * 
+ * 1. "cuda" pipeline (default):
+ *    - Extracts input TRC, 3x3 matrix/offset, 3D cLUT, and output TRC manually from the film profile.
+ *    - Applies them manually on the GPU, scaling to D50 XYZ PCS.
+ *    - Assumes the output space is sRGB (or linear sRGB-g10), applying hardcoded Bradford adaptation (D50->D65),
+ *      standard XYZ-to-sRGB matrix projection, and standard sRGB/linear EOTF curves.
+ *    - Custom output profiles are NOT supported on CUDA and will trigger a fallback to the CPU ("cpp") pipeline.
+ *    - For write_tiff, the output profile is only attached to the metadata and is NOT used for conversion.
+ * 
+ * 2. "python" pipeline:
+ *    - Resides in `color_conversion.py` and operates similarly to the CUDA pipeline for sRGB targets,
+ *      manually applying TRCs and CLUT, and using hardcoded sRGB conversions.
+ *    - Note that calling `to_numpy` or `write_tiff` from Python with `pipeline="python"` will fall back
+ *      to the C++ CPU ("cpp") pipeline, as C++ cannot execute Python code.
+ * 
+ * 3. "cpp" pipeline:
+ *    - Uses Little CMS to create a real color transform from the film profile (IT8) to the target output profile.
+ *    - This is the only pipeline that actually utilizes the custom output profile file to perform pixel color conversion.
+ */
 static bool run_color_pipeline_host(
     std::vector<uint16_t>& buf, int out_w, int out_h,
     const std::vector<float>& cc_matrix, float exposure_comp,
@@ -75,7 +246,7 @@ static bool run_color_pipeline_host(
     const uint8_t* it8_profile_data, size_t it8_profile_data_size
 ) {
     bool has_profile = !it8_profile_path.empty() || (it8_profile_data != nullptr && it8_profile_data_size > 0);
-    bool use_cuda = (pipeline == "cuda");
+    bool use_cuda = (pipeline == "cuda" && has_profile);
 
     if (use_cuda && (output_profile_path == "srgb" || output_profile_path == "srgb-g10")) {
         if (is_cuda_available()) {
@@ -353,121 +524,33 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
     }
 
     std::vector<float> cpu_cc = adjusted_cc;
-    if (pipeline == "cuda") {
+    if (pipeline == "cuda" && has_profile) {
         cpu_cc.clear(); // Bypassed on CPU, applied on GPU
     }
 
-    bool success = false;
-    if (m_type == ImageCaptureType::SINGLE) {
-        std::cout << "[CapturedImage] Loading single frame to linear buffer..." << std::endl;
-        LibRaw* proc = RawProcessor::load_raw(m_filepaths[0], /*debayer*/ true, /*half_size*/ half_size, /*qual*/ 0, /*crop*/ false);
-        if (!proc) {
-            std::cerr << "ERROR: Failed to load single raw frame." << std::endl;
-            return false;
-        }
+    if (!ensure_decoded_raw(*this, half_size, out_w, out_h, out_buf)) {
+        return false;
+    }
 
-        out_w = proc->imgdata.sizes.iwidth;
-        out_h = proc->imgdata.sizes.iheight;
-        out_buf.resize(out_w * out_h * 3);
-
+    if (!cpu_cc.empty()) {
         for (int i = 0; i < out_w * out_h; ++i) {
-            uint16_t r = proc->imgdata.image[i][0];
-            uint16_t g = proc->imgdata.image[i][1];
-            uint16_t b = proc->imgdata.image[i][2];
+            uint16_t r = out_buf[i * 3];
+            uint16_t g = out_buf[i * 3 + 1];
+            uint16_t b = out_buf[i * 3 + 2];
             apply_crosstalk_correction(r, g, b, cpu_cc);
             out_buf[i * 3]     = r;
             out_buf[i * 3 + 1] = g;
             out_buf[i * 3 + 2] = b;
         }
-
-        proc->recycle();
-        delete proc;
-        success = true;
-
-    } else if (m_type == ImageCaptureType::SONY_PIXEL_SHIFT_4) {
-        if (m_filepaths.size() < 4) {
-            std::cerr << "ERROR: Sony 4-shot pixel shift requires 4 frames, but only got " << m_filepaths.size() << std::endl;
-            return false;
-        }
-        std::cout << "[CapturedImage] Loading and merging 4 pixel-shift frames..." << std::endl;
-
-        LibRaw* procs[4];
-        for (int i = 0; i < 4; ++i) {
-            procs[i] = RawProcessor::load_raw(m_filepaths[i], /*debayer*/ false, /*half_size*/ false, /*qual*/ 0, /*crop*/ false);
-            if (!procs[i]) {
-                std::cerr << "ERROR: Failed to load raw frame " << i << std::endl;
-                for (int j = 0; j < i; ++j) {
-                    procs[j]->recycle();
-                    delete procs[j];
-                }
-                return false;
-            }
-        }
-
-        LibRaw* proc = RawProcessor::merge_pixel_shift_raw(procs);
-        if (!proc) {
-            std::cerr << "ERROR: Failed to merge pixel shift frames." << std::endl;
-            return false;
-        }
-
-        int w = proc->imgdata.sizes.iwidth;
-        int h = proc->imgdata.sizes.iheight;
-
-        if (half_size) {
-            out_w = w / 2;
-            out_h = h / 2;
-            out_buf.resize(out_w * out_h * 3);
-
-            for (int row = 0; row < out_h; ++row) {
-                for (int col = 0; col < out_w; ++col) {
-                    long r_sum = 0, g_sum = 0, b_sum = 0;
-                    for (int dy = 0; dy < 2; ++dy) {
-                        for (int dx = 0; dx < 2; ++dx) {
-                            int src_idx = (row * 2 + dy) * w + (col * 2 + dx);
-                            r_sum += proc->imgdata.image[src_idx][0];
-                            g_sum += proc->imgdata.image[src_idx][1];
-                            b_sum += proc->imgdata.image[src_idx][2];
-                        }
-                    }
-                    int dest_idx = row * out_w + col;
-                    uint16_t r = static_cast<uint16_t>(r_sum / 4);
-                    uint16_t g = static_cast<uint16_t>(g_sum / 4);
-                    uint16_t b = static_cast<uint16_t>(b_sum / 4);
-                    apply_crosstalk_correction(r, g, b, cpu_cc);
-                    out_buf[dest_idx * 3]     = r;
-                    out_buf[dest_idx * 3 + 1] = g;
-                    out_buf[dest_idx * 3 + 2] = b;
-                }
-            }
-        } else {
-            out_w = w;
-            out_h = h;
-            out_buf.resize(out_w * out_h * 3);
-            for (int i = 0; i < out_w * out_h; ++i) {
-                uint16_t r = proc->imgdata.image[i][0];
-                uint16_t g = proc->imgdata.image[i][1];
-                uint16_t b = proc->imgdata.image[i][2];
-                apply_crosstalk_correction(r, g, b, cpu_cc);
-                out_buf[i * 3]     = r;
-                out_buf[i * 3 + 1] = g;
-                out_buf[i * 3 + 2] = b;
-            }
-        }
-
-        proc->recycle();
-        delete proc;
-        success = true;
     }
 
-    if (success) {
-        if (!run_color_pipeline_host(out_buf, out_w, out_h, adjusted_cc, exposure_comp,
-                                     pipeline, it8_profile_path, output_profile_path,
-                                     it8_profile_data, it8_profile_data_size)) {
-            return false;
-        }
+    if (!run_color_pipeline_host(out_buf, out_w, out_h, adjusted_cc, exposure_comp,
+                                 pipeline, it8_profile_path, output_profile_path,
+                                 it8_profile_data, it8_profile_data_size)) {
+        return false;
     }
 
-    return success;
+    return true;
 }
 
 std::unique_ptr<CapturedImage> capture_image(ImageCaptureType type, uint32_t shutterSpeedVal) {
@@ -520,39 +603,12 @@ bool write_linear_tiff(const CapturedImage& img,
                        size_t it8_profile_data_size) {
     if (img.filepaths().empty()) return false;
 
-    // 1. Load RAW once (single or pixel shift)
-    LibRaw* proc = nullptr;
-    if (img.capture_type() == ImageCaptureType::SINGLE) {
-        proc = RawProcessor::load_raw(img.filepaths()[0], /*debayer*/ true, /*half_size*/ half_size, /*qual*/ 0, /*crop*/ false);
-    } else {
-        if (img.filepaths().size() < 4) return false;
-        LibRaw* procs[4];
-        for (int i = 0; i < 4; ++i) {
-            procs[i] = RawProcessor::load_raw(img.filepaths()[i], /*debayer*/ false, /*half_size*/ false, /*qual*/ 0, /*crop*/ false);
-            if (!procs[i]) {
-                for (int j = 0; j < i; ++j) {
-                    procs[j]->recycle();
-                    delete procs[j];
-                }
-                return false;
-            }
-        }
-        proc = RawProcessor::merge_pixel_shift_raw(procs);
+    int out_w = 0, out_h = 0;
+    std::vector<uint16_t> buf;
+    if (!ensure_decoded_raw(img, half_size, out_w, out_h, buf)) {
+        return false;
     }
 
-    if (!proc) return false;
-
-    // 2. Determine output dimensions and configure
-    int w = proc->imgdata.sizes.iwidth;
-    int h = proc->imgdata.sizes.iheight;
-    int out_w = w;
-    int out_h = h;
-    if (half_size && img.capture_type() == ImageCaptureType::SONY_PIXEL_SHIFT_4) {
-        out_w = w / 2;
-        out_h = h / 2;
-    }
-
-    // 3. Resolve crosstalk/scaling matrix
     std::vector<float> adjusted_cc = cc_matrix;
     bool has_profile = !it8_profile_path.empty() || (it8_profile_data != nullptr && it8_profile_data_size > 0);
     if (has_profile) {
@@ -577,69 +633,29 @@ bool write_linear_tiff(const CapturedImage& img,
     }
 
     std::vector<float> cpu_cc = adjusted_cc;
-    if (pipeline == "cuda") {
-        cpu_cc.clear(); // Bypassed on CPU, applied on GPU
+    if (pipeline == "cuda" && has_profile) {
+        cpu_cc.clear();
     }
 
-    // 4. Fill buffer and apply crosstalk correction
-    std::vector<uint16_t> buf(out_w * out_h * 3);
-    if (img.capture_type() == ImageCaptureType::SINGLE) {
+    if (!cpu_cc.empty()) {
         for (int i = 0; i < out_w * out_h; ++i) {
-            uint16_t r = proc->imgdata.image[i][0];
-            uint16_t g = proc->imgdata.image[i][1];
-            uint16_t b = proc->imgdata.image[i][2];
+            uint16_t r = buf[i * 3];
+            uint16_t g = buf[i * 3 + 1];
+            uint16_t b = buf[i * 3 + 2];
             apply_crosstalk_correction(r, g, b, cpu_cc);
             buf[i * 3]     = r;
             buf[i * 3 + 1] = g;
             buf[i * 3 + 2] = b;
         }
-    } else {
-        if (half_size) {
-            for (int row = 0; row < out_h; ++row) {
-                for (int col = 0; col < out_w; ++col) {
-                    long r_sum = 0, g_sum = 0, b_sum = 0;
-                    for (int dy = 0; dy < 2; ++dy) {
-                        for (int dx = 0; dx < 2; ++dx) {
-                            int src_idx = (row * 2 + dy) * w + (col * 2 + dx);
-                            r_sum += proc->imgdata.image[src_idx][0];
-                            g_sum += proc->imgdata.image[src_idx][1];
-                            b_sum += proc->imgdata.image[src_idx][2];
-                        }
-                    }
-                    int dest_idx = row * out_w + col;
-                    uint16_t r = static_cast<uint16_t>(r_sum / 4);
-                    uint16_t g = static_cast<uint16_t>(g_sum / 4);
-                    uint16_t b = static_cast<uint16_t>(b_sum / 4);
-                    apply_crosstalk_correction(r, g, b, cpu_cc);
-                    buf[dest_idx * 3]     = r;
-                    buf[dest_idx * 3 + 1] = g;
-                    buf[dest_idx * 3 + 2] = b;
-                }
-            }
-        } else {
-            for (int i = 0; i < out_w * out_h; ++i) {
-                uint16_t r = proc->imgdata.image[i][0];
-                uint16_t g = proc->imgdata.image[i][1];
-                uint16_t b = proc->imgdata.image[i][2];
-                apply_crosstalk_correction(r, g, b, cpu_cc);
-                buf[i * 3]     = r;
-                buf[i * 3 + 1] = g;
-                buf[i * 3 + 2] = b;
-            }
-        }
     }
 
-    // 5. Apply colorspace conversion using C++ CPU or CUDA
     if (!run_color_pipeline_host(buf, out_w, out_h, adjusted_cc, exposure_comp,
                                  pipeline, it8_profile_path, output_profile_path,
                                  it8_profile_data, it8_profile_data_size)) {
         std::cerr << "WARNING: Failed to run color pipeline." << std::endl;
-        proc->recycle();
-        delete proc;
         return false;
     }
 
-    // 6. Resolve output ICC profile data to attach to the TIFF file
     const uint8_t* output_profile_bytes = nullptr;
     size_t profile_size = 0;
     std::vector<uint8_t> custom_profile_buf;
@@ -661,13 +677,20 @@ bool write_linear_tiff(const CapturedImage& img,
         }
     }
 
+    LibRaw metadata_proc;
+    if (metadata_proc.open_file(img.filepaths()[0].c_str()) != LIBRAW_SUCCESS) {
+        std::cerr << "ERROR: Failed to open raw file for metadata." << std::endl;
+        return false;
+    }
+    metadata_proc.imgdata.idata.colors = 3;
+    metadata_proc.imgdata.params.output_bps = 16;
+
     struct tiff_hdr header;
-    tiff_head(proc, &header, profile_size, out_w, out_h);
+    tiff_head(&metadata_proc, &header, profile_size, out_w, out_h);
 
     FILE* fp = fopen(output_path.c_str(), "wb+");
     if (!fp) {
-        proc->recycle();
-        delete proc;
+        metadata_proc.recycle();
         return false;
     }
 
@@ -680,8 +703,7 @@ bool write_linear_tiff(const CapturedImage& img,
     fwrite(buf.data(), 2 * 3, out_w * out_h, fp);
 
     fclose(fp);
-    proc->recycle();
-    delete proc;
+    metadata_proc.recycle();
     return true;
 }
 

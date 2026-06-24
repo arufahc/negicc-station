@@ -540,7 +540,7 @@ class ProfileReportWindow(Gtk.Window):
 class FilmProfilingAppWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title="Negative Film Profiling Station")
-        self.set_default_size(1280, 800)
+        self.set_default_size(1600, 950)
         self.connect("destroy", self.on_destroy)
 
         # Apply custom dark style
@@ -728,12 +728,18 @@ class FilmProfilingAppWindow(Gtk.Window):
         self.add(main_box)
 
         # =====================================================================
-        # LEFT SIDEBAR
+        # LEFT SIDEBAR (Scrolled for screen scalability)
         # =====================================================================
+        sidebar_scroll = Gtk.ScrolledWindow()
+        sidebar_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sidebar_scroll.get_style_context().add_class("sidebar")
+        sidebar_scroll.set_size_request(320, -1)
+        main_box.pack_start(sidebar_scroll, False, False, 0)
+
         sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        sidebar_box.get_style_context().add_class("sidebar")
-        sidebar_box.set_size_request(300, -1)
-        main_box.pack_start(sidebar_box, False, False, 0)
+        sidebar_box.set_margin_start(10)
+        sidebar_box.set_margin_end(10)
+        sidebar_scroll.add(sidebar_box)
 
         # App Title
         title_lbl = Gtk.Label()
@@ -999,12 +1005,18 @@ class FilmProfilingAppWindow(Gtk.Window):
         self.notebook.append_page(self.base_box, self.lbl_base_tab)
 
         # =====================================================================
-        # RIGHT SIDEBAR (Histograms)
+        # RIGHT SIDEBAR (Scrolled for screen scalability)
         # =====================================================================
+        right_scroll = Gtk.ScrolledWindow()
+        right_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        right_scroll.get_style_context().add_class("right-sidebar")
+        right_scroll.set_size_request(340, -1)
+        main_box.pack_start(right_scroll, False, False, 0)
+
         right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        right_box.get_style_context().add_class("right-sidebar")
-        right_box.set_size_request(320, -1)
-        main_box.pack_start(right_box, False, False, 0)
+        right_box.set_margin_start(10)
+        right_box.set_margin_end(10)
+        right_scroll.add(right_box)
 
         self.right_stack = Gtk.Stack()
         self.right_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
