@@ -1299,7 +1299,7 @@ class ScanningAppWindow(Gtk.Window):
             # Draw captured metadata overlay (top-right)
             if self.raw_image and self.raw_linear_pixels is not None:
                 h_p, w_p = self.raw_linear_pixels.shape[:2]
-                meta_text = f"ISO: {self.raw_image.iso} | Shutter: {self.raw_image.shutter_speed:.4f}s | {w_p}x{h_p}"
+                meta_text = f"ISO {self.raw_image.iso} | {self.raw_image.shutter_speed:.4f}s | {w_p}x{h_p}"
                 cr.save()
                 cr.select_font_face("Inter", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
                 cr.set_font_size(10)
@@ -1357,9 +1357,9 @@ class ScanningAppWindow(Gtk.Window):
 
             # Draw processing version overlay (top-left)
             if self.profile and self.has_crosstalk:
-                status_text = "Crosstalk Corrected Linear (Film Base)"
+                status_text = "Crosstalk Corrected Linear"
             else:
-                status_text = "Linear Raw (Film Base)"
+                status_text = "Linear Raw"
 
             cr.save()
             cr.select_font_face("Inter", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
@@ -1378,7 +1378,7 @@ class ScanningAppWindow(Gtk.Window):
             # Draw captured metadata overlay (top-right)
             if self.film_base_img and self.film_base_raw_linear is not None:
                 h_p, w_p = self.film_base_raw_linear.shape[:2]
-                meta_text = f"ISO: {self.film_base_img.iso} | Shutter: {self.film_base_img.shutter_speed:.4f}s | {w_p}x{h_p}"
+                meta_text = f"ISO {self.film_base_img.iso} | {self.film_base_img.shutter_speed:.4f}s | {w_p}x{h_p}"
                 cr.save()
                 cr.select_font_face("Inter", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
                 cr.set_font_size(10)
