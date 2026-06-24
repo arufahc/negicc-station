@@ -670,13 +670,13 @@ def build_icc_profile(profile, ref_xyz_path, output_dir,
             write_curve_to_file('g_curve', g_curve)
             write_curve_to_file('r_curve', r_curve)
 
-        make_icc_c = os.path.join(os.path.dirname(os.path.abspath(__file__)), "make_icc.c")
+        make_icc_src_dir = os.path.dirname(os.path.abspath(__file__))
         make_icc_exe = os.path.join(tmpdir, "make_icc")
         run_and_log([
             'gcc', '-O3', f'-I{tmpdir}',
-            make_icc_c, '-o', make_icc_exe,
+            'make_icc.c', '-o', make_icc_exe,
             '-llcms2'
-        ])
+        ], cwd=make_icc_src_dir)
 
         os.makedirs(os.path.join(tmpdir, "icc_out"), exist_ok=True)
         run_and_log([
@@ -688,7 +688,7 @@ def build_icc_profile(profile, ref_xyz_path, output_dir,
 
         clut_icc_path = os.path.join(output_dir, f"{profile.film_name} cLUT.icc")
         shutil.copy(os.path.join(tmpdir, "icc_out", f"{profile.film_name} cLUT.icc"), clut_icc_path)
-        log(f"  cLUT profile written to: {clut_icc_path}")
+        log(f"  cLUT profile written to: {os.path.basename(clut_icc_path)}")
 
         # Step 9: Profile check
         log("Step 9: Running profcheck...")

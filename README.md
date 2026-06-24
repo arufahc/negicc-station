@@ -38,7 +38,65 @@ sudo apt-get install -y libusb-1.0-0-dev libxml2-dev libraw-dev liblcms2-dev lib
 
 ```
 
-Additionally, to allow the application to communicate with the Sony camera over USB without requiring superuser (`root`) privileges, configure the USB udev rules as described in the SDK setup guide.
+### USB udev Rules (Passwordless Camera Access)
+
+By default, USB device nodes are owned by `root`. Without a `udev` rule the application will receive `Permission denied` errors when it tries to open the camera. Follow these steps to grant your user account direct USB access:
+
+**1. Find the Sony camera's USB Vendor ID and Product ID**
+
+Plug the Sony A7R4 in via USB and run:
+```bash
+lsusb | grep -i sony
+```
+Example output:
+```
+Bus 001 Device 003: ID 054c:0cf3 Sony Corp. ILCE-7RM4
+```
+In this example the **Vendor ID (VID)** is `054c` and the **Product ID (PID)** is `0cf3`.
+The VID for all Sony cameras is always `054c`; the PID may differ by model.
+
+**2. Create the udev rule file**
+
+```bash
+sudo nano /etc/udev/rules.d/90-sony-camera.rules
+```
+
+Add the following line, replacing `054c` and `0cf3` with the VID and PID from step 1:
+```
+SUBSYSTEM=="usb", ATTR{idVendor}=="054c", ATTR{idProduct}=="0cf3", MODE="0660", GROUP="plugdev"
+```
+
+This sets the device node to be readable/writable (`0660`) by members of the `plugdev` group.
+
+**3. Add your user to the `plugdev` group**
+
+```bash
+sudo usermod -aG plugdev $USER
+```
+
+> [!IMPORTANT]
+> You must **log out and log back in** (or reboot) for the new group membership to take effect.
+
+**4. Reload udev rules and re-trigger**
+
+```bash
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+**5. Verify access**
+
+Unplug and replug the camera, then confirm the device node is accessible without `sudo`:
+```bash
+# List connected Sony USB devices — should appear without error
+lsusb | grep -i sony
+
+# Check the device node permissions (replace XXX/YYY with bus/device numbers from lsusb)
+ls -la /dev/bus/usb/XXX/YYY
+# Expected:  crw-rw---- 1 root plugdev ... /dev/bus/usb/XXX/YYY
+```
+
+If the group shows `plugdev` and your user is in that group, the application can communicate with the camera over USB without `sudo`.
 
 ---
 
@@ -50,49 +108,38 @@ Please follow the detailed setup instructions in **[3rd_party/CrSDK/README.md](3
 
 ---
 
-## 3. Build and Link Configuration (Makefile Flags)
+## 3. Build Targets
 
-The project includes a **[Makefile](Makefile)** configured with specific compilation and linking flags optimized for the Jetson Nano (ARM64 architecture) and our library dependencies:
+Once the system dependencies are installed and the Sony SDK files are populated in `3rd_party/CrSDK/`, build and run the project using the [Makefile](Makefile):
 
-### Compilation Flags (`CXXFLAGS`)
-* `-fsigned-char`: **Critical for ARM64 architecture.** By default, `char` is unsigned on ARM64 platforms (unlike x86_64 where it is signed). Since many third-party libraries (including LibRaw headers) expect `char` to be signed, this flag forces `char` to be signed, preventing compilation errors and subtle image parsing bugs.
-* `-I3rd_party/CrSDK/include`: Includes the Sony Camera Remote SDK headers.
-* `-I3rd_party`: Includes our local third-party headers (such as `lcms2.h` or custom headers).
-
-### Linking Flags (`LDFLAGS`)
-* `-L3rd_party/CrSDK/lib -lCr_Core`: Links against the core Sony SDK library.
-* `-Wl,-rpath,'$$ORIGIN/3rd_party/CrSDK/lib'`: Sets the run-time shared library search path (rpath) relative to the executable's directory. This allows the application to find `libCr_Core.so` and its adapters at runtime without needing to modify the `LD_LIBRARY_PATH` environment variable.
-* `-lraw -llcms2`: Directs the linker to link against `libraw` and `lcms2` system libraries.
-
-> [!IMPORTANT]
-> The development packages (`libraw-dev` and `liblcms2-dev`) must be installed on the system beforehand for compilation to succeed. If compilation fails with linker errors like `cannot find -lraw` or `cannot find -llcms2`, make sure you have run:
-> ```bash
-> sudo apt-get update && sudo apt-get install -y libraw-dev liblcms2-dev
-> ```
-
----
-
-## 4. Building and Running the Project
-
-Once the system dependencies are installed and the Sony SDK files are populated in `3rd_party/CrSDK/`, you can compile the project and run the capture utilities:
+| Target | Description |
+|---|---|
+| `make` | *(default)* Builds all C++ binaries and installs the Python extension library into `venv/`. |
+| `make python_lib` | Builds and installs only the Python C extension (skips C++ standalone binaries). |
+| `make test_parity` | Runs the pixel-level parity integration test between C++ and Python outputs. |
+| `make test_live` | Runs the live camera capture integration test (requires camera connected). |
+| `make profile_gen_dry_run` | Dry-runs the profile build pipeline against an existing `.json` profile and IT8 reference — prints metrics without saving. Edit the profile path in the Makefile before use. |
+| `make profile_gen_dry_run_graph` | Same as above but also opens debug plots of the TRC curves and D-log H curves. |
+| `make profile_gen_and_convert` | Converts `sample.ARW` using an existing profile, writing the result to `build/sample_converted.tiff`. Decompresses `test_imgs/sample_portra400.ARW.xz` automatically if `sample.ARW` is absent. Edit the profile path in the Makefile before use. |
+| `make clean` | Removes all build artifacts from `build/`. |
 
 ```bash
-# Build all C++ targets and build/install the Python library
+# Build everything
 make
 
-# Run the C++ capture test program
-./build/capture_test
+# Run the film profiling UI
+./venv/bin/python3 src/ui_film_profiling.py
 
-# Run the command-line Python capture example
-./venv/bin/python3 src/sample_capture_tiff.py
+# Run the crosstalk calibration UI
+./venv/bin/python3 src/crosstalk_calibration.py
 
-# Run the PyGObject GTK3 desktop scanning GUI
+# Run the basic scanner control UI
 ./venv/bin/python3 src/sample_ui.py
 ```
 
 ---
 
-## 5. Agent Instructions for Managing Dependencies
+## 4. Agent Instructions for Managing Dependencies
 
 When introducing any new third-party dependency, library, or system package to this codebase, the agent **MUST** follow these protocol steps to keep the environment reproducible:
 
@@ -103,7 +150,7 @@ When introducing any new third-party dependency, library, or system package to t
 
 ---
 
-## 6. Troubleshooting and Hardware Diagnostics
+## 5. Troubleshooting and Hardware Diagnostics
 
 ### A. USB Memory Limit (`ENOMEM` / Disconnection during file transfer)
 When transferring large RAW image files (like the 61MP files from the Sony A7R4), the Sony SDK submits multiple concurrent USB requests. If the total size of these requests exceeds the kernel's USB filesystem memory limit, the transfer fails and the connection drops.
@@ -139,7 +186,7 @@ The Sony SDK represents shutter speed values as a fraction pack where the upper 
 
 ---
 
-## 7. Step-by-Step Film Profiling Guide
+## 6. Step-by-Step Film Profiling Guide
 
 This guide details the complete protocol to calibrate a digital camera sensor's spectral crosstalk, capture film base characteristics, and profile target data at different exposures using the scanning software.
 

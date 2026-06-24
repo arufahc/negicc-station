@@ -36,7 +36,7 @@ profile_gen_dry_run: all
 profile_gen_dry_run_graph: all
 	./venv/bin/python3 src/sample_build_prof.py --profile "profiles/profile_Portra 400_20260623_000121.json" --reference "http://www.colorreference.de/targets/R190808.zip" --dry-run --debug
 
-convert_sample: all
+profile_gen_and_convert: all
 	@if [ ! -f "sample.ARW" ] && [ -f "test_imgs/sample_portra400.ARW.xz" ]; then \
 		echo "Decompressing reference sample from test_imgs..."; \
 		xz -d -c test_imgs/sample_portra400.ARW.xz > sample.ARW; \
@@ -53,5 +53,5 @@ clean:
 	if [ -d "venv" ]; then ./venv/bin/pip uninstall -y negicc_station || true; fi
 
 
-.PHONY: all clean python_lib test_parity test_live profile_gen_dry_run profile_gen_dry_run_graph convert_sample
+.PHONY: all clean python_lib test_parity test_live profile_gen_dry_run profile_gen_dry_run_graph profile_gen_and_convert
 
