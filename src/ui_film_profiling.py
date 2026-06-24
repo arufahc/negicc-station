@@ -403,11 +403,11 @@ class ProfileReportWindow(Gtk.Window):
         
         # Image area
         preview_img_widget = Gtk.Image()
-        preview_img_widget.set_size_request(-1, 350)
+        preview_img_widget.set_size_request(-1, 260)
         align = Gtk.Alignment(xalign=0.5, yalign=0.5, xscale=0, yscale=0)
         align.add(preview_img_widget)
-        vbox_prev.pack_start(align, True, True, 0)
-        vbox_right.pack_start(frame_prev, True, True, 0)
+        vbox_prev.pack_start(align, False, False, 0)
+        vbox_right.pack_start(frame_prev, False, False, 0)
         
         # 3. Log Details (Expander)
         expander = Gtk.Expander(label="Compilation Logs")
@@ -458,7 +458,7 @@ class ProfileReportWindow(Gtk.Window):
                 print(f"[ERROR] Target conversion failed: {e}")
         
         def set_image_from_arr(arr, w, h):
-            max_h = 350
+            max_h = 260
             scale = max_h / h
             new_h = max_h
             new_w = int(w * scale)
