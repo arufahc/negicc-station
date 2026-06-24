@@ -1534,8 +1534,11 @@ class FilmProfilingAppWindow(Gtk.Window):
         
         dialog.show_all()
         response = dialog.run()
-        film_stock = entry.get_text().strip()
+        film_stock = None
+        if response == Gtk.ResponseType.OK:
+            film_stock = entry.get_text().strip()
         dialog.destroy()
+        return film_stock
         
     def show_error_dialog(self, title, message):
         dialog = Gtk.MessageDialog(
