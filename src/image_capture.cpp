@@ -93,21 +93,33 @@ static int read_profile_from_file(const std::string& prof_name, unsigned **prof_
 }
 
 static bool apply_lcms_profile(std::vector<uint16_t>& buf, int width, int height,
-                              const std::string& input_prof_path, const std::string& output_prof_path) {
+                              const std::string& input_prof_path,
+                              const std::string& output_prof_path,
+                              const uint8_t* input_prof_data = nullptr,
+                              size_t input_prof_data_size = 0) {
     cmsHPROFILE in_profile = nullptr;
     cmsHPROFILE out_profile = nullptr;
     cmsHTRANSFORM transform = nullptr;
-    unsigned* prof = nullptr;
     unsigned* oprof = nullptr;
     unsigned size = 0;
 
-    if (read_profile_from_file(input_prof_path, &prof, &size) == 0) {
-        in_profile = cmsOpenProfileFromMem(prof, size);
-        free(prof);
-    }
-    if (!in_profile) {
-        std::cerr << "ERROR: Failed to open input ICC profile from " << input_prof_path << std::endl;
-        return false;
+    // Load input (film) ICC profile: prefer in-memory buffer, fall back to file path
+    if (input_prof_data && input_prof_data_size > 0) {
+        in_profile = cmsOpenProfileFromMem(input_prof_data, (cmsUInt32Number)input_prof_data_size);
+        if (!in_profile) {
+            std::cerr << "ERROR: Failed to open input ICC profile from memory buffer." << std::endl;
+            return false;
+        }
+    } else {
+        unsigned* prof = nullptr;
+        if (read_profile_from_file(input_prof_path, &prof, &size) == 0) {
+            in_profile = cmsOpenProfileFromMem(prof, size);
+            free(prof);
+        }
+        if (!in_profile) {
+            std::cerr << "ERROR: Failed to open input ICC profile from " << input_prof_path << std::endl;
+            return false;
+        }
     }
 
     if (output_prof_path == "srgb") {
@@ -148,14 +160,17 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
                                    const std::vector<int>& profile_film_base,
                                    const std::vector<int>& film_base,
                                    float exposure_comp,
-                                   float post_correction_gamma) const {
+                                   float post_correction_gamma,
+                                   const uint8_t* it8_profile_data,
+                                   size_t it8_profile_data_size) const {
     if (m_filepaths.empty()) {
         std::cerr << "ERROR: No filepaths available in CapturedImage." << std::endl;
         return false;
     }
 
     std::vector<float> adjusted_cc = cc_matrix;
-    if (!it8_profile_path.empty()) {
+    bool has_profile = !it8_profile_path.empty() || (it8_profile_data != nullptr && it8_profile_data_size > 0);
+    if (has_profile) {
         if (adjusted_cc.empty()) {
             adjusted_cc = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
         }
@@ -278,9 +293,10 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
         success = true;
     }
 
-    if (success && !it8_profile_path.empty()) {
+    if (success && has_profile) {
         apply_gamma_to_buf(out_buf, post_correction_gamma);
-        if (!apply_lcms_profile(out_buf, out_w, out_h, it8_profile_path, output_profile_path)) {
+        if (!apply_lcms_profile(out_buf, out_w, out_h, it8_profile_path, output_profile_path,
+                                it8_profile_data, it8_profile_data_size)) {
             std::cerr << "WARNING: Failed to apply LCMS profile." << std::endl;
             return false;
         }

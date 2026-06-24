@@ -122,14 +122,16 @@ class FilmProfile:
         self.film_base_shutter = fb.get('shutter', '1/8s')
 
         # Self-contained profile elements if present
-        self.trc_curves = data.get('trc_curves', None)
-        self.icc_profile_base64 = data.get('icc_profile_base64', None)
-
-        # Fallback to the first target if not found at root
-        if self.trc_curves is None and targets:
-            self.trc_curves = targets[0].get('trc_curves', None)
-        if self.icc_profile_base64 is None and targets:
-            self.icc_profile_base64 = targets[0].get('icc_profile_base64', None)
+        # icc_profile_bytes holds the raw ICC binary (decoded from base64 in JSON)
+        icc_b64 = data.get('icc_profile_base64', None)
+        # Also check first target for backward compatibility
+        if icc_b64 is None and targets:
+            icc_b64 = targets[0].get('icc_profile_base64', None)
+        if icc_b64 is not None:
+            import base64
+            self.icc_profile_bytes = base64.b64decode(icc_b64)
+        else:
+            self.icc_profile_bytes = None
 
     def get_patch_rgb(self, patch_name):
         """Return (r, g, b) for a patch."""
@@ -939,77 +941,70 @@ def download_and_parse_reference_file(url_or_path, cache_dir, prompt_zip_callbac
 
 def convert_raw_image(img, profile, clut_path=None, shutter_str=None, exposure_comp=1.0, post_correction_gamma=1.0, half=True, film_base_rgb=None, film_base_img=None):
     """Converts RAW image to positive sRGB using the C++ backend and row-wise film base scaling."""
-    temp_clut_file = None
+    # Resolve ICC data: prefer in-memory bytes, then fall back to clut_path file
+    icc_bytes = None
     if clut_path is None:
-        if getattr(profile, 'icc_profile_base64', None):
-            import base64
-            import tempfile
-            fd, temp_clut_path = tempfile.mkstemp(suffix=".icc", prefix="self_contained_clut_")
-            with os.fdopen(fd, 'wb') as tmp:
-                tmp.write(base64.b64decode(profile.icc_profile_base64))
-            clut_path = temp_clut_path
-            temp_clut_file = temp_clut_path
+        if getattr(profile, 'icc_profile_bytes', None):
+            icc_bytes = profile.icc_profile_bytes
         else:
-            raise ValueError("clut_path is None and profile has no self-contained icc_profile_base64.")
+            raise ValueError("clut_path is None and profile has no self-contained ICC profile bytes.")
 
-    try:
-        # 1. Determine scanned film base (crosstalk-corrected)
-        if film_base_rgb is not None:
-            fb_r, fb_g, fb_b = film_base_rgb
-        else:
-            fb_r = profile.film_base['r_avg']
-            fb_g = profile.film_base['g_avg']
-            fb_b = profile.film_base['b_avg']
+    # 1. Determine scanned film base (crosstalk-corrected)
+    if film_base_rgb is not None:
+        fb_r, fb_g, fb_b = film_base_rgb
+    else:
+        fb_r = profile.film_base['r_avg']
+        fb_g = profile.film_base['g_avg']
+        fb_b = profile.film_base['b_avg']
 
-        # 2. Compute exposure ratio
-        if shutter_str is not None:
-            scan_num, scan_den = parse_shutter_speed(shutter_str)
-            t_scan = scan_num / scan_den
-        else:
-            t_scan = img.shutter_speed
+    # 2. Compute exposure ratio
+    if shutter_str is not None:
+        scan_num, scan_den = parse_shutter_speed(shutter_str)
+        t_scan = scan_num / scan_den
+    else:
+        t_scan = img.shutter_speed
 
-        # Shutter speed and ISO of film base (use film_base_img if provided, otherwise fallback to profile metadata)
-        if film_base_img is not None:
-            t_base = film_base_img.shutter_speed
-            iso_base = film_base_img.iso
-        else:
-            base_num, base_den = parse_shutter_speed(profile.film_base_shutter)
-            t_base = base_num / base_den
-            iso_base = profile.film_base_iso
+    # Shutter speed and ISO of film base (use film_base_img if provided, otherwise fallback to profile metadata)
+    if film_base_img is not None:
+        t_base = film_base_img.shutter_speed
+        iso_base = film_base_img.iso
+    else:
+        base_num, base_den = parse_shutter_speed(profile.film_base_shutter)
+        t_base = base_num / base_den
+        iso_base = profile.film_base_iso
 
-        iso_scan = img.iso
+    iso_scan = img.iso
 
-        # Exposure: t * ISO
-        exposure_profile = t_base * (iso_base / 100.0)
-        exposure_scan = t_scan * (iso_scan / 100.0)
-        exposure_ratio = exposure_profile / exposure_scan if exposure_scan > 0 else 1.0
+    # Exposure: t * ISO
+    exposure_profile = t_base * (iso_base / 100.0)
+    exposure_scan = t_scan * (iso_scan / 100.0)
+    exposure_ratio = exposure_profile / exposure_scan if exposure_scan > 0 else 1.0
 
-        # Scale factors to map film base at current exposure to normalization_target
-        target_val = profile.normalization_target
-        scale_r = (target_val / fb_r) * exposure_ratio if fb_r > 0 else 1.0
-        scale_g = (target_val / fb_g) * exposure_ratio if fb_g > 0 else 1.0
-        scale_b = (target_val / fb_b) * exposure_ratio if fb_b > 0 else 1.0
+    # Scale factors to map film base at current exposure to normalization_target
+    target_val = profile.normalization_target
+    scale_r = (target_val / fb_r) * exposure_ratio if fb_r > 0 else 1.0
+    scale_g = (target_val / fb_g) * exposure_ratio if fb_g > 0 else 1.0
+    scale_b = (target_val / fb_b) * exposure_ratio if fb_b > 0 else 1.0
 
-        # Merge normalization scale factors into crosstalk matrix on the fly (row-wise!)
-        # This applies scaling *after* crosstalk correction: diag(scales) * M
-        raw_crosstalk = np.array(profile.crosstalk_matrix)
-        scales = np.array([scale_r, scale_g, scale_b])
-        merged_matrix = raw_crosstalk * scales[:, np.newaxis]
-        flat_merged_matrix = merged_matrix.flatten().tolist()
+    # Merge normalization scale factors into crosstalk matrix on the fly (row-wise!)
+    # This applies scaling *after* crosstalk correction: diag(scales) * M
+    raw_crosstalk = np.array(profile.crosstalk_matrix)
+    scales = np.array([scale_r, scale_g, scale_b])
+    merged_matrix = raw_crosstalk * scales[:, np.newaxis]
+    flat_merged_matrix = merged_matrix.flatten().tolist()
 
-        return img.to_numpy(
-            half=half,
-            crosstalk_matrix=flat_merged_matrix,
-            it8_profile_path=clut_path,
-            output_profile_path="srgb",
-            profile_film_base=None,
-            film_base=None,
-            exposure_comp=exposure_comp,
-            post_correction_gamma=post_correction_gamma
-        )
-    finally:
-        if temp_clut_file and os.path.exists(temp_clut_file):
-            try:
-                os.remove(temp_clut_file)
-            except Exception:
-                pass
+    kwargs = dict(
+        half=half,
+        crosstalk_matrix=flat_merged_matrix,
+        output_profile_path="srgb",
+        profile_film_base=None,
+        film_base=None,
+        exposure_comp=exposure_comp,
+        post_correction_gamma=post_correction_gamma
+    )
+    if icc_bytes is not None:
+        kwargs['it8_profile_bytes'] = icc_bytes
+    else:
+        kwargs['it8_profile_path'] = clut_path
+
+    return img.to_numpy(**kwargs)

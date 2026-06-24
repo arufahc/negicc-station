@@ -1694,7 +1694,7 @@ class FilmProfilingAppWindow(Gtk.Window):
                         
                         GLib.idle_add(progress_dialog.update_progress, 
                                       f"Processing Target {tab.label_text} ({t_num}/{t_tot})", 
-                                      "Serializing TRC curves and encoding ICC...", 
+                                      "Encoding ICC profile...", 
                                       idx / t_tot + 0.8 / t_tot)
                         
                         with open(clut_path, 'rb') as f_icc:
@@ -1706,11 +1706,6 @@ class FilmProfilingAppWindow(Gtk.Window):
                             "iso": tab.iso if tab.iso is not None else 100,
                             "shutter": tab.shutter if tab.shutter is not None else "1/8s",
                             "patches": patches,
-                            "trc_curves": {
-                                "r": list(res['trc_curves'][0]),
-                                "g": list(res['trc_curves'][1]),
-                                "b": list(res['trc_curves'][2])
-                            },
                             "icc_profile_base64": icc_b64,
                             "profcheck_output": res['profcheck_output'],
                             "log_messages": res['log_messages']
@@ -1731,9 +1726,8 @@ class FilmProfilingAppWindow(Gtk.Window):
                             "sc_profile_data": target_dict
                         }
                         
-                        # Set self-contained fields
-                        results_report[tab.label_text]["sc_profile"].icc_profile_base64 = icc_b64
-                        results_report[tab.label_text]["sc_profile"].trc_curves = target_dict["trc_curves"]
+                        # Set self-contained ICC bytes directly in memory (no base64 decode needed)
+                        results_report[tab.label_text]["sc_profile"].icc_profile_bytes = icc_bytes
                         
                         GLib.idle_add(progress_dialog.update_progress, 
                                       f"Processing Target {tab.label_text} ({t_num}/{t_tot})", 

@@ -33,6 +33,8 @@ public:
 
     // Decodes the raw files and fills out_buf with linear RGB 16-bit values.
     // Dimensions out_w and out_h are set.
+    // it8_profile_path: path to ICC file on disk (legacy). If empty and it8_profile_data is non-null,
+    // the ICC profile is loaded directly from the provided memory buffer.
     bool get_linear_rgb(bool half_size, int& out_w, int& out_h, std::vector<uint16_t>& out_buf,
                         const std::vector<float>& cc_matrix = {},
                         const std::string& it8_profile_path = "",
@@ -40,7 +42,9 @@ public:
                         const std::vector<int>& profile_film_base = {},
                         const std::vector<int>& film_base = {},
                         float exposure_comp = 1.0f,
-                        float post_correction_gamma = 1.0f) const;
+                        float post_correction_gamma = 1.0f,
+                        const uint8_t* it8_profile_data = nullptr,
+                        size_t it8_profile_data_size = 0) const;
 
 private:
     ImageCaptureType m_type;

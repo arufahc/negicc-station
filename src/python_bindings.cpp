@@ -99,7 +99,8 @@ static PyObject* PyCapturedImage_to_numpy(PyCapturedImage* self, PyObject* args,
 
     static const char* kwlist[] = {
         "half", "crosstalk_matrix", "it8_profile_path", "output_profile_path",
-        "profile_film_base", "film_base", "exposure_comp", "post_correction_gamma", nullptr
+        "profile_film_base", "film_base", "exposure_comp", "post_correction_gamma",
+        "it8_profile_bytes", nullptr
     };
     int half = 0;
     PyObject* py_matrix = nullptr;
@@ -109,10 +110,12 @@ static PyObject* PyCapturedImage_to_numpy(PyCapturedImage* self, PyObject* args,
     PyObject* py_film_base = nullptr;
     float exposure_comp = 1.0f;
     float post_correction_gamma = 1.0f;
+    PyObject* py_icc_bytes = nullptr;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|pOzzOOff", const_cast<char**>(kwlist),
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|pOzzOOffO", const_cast<char**>(kwlist),
                                      &half, &py_matrix, &it8_profile_path, &output_profile_path,
-                                     &py_profile_film_base, &py_film_base, &exposure_comp, &post_correction_gamma)) {
+                                     &py_profile_film_base, &py_film_base, &exposure_comp,
+                                     &post_correction_gamma, &py_icc_bytes)) {
         return nullptr;
     }
 
@@ -177,12 +180,26 @@ static PyObject* PyCapturedImage_to_numpy(PyCapturedImage* self, PyObject* args,
         }
     }
 
-    std::string it8_path = it8_profile_path ? it8_profile_path : "";
+    // Resolve in-memory ICC bytes (preferred) or file path (legacy)
+    const uint8_t* icc_data = nullptr;
+    Py_ssize_t icc_data_size = 0;
+    if (py_icc_bytes && py_icc_bytes != Py_None) {
+        if (!PyBytes_Check(py_icc_bytes)) {
+            PyErr_SetString(PyExc_TypeError, "it8_profile_bytes must be a bytes object.");
+            return nullptr;
+        }
+        icc_data = reinterpret_cast<const uint8_t*>(PyBytes_AS_STRING(py_icc_bytes));
+        icc_data_size = PyBytes_GET_SIZE(py_icc_bytes);
+    }
+
+    std::string it8_path = (it8_profile_path && !icc_data) ? it8_profile_path : "";
     std::string out_path = output_profile_path ? output_profile_path : "srgb";
 
     int w = 0, h = 0;
     std::vector<uint16_t> buf;
-    if (!self->cpp_img->get_linear_rgb(half != 0, w, h, buf, cc_matrix, it8_path, out_path, profile_film_base, film_base, exposure_comp, post_correction_gamma)) {
+    if (!self->cpp_img->get_linear_rgb(half != 0, w, h, buf, cc_matrix, it8_path, out_path,
+                                       profile_film_base, film_base, exposure_comp,
+                                       post_correction_gamma, icc_data, (size_t)icc_data_size)) {
         PyErr_SetString(PyExc_RuntimeError, "Failed to load/process RAW image buffer.");
         return nullptr;
     }
