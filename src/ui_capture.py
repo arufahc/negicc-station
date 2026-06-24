@@ -12,588 +12,611 @@ import time
 import numpy as np
 import json
 import gi
+import struct
+import ctypes
 
 # Require GTK3
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
+
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_gtk3agg import FigureCanvasGTK3Agg as FigureCanvas
 
 import negicc_station
+from film_profiling import FilmProfile
+import color_conversion
+from target_selection import find_best_target_index
+import auto_exposure
 
-# Add project src directory to path to ensure auto_exposure can be loaded
+# Resolve path for local imports
 src_dir = os.path.dirname(os.path.abspath(__file__))
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
 
-import auto_exposure
-
-# The 55 standard shutter speeds supported by the Sony A7R4
-SHUTTER_SPEEDS = [
-    "30s", "25s", "20s", "15s", "13s", "10s", "8s", "6s", "5s", "4s", "3.2s", "2.5s", "2s", "1.6s", "1.3s", "1s",
-    "0.8s", "0.6s", "0.5s", "0.4s", "1/3s", "1/4s", "1/5s", "1/6s", "1/8s", "1/10s", "1/13s", "1/15s", "1/20s",
-    "1/25s", "1/30s", "1/40s", "1/50s", "1/60s", "1/80s", "1/100s", "1/125s", "1/160s", "1/200s", "1/250s",
-    "1/320s", "1/400s", "1/500s", "1/640s", "1/800s", "1/1000s", "1/1250s", "1/1600s", "1/2000s", "1/2500s",
-    "1/3200s", "1/4000s", "1/5000s", "1/6400s", "1/8000s"
-]
-
-def parse_shutter_speed(shutter_str):
-    """Parses user-friendly string (e.g. '1/125s' or '2.5s') into (numerator, denominator) integers."""
-    s = shutter_str.rstrip('s')
-    if '/' in s:
-        parts = s.split('/')
-        return int(parts[0]), int(parts[1])
-    else:
-        val = float(s)
-        if val.is_integer():
-            return int(val), 1
-        else:
-            return int(round(val * 10.0)), 10
-
-def compute_hist_and_percentiles(arr):
-    # Calculate 256-bin normalized histograms in range [0, 16384]
-    bins = 256
-    hist_r, _ = np.histogram(arr[:, :, 0], bins=bins, range=(0, 16384))
-    hist_g, _ = np.histogram(arr[:, :, 1], bins=bins, range=(0, 16384))
-    hist_b, _ = np.histogram(arr[:, :, 2], bins=bins, range=(0, 16384))
-    max_val = max(hist_r.max(), hist_g.max(), hist_b.max(), 1)
-    
-    hist_r_norm = hist_r / max_val
-    hist_g_norm = hist_g / max_val
-    hist_b_norm = hist_b / max_val
-
-    # Exclude 5% borders for percentiles and averages
-    H, W, C = arr.shape
-    h_border = int(H * 0.05)
-    w_border = int(W * 0.05)
-    cropped = arr[h_border:H-h_border, w_border:W-w_border, :]
-
-    # Calculate 2nd and 98th percentiles
-    p2_r = float(np.percentile(cropped[:, :, 0], 2))
-    p98_r = float(np.percentile(cropped[:, :, 0], 98))
-    p2_g = float(np.percentile(cropped[:, :, 1], 2))
-    p98_g = float(np.percentile(cropped[:, :, 1], 98))
-    p2_b = float(np.percentile(cropped[:, :, 2], 2))
-    p98_b = float(np.percentile(cropped[:, :, 2], 98))
-
-    dr_r = p98_r - p2_r
-    dr_g = p98_g - p2_g
-    dr_b = p98_b - p2_b
-    avg_dr = (dr_r + dr_g + dr_b) / 3.0
-
-    # Calculate averages (means)
-    mean_r = float(np.mean(cropped[:, :, 0]))
-    mean_g = float(np.mean(cropped[:, :, 1]))
-    mean_b = float(np.mean(cropped[:, :, 2]))
-    avg_mean = (mean_r + mean_g + mean_b) / 3.0
-
-    return (hist_r_norm, hist_g_norm, hist_b_norm), (p2_r, p2_g, p2_b), (p98_r, p98_g, p98_b), (dr_r, dr_g, dr_b, avg_dr), (mean_r, mean_g, mean_b, avg_mean)
-
-def draw_matplotlib_histogram(ax, hists, p2, p98, dr_metrics=None, mean_metrics=None, show_overexposure=True):
-    ax.clear()
-    ax.grid(True, color='#2c2c2c', linestyle='--', linewidth=0.5)
-    
-    if hists is None:
-        ax.figure.canvas.draw_idle()
-        return
-        
-    hist_r_norm, hist_g_norm, hist_b_norm = hists
-    bins_x = np.linspace(0, 16384, len(hist_r_norm))
-    
-    # Plot channels with area fills
-    ax.plot(bins_x, hist_r_norm, color='#ff6666', alpha=0.8, linewidth=1.2)
-    ax.fill_between(bins_x, 0, hist_r_norm, color='#ff6666', alpha=0.12)
-    
-    ax.plot(bins_x, hist_g_norm, color='#66ff66', alpha=0.8, linewidth=1.2)
-    ax.fill_between(bins_x, 0, hist_g_norm, color='#66ff66', alpha=0.12)
-    
-    ax.plot(bins_x, hist_b_norm, color='#66aaff', alpha=0.8, linewidth=1.2)
-    ax.fill_between(bins_x, 0, hist_b_norm, color='#66aaff', alpha=0.12)
-    
-    # Plot 80% overexposure vertical bar of 16384 (0.8 * 16384 = 13107.2)
-    if show_overexposure:
-        ax.axvline(13107.2, color='#e74c3c', linestyle='-', alpha=0.8, linewidth=1.5)
-        # Add textual label next to the line since we don't have a legend
-        ax.text(13107.2 - 200, 0.95, "Overexposure (80%)", color='#e74c3c', fontsize=7.5,
-                horizontalalignment='right', verticalalignment='top', rotation=90,
-                bbox=dict(boxstyle='round,pad=0.15', facecolor='#121212', alpha=0.6, edgecolor='none'))
-    
-    # Plot percentile indicators
-    if p2 is not None and p98 is not None:
-        colors = ['#ff6666', '#66ff66', '#66aaff']
-        for i in range(3):
-            ax.axvline(p2[i], color=colors[i], linestyle='--', alpha=0.6, linewidth=1.0)
-            ax.axvline(p98[i], color=colors[i], linestyle='--', alpha=0.6, linewidth=1.0)
+# Helper functions for EXIF/TIFF orientation tags and numpy image transformations
+def set_tiff_orientation_inplace(filepath, orientation_value):
+    try:
+        with open(filepath, 'r+b') as f:
+            f.seek(0)
+            byte_order = f.read(2)
+            if byte_order == b'II': endian = '<'
+            elif byte_order == b'MM': endian = '>'
+            else: return False
             
-    # Plot a cross marker ('x') for the channel averages and display their values
-    if mean_metrics is not None:
-        mean_r, mean_g, mean_b, _ = mean_metrics
+            magic = struct.unpack(endian + 'H', f.read(2))[0]
+            if magic != 42: return False
+            
+            f.seek(4)
+            offset = struct.unpack(endian + 'I', f.read(4))[0]
+            f.seek(offset)
+            num_tags = struct.unpack(endian + 'H', f.read(2))[0]
+            
+            tags = []
+            orientation_found = False
+            
+            for i in range(num_tags):
+                tag_offset = offset + 2 + i * 12
+                f.seek(tag_offset)
+                tag_data = f.read(12)
+                tag = struct.unpack(endian + 'H', tag_data[:2])[0]
+                if tag == 274:
+                    f.seek(tag_offset + 8)
+                    f.write(struct.pack(endian + 'H', orientation_value))
+                    orientation_found = True
+                tags.append(tag_data)
+                
+            if orientation_found: return True
+            
+            f.seek(offset + 2 + num_tags * 12)
+            next_ifd_offset = struct.unpack(endian + 'I', f.read(4))[0]
+            
+            new_tag_data = struct.pack(endian + 'HHII', 274, 3, 1, orientation_value)
+            tags.append(new_tag_data)
+            
+            def get_tag_id(data): return struct.unpack(endian + 'H', data[:2])[0]
+            tags.sort(key=get_tag_id)
+            
+            f.seek(0, 2)
+            new_ifd_offset = f.tell()
+            
+            f.write(struct.pack(endian + 'H', len(tags)))
+            for tag_data in tags:
+                f.write(tag_data)
+            f.write(struct.pack(endian + 'I', next_ifd_offset))
+            
+            f.seek(4)
+            f.write(struct.pack(endian + 'I', new_ifd_offset))
+            return True
+    except Exception as e:
+        print(f"Error setting TIFF orientation: {e}")
+        return False
+
+def get_exif_orientation(hflip, vflip, rot_cw):
+    row_pos = 1 # Top
+    col_pos = 3 # Left
+    if hflip: col_pos = 4 if col_pos == 3 else 3
+    if vflip: row_pos = 2 if row_pos == 1 else 1
+    for _ in range(rot_cw // 90):
+        new_row = {1:4, 4:2, 2:3, 3:1}[row_pos]
+        new_col = {1:4, 4:2, 2:3, 3:1}[col_pos]
+        row_pos, col_pos = new_row, new_col
+    tag_map = {
+        (1, 3): 1, (1, 4): 2, (2, 4): 3, (2, 3): 4,
+        (3, 1): 5, (4, 1): 6, (4, 2): 7, (3, 2): 8
+    }
+    return tag_map.get((row_pos, col_pos), 1)
+
+def apply_transforms_numpy(img_array, hflip, vflip, rot_cw):
+    if hflip: img_array = np.fliplr(img_array)
+    if vflip: img_array = np.flipud(img_array)
+    if rot_cw == 90: img_array = np.rot90(img_array, -1)
+    elif rot_cw == 180: img_array = np.rot90(img_array, -2)
+    elif rot_cw == 270: img_array = np.rot90(img_array, -3)
+    return img_array
+
+class HistogramCanvas(Gtk.Box):
+    def __init__(self):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self.figure = Figure(figsize=(3, 1.8), dpi=100)
+        self.figure.patch.set_facecolor('#1e1e1e')
+        self.canvas = FigureCanvas(self.figure)
+        self.pack_start(self.canvas, True, True, 0)
+        self.ax = self.figure.add_subplot(111)
+        self.ax.set_facecolor('#121212')
+        self.ax.spines['top'].set_visible(False)
+        self.ax.spines['right'].set_visible(False)
+        self.ax.spines['left'].set_color('#444444')
+        self.ax.spines['bottom'].set_color('#444444')
+        self.ax.tick_params(colors='#888888', labelsize=7)
+        self.ax.grid(True, color='#2c2c2c', linestyle='--', linewidth=0.5)
+        self.figure.tight_layout()
+        
+        # Connect size-allocate to dynamically force height as a ratio of width (aspect ratio 55%)
+        self.canvas.connect("size-allocate", self.on_size_allocate)
+
+    def on_size_allocate(self, widget, allocation):
+        target_height = int(allocation.width * 0.55)
+        target_height = max(120, target_height)
+        if widget.get_size_request()[1] != target_height:
+            widget.set_size_request(-1, target_height)
+
+    def clear(self):
+        self.ax.clear()
+        self.ax.set_facecolor('#121212')
+        self.ax.grid(True, color='#2c2c2c', linestyle='--', linewidth=0.5)
+        self.canvas.draw_idle()
+
+    def plot_histogram(self, data, is_corrected, has_icc, show_overexposure=True):
+        self.ax.clear()
+        self.ax.grid(True, color='#2c2c2c', linestyle='--', linewidth=0.5)
+        
+        if data is None or data.size == 0:
+            self.canvas.draw_idle()
+            return
+            
+        max_val = 65535 if (is_corrected and has_icc) else 16384
+        
+        bins = 256
+        hist_r, _ = np.histogram(data[:, :, 0], bins=bins, range=(0, max_val))
+        hist_g, _ = np.histogram(data[:, :, 1], bins=bins, range=(0, max_val))
+        hist_b, _ = np.histogram(data[:, :, 2], bins=bins, range=(0, max_val))
+        max_hist_val = max(hist_r.max(), hist_g.max(), hist_b.max(), 1)
+        
+        hist_r_norm = hist_r / max_hist_val
+        hist_g_norm = hist_g / max_hist_val
+        hist_b_norm = hist_b / max_hist_val
+        
+        bins_x = np.linspace(0, max_val, bins)
+        
+        # Plot channels with area fills
+        self.ax.plot(bins_x, hist_r_norm, color='#ff6666', alpha=0.8, linewidth=1.2)
+        self.ax.fill_between(bins_x, 0, hist_r_norm, color='#ff6666', alpha=0.12)
+        
+        self.ax.plot(bins_x, hist_g_norm, color='#66ff66', alpha=0.8, linewidth=1.2)
+        self.ax.fill_between(bins_x, 0, hist_g_norm, color='#66ff66', alpha=0.12)
+        
+        self.ax.plot(bins_x, hist_b_norm, color='#66aaff', alpha=0.8, linewidth=1.2)
+        self.ax.fill_between(bins_x, 0, hist_b_norm, color='#66aaff', alpha=0.12)
+        
+        if show_overexposure:
+            ovr_val = 0.8 * max_val
+            self.ax.axvline(ovr_val, color='#e74c3c', linestyle='-', alpha=0.8, linewidth=1.5)
+            self.ax.text(ovr_val - (max_val * 0.015), 0.95, "Overexposure (80%)", color='#e74c3c', fontsize=7.5,
+                         horizontalalignment='right', verticalalignment='top', rotation=90,
+                         bbox=dict(boxstyle='round,pad=0.15', facecolor='#121212', alpha=0.6, edgecolor='none'))
+
+        # Calculate percentiles and metrics excluding 5% borders
+        H, W, C = data.shape
+        h_border = int(H * 0.05)
+        w_border = int(W * 0.05)
+        cropped = data[h_border:H-h_border, w_border:W-w_border, :]
+        
+        p2_r = float(np.percentile(cropped[:, :, 0], 2))
+        p98_r = float(np.percentile(cropped[:, :, 0], 98))
+        p2_g = float(np.percentile(cropped[:, :, 1], 2))
+        p98_g = float(np.percentile(cropped[:, :, 1], 98))
+        p2_b = float(np.percentile(cropped[:, :, 2], 2))
+        p98_b = float(np.percentile(cropped[:, :, 2], 98))
+        
+        dr_r = p98_r - p2_r
+        dr_g = p98_g - p2_g
+        dr_b = p98_b - p2_b
+        avg_dr = (dr_r + dr_g + dr_b) / 3.0
+        
+        mean_r = float(np.mean(cropped[:, :, 0]))
+        mean_g = float(np.mean(cropped[:, :, 1]))
+        mean_b = float(np.mean(cropped[:, :, 2]))
+        avg_mean = (mean_r + mean_g + mean_b) / 3.0
+        
+        # Plot percentile indicators
+        colors = ['#ff6666', '#66ff66', '#66aaff']
+        p2 = [p2_r, p2_g, p2_b]
+        p98 = [p98_r, p98_g, p98_b]
+        for i in range(3):
+            self.ax.axvline(p2[i], color=colors[i], linestyle='--', alpha=0.6, linewidth=1.0)
+            self.ax.axvline(p98[i], color=colors[i], linestyle='--', alpha=0.6, linewidth=1.0)
+            
+        # Plot cross markers for averages
         means = [mean_r, mean_g, mean_b]
         hists_norm = [hist_r_norm, hist_g_norm, hist_b_norm]
-        colors = ['#ff6666', '#66ff66', '#66aaff']
         channel_labels = ['R', 'G', 'B']
-
-        # Sort indices by mean values to stack their labels vertically without overlap
         sorted_indices = np.argsort(means)
         for rank, idx in enumerate(sorted_indices):
             m_val = means[idx]
             h_norm = hists_norm[idx]
-            # Map mean value to corresponding bin index
-            bin_idx = int(round(m_val / 16384.0 * (len(h_norm) - 1)))
+            bin_idx = int(round(m_val / max_val * (len(h_norm) - 1)))
             bin_idx = max(0, min(len(h_norm) - 1, bin_idx))
             y_val = h_norm[bin_idx]
-
-            # Draw cross marker ('x') at (mean_val, curve_height)
-            ax.plot(m_val, y_val, marker='x', color=colors[idx], markersize=8, markeredgewidth=1.0)
-
-            # Vertically stagger labels to prevent overlaps (stacking between 0.50 and 0.74)
+            
+            self.ax.plot(m_val, y_val, marker='x', color=colors[idx], markersize=8, markeredgewidth=1.0)
             text_y = 0.5 + (rank * 0.12)
-
-            # Draw a faint vertical leader line connecting the cross marker to the label
-            ax.plot([m_val, m_val], [y_val, text_y], color=colors[idx], linestyle=':', alpha=0.5, linewidth=1.0)
-
-            # Draw value text centered horizontally at the mean value
-            ax.text(m_val, text_y, f"{channel_labels[idx]}_avg: {int(m_val)}",
-                    color=colors[idx], fontsize=8, fontweight='bold',
-                    horizontalalignment='center', verticalalignment='center',
-                    bbox=dict(boxstyle='round,pad=0.2', facecolor='#121212', alpha=0.85, edgecolor='none'))
-
-    ax.set_xlim(0, 16384)
-    ax.set_ylim(0, 1.05)
-
-    # Put the R, G, B and dynamic range values inside the graph using a textbox
-    if p2 is not None and p98 is not None and dr_metrics is not None:
-        dr_r, dr_g, dr_b, avg_dr = dr_metrics
-        mean_r, mean_g, mean_b, avg_mean = mean_metrics if mean_metrics is not None else (0, 0, 0, 0)
+            self.ax.plot([m_val, m_val], [y_val, text_y], color=colors[idx], linestyle=':', alpha=0.5, linewidth=1.0)
+            
+            self.ax.text(m_val, text_y, f"{channel_labels[idx]}_avg: {int(m_val)}",
+                         color=colors[idx], fontsize=8, fontweight='bold',
+                         horizontalalignment='center', verticalalignment='center',
+                         bbox=dict(boxstyle='round,pad=0.2', facecolor='#121212', alpha=0.85, edgecolor='none'))
+                         
+        self.ax.set_xlim(0, max_val)
+        self.ax.set_ylim(0, 1.05)
+        self.ax.set_yticks([])
+        
+        # Stats textbox
         text_str = (
-            f"R: [2%:{int(p2[0])}, 98%:{int(p98[0])}] DR:{dr_r:.1f} Mean:{mean_r:.1f}\n"
-            f"G: [2%:{int(p2[1])}, 98%:{int(p98[1])}] DR:{dr_g:.1f} Mean:{mean_g:.1f}\n"
-            f"B: [2%:{int(p2[2])}, 98%:{int(p98[2])}] DR:{dr_b:.1f} Mean:{mean_b:.1f}\n"
+            f"R: [2%:{int(p2_r)}, 98%:{int(p98_r)}] DR:{dr_r:.1f} Mean:{mean_r:.1f}\n"
+            f"G: [2%:{int(p2_g)}, 98%:{int(p98_g)}] DR:{dr_g:.1f} Mean:{mean_g:.1f}\n"
+            f"B: [2%:{int(p2_b)}, 98%:{int(p98_b)}] DR:{dr_b:.1f} Mean:{mean_b:.1f}\n"
             f"Avg DR: {avg_dr:.1f} | Avg Value: {avg_mean:.1f}"
         )
         props = dict(boxstyle='round', facecolor='#1e1e1e', alpha=0.8, edgecolor='#333333')
-        ax.text(0.02, 0.98, text_str, transform=ax.transAxes, fontsize=8.5, color='#ffffff',
-                verticalalignment='top', bbox=props, family='monospace')
-
-    # Force redraw of the matplotlib canvas
-    ax.figure.canvas.draw_idle()
+        self.ax.text(0.02, 0.98, text_str, transform=self.ax.transAxes, fontsize=8.5, color='#ffffff',
+                     verticalalignment='top', bbox=props, family='monospace')
+                     
+        self.canvas.draw_idle()
 
 class ScanningAppWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title="Sony Film Scanning Station")
-        self.set_default_size(1100, 750)
+        self.set_default_size(1400, 800)
         self.connect("destroy", self.on_destroy)
 
-        # Force GTK dark theme for premium aesthetics
+        # Force GTK dark theme
         settings = Gtk.Settings.get_default()
         settings.set_property("gtk-application-prefer-dark-theme", True)
 
-        # Apply custom CSS styling for capture button and spacing
+        # Apply CSS styling
+        self.apply_css()
+
+        # Application State
+        self.profile = None
+        self.profile_filename = ""
+        self.has_icc = False
+        self.has_crosstalk = False
+        
+        self.raw_image = None
+        self.raw_linear_pixels = None
+        
+        self.film_base_img = None
+        self.film_base_raw_linear = None
+        self.film_base_rgb = None
+        
+        self.camera_session = None
+        self.is_connected = False
+        self.is_connecting = False
+        
+        self.gain = 1.0
+        self.orientation = 0
+        self.hflip = False
+        self.vflip = False
+        
+        self.selected_target_idx = 0
+        
+        self.capture_rect_start = None
+        self.capture_rect_end = None
+        self.capture_rect_raw = None
+        self.is_dragging_capture = False
+        self.capture_preview_pixbuf = None
+        self.scaled_capture_pixbuf = None
+        
+        self.base_rect_start = None
+        self.base_rect_end = None
+        self.base_rect_raw = None
+        self.is_dragging_base = False
+        self.base_preview_pixbuf = None
+        self.scaled_base_pixbuf = None
+
+        # Build UI layout
+        self.init_ui()
+
+        # Connect window keypress listener
+        self.connect("key-press-event", self.on_key_press)
+
+        # Initial background camera connection
+        self.connect_camera()
+        GLib.timeout_add_seconds(2, self.poll_camera_connection)
+
+    def apply_css(self):
         css_provider = Gtk.CssProvider()
         css_provider.load_from_data(b"""
-            .capture-btn {
-                background-image: linear-gradient(to bottom, #2ea44f, #2c974b);
-                color: white;
-                text-shadow: 0 1px 0 rgba(0,0,0,0.2);
-                font-weight: bold;
-                border: 1px solid rgba(27,31,35,0.15);
-                border-radius: 6px;
-                padding: 10px;
-            }
-            .capture-btn:hover {
-                background-image: linear-gradient(to bottom, #30bc5a, #2ea44f);
-            }
-            .capture-btn:disabled, .capture-btn:insensitive {
-                background-image: none;
-                background-color: #444444;
-                color: #888888;
-                border-color: #2c2c2c;
-            }
-            .sidebar {
-                background-color: #1e1e1e;
-                border-right: 1px solid #333333;
-                padding: 15px;
-            }
-            .right-sidebar {
-                background-color: #1e1e1e;
-                border-left: 1px solid #333333;
-                padding: 15px;
-            }
-            .preview-container {
-                background-color: #121212;
-                padding: 15px;
-            }
-            .meta-label {
-                font-family: monospace;
-                font-size: 11px;
-                color: #b3b3b3;
-            }
+            .sidebar { background-color: #1e1e1e; padding: 15px; }
+            .preview-container { background-color: #121212; padding: 10px; }
+            .btn-action { font-weight: bold; padding: 8px 12px; border-radius: 6px; }
+            .btn-green { background-image: linear-gradient(to bottom, #2ea44f, #2c974b); color: white; }
+            .btn-yellow { background-image: linear-gradient(to bottom, #b8860b, #996515); color: white; }
+            .meta-label { font-family: monospace; font-size: 11px; color: #b3b3b3; }
+            .warning-label { color: #ffaa00; font-weight: bold; }
+            .status-indicator { font-weight: bold; font-size: 14px; padding: 10px; background-color: #2b2b2b; border-radius: 5px; }
         """)
         Gtk.StyleContext.add_provider_for_screen(
-            Gdk.Screen.get_default(),
-            css_provider,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            Gdk.Screen.get_default(), css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
 
-        # Layout containers
-        main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+    def init_ui(self):
+        main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         self.add(main_box)
-
-        # =====================================================================
-        # LEFT PANEL: Controls & Metadata
-        # =====================================================================
-        sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
-        sidebar_box.get_style_context().add_class("sidebar")
-        sidebar_box.set_size_request(320, -1)
-        main_box.pack_start(sidebar_box, False, False, 0)
-
-        # Header Title
-        title_label = Gtk.Label()
-        title_label.set_markup("<span size='large' weight='bold'>Negative Scanner</span>")
-        title_label.set_xalign(0.0)
-        title_label.set_yalign(0.5)
-        sidebar_box.pack_start(title_label, False, False, 5)
-
-        # Camera status indicator label
-        self.camera_status_label = Gtk.Label()
-        self.camera_status_label.set_markup("<span><span foreground='#e6a23c'>●</span> Camera: Connecting...</span>")
-        self.camera_status_label.set_xalign(0.0)
-        sidebar_box.pack_start(self.camera_status_label, False, False, 2)
-
-        # Section: Configuration
-        config_frame = Gtk.Frame(label="Capture Settings")
-        config_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        config_box.set_border_width(10)
-        config_frame.add(config_box)
-        sidebar_box.pack_start(config_frame, False, False, 5)
-
-        # Section: Auto-Exposure Steps
-        self.ae_steps_frame = Gtk.Frame(label="Auto-Exposure Steps")
-        self.ae_steps_frame.set_no_show_all(True)
         
-        ae_steps_scroll = Gtk.ScrolledWindow()
-        ae_steps_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        ae_steps_scroll.set_min_content_height(150)
+        # ================= LEFT SIDEBAR =================
+        left_sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        left_sidebar.get_style_context().add_class("sidebar")
+        left_sidebar.set_size_request(260, -1)
+        main_box.pack_start(left_sidebar, False, False, 0)
         
-        self.ae_steps_listbox = Gtk.ListBox()
-        self.ae_steps_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
-        ae_steps_scroll.add(self.ae_steps_listbox)
-        self.ae_steps_frame.add(ae_steps_scroll)
-        sidebar_box.pack_start(self.ae_steps_frame, False, False, 5)
-
-        # Capture Mode Dropdown
-        mode_label = Gtk.Label(label="Capture Mode:")
-        mode_label.set_xalign(0.0)
-        mode_label.set_yalign(0.5)
-        config_box.pack_start(mode_label, False, False, 0)
-
+        # Camera status indicator
+        self.lbl_camera_status = Gtk.Label()
+        self.lbl_camera_status.set_markup("<span><span foreground='#e6a23c'>●</span> <b>Camera: Connecting...</b></span>")
+        self.lbl_camera_status.get_style_context().add_class("status-indicator")
+        left_sidebar.pack_start(self.lbl_camera_status, False, False, 10)
+        
+        # Profile Section
+        left_sidebar.pack_start(Gtk.Label(label="<b>Calibration Profile</b>", use_markup=True), False, False, 2)
+        btn_load = Gtk.Button(label="Load Profile...")
+        btn_load.connect("clicked", self.on_load_profile)
+        left_sidebar.pack_start(btn_load, False, False, 0)
+        
+        self.lbl_profile_info = Gtk.Label(label="No profile loaded.")
+        self.lbl_profile_info.set_line_wrap(True)
+        self.lbl_profile_info.set_xalign(0.0)
+        self.lbl_profile_info.get_style_context().add_class("meta-label")
+        left_sidebar.pack_start(self.lbl_profile_info, False, False, 2)
+        
+        btn_reset = Gtk.Button(label="Reset Profile")
+        btn_reset.connect("clicked", self.on_reset_profile)
+        left_sidebar.pack_start(btn_reset, False, False, 0)
+        
+        left_sidebar.pack_start(Gtk.Separator(), False, False, 5)
+        
+        # Capture Settings Section
+        left_sidebar.pack_start(Gtk.Label(label="<b>Capture Mode</b>", use_markup=True), False, False, 0)
         self.mode_combo = Gtk.ComboBoxText()
         self.mode_combo.append("0", "Single Shot Capture")
         self.mode_combo.append("1", "Sony 4-Shot Pixel Shift")
         self.mode_combo.set_active(0)
-        config_box.pack_start(self.mode_combo, False, False, 0)
+        left_sidebar.pack_start(self.mode_combo, False, False, 0)
 
-        # Shutter Speed Dropdown
-        shutter_label = Gtk.Label(label="Shutter Speed:")
-        shutter_label.set_xalign(0.0)
-        shutter_label.set_yalign(0.5)
-        config_box.pack_start(shutter_label, False, False, 0)
-
+        left_sidebar.pack_start(Gtk.Label(label="<b>Shutter Speed</b>", use_markup=True), False, False, 0)
         self.shutter_combo = Gtk.ComboBoxText()
-        for speed in SHUTTER_SPEEDS:
+        for speed in auto_exposure.SHUTTER_SPEEDS:
             self.shutter_combo.append(speed, speed)
-        # Default to 1/8s
-        self.shutter_combo.set_active(SHUTTER_SPEEDS.index("1/8s"))
-        config_box.pack_start(self.shutter_combo, False, False, 0)
-
-        # Auto-Exposure Checkbox
+        self.shutter_combo.set_active(auto_exposure.SHUTTER_SPEEDS.index("1/8s"))
+        left_sidebar.pack_start(self.shutter_combo, False, False, 0)
+        
         self.ae_checkbox = Gtk.CheckButton(label="Auto Exposure")
         self.ae_checkbox.connect("toggled", self.on_ae_toggled)
-        config_box.pack_start(self.ae_checkbox, False, False, 5)
+        left_sidebar.pack_start(self.ae_checkbox, False, False, 5)
+        
+        left_sidebar.pack_start(Gtk.Separator(), False, False, 5)
+        
+        # Capture Actions
+        self.btn_cap_base = Gtk.Button(label="Capture Film Base")
+        self.btn_cap_base.get_style_context().add_class("btn-action")
+        self.btn_cap_base.get_style_context().add_class("btn-yellow")
+        self.btn_cap_base.connect("clicked", self.on_capture_base_clicked)
+        left_sidebar.pack_start(self.btn_cap_base, False, False, 0)
+        
+        self.btn_cap_img = Gtk.Button(label="Capture Image")
+        self.btn_cap_img.get_style_context().add_class("btn-action")
+        self.btn_cap_img.get_style_context().add_class("btn-green")
+        self.btn_cap_img.connect("clicked", self.on_capture_image_clicked)
+        left_sidebar.pack_start(self.btn_cap_img, False, False, 0)
 
-        # Action: Capture Button & Spinner
-        self.capture_button = Gtk.Button(label="CAPTURE IMAGE")
-        self.capture_button.get_style_context().add_class("capture-btn")
-        self.capture_button.set_sensitive(False)
-        self.capture_button.connect("clicked", self.on_capture_clicked)
-        sidebar_box.pack_start(self.capture_button, False, False, 10)
-
-        # Action: Save to TIFF Button
-        self.btn_save_tiff = Gtk.Button(label="SAVE TO TIFF...")
-        self.btn_save_tiff.get_style_context().add_class("capture-btn")
-        self.btn_save_tiff.set_sensitive(False)
-        self.btn_save_tiff.connect("clicked", self.on_save_tiff_clicked)
-        sidebar_box.pack_start(self.btn_save_tiff, False, False, 5)
-
-        # Spinner & Status Info
-        status_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        self.spinner = Gtk.Spinner()
-        status_box.pack_start(self.spinner, False, False, 0)
-        self.status_label = Gtk.Label(label="Status: Idle")
-        self.status_label.set_xalign(0.0)
-        self.status_label.set_yalign(0.5)
-        status_box.pack_start(self.status_label, True, True, 0)
-        sidebar_box.pack_start(status_box, False, False, 0)
-
-        # Section: Crosstalk Correction
-        cc_frame = Gtk.Frame(label="Crosstalk Correction")
-        cc_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        cc_box.set_border_width(10)
-        cc_frame.add(cc_box)
-        sidebar_box.pack_start(cc_frame, False, False, 5)
-
-        self.btn_load_profile = Gtk.Button(label="Load Profile...")
-        self.btn_load_profile.connect("clicked", self.on_load_profile_clicked)
-        cc_box.pack_start(self.btn_load_profile, False, False, 0)
-
-        self.lbl_profile_status = Gtk.Label(label="Profile: None")
-        self.lbl_profile_status.set_xalign(0.0)
-        self.lbl_profile_status.get_style_context().add_class("meta-label")
-        cc_box.pack_start(self.lbl_profile_status, False, False, 0)
-
-        self.cc_checkbox = Gtk.CheckButton(label="Apply Correction")
-        self.cc_checkbox.set_active(False)
-        self.cc_checkbox.set_sensitive(False)
-        self.cc_handler_id = self.cc_checkbox.connect("toggled", self.on_cc_toggled)
-        cc_box.pack_start(self.cc_checkbox, False, False, 5)
-
-        # Section: Metadata Display
-        meta_frame = Gtk.Frame(label="Image Metadata")
-        self.meta_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        self.meta_box.set_border_width(10)
+        # AE Steps output display frame
+        self.ae_steps_frame = Gtk.Frame(label="Auto-Exposure Steps")
+        self.ae_steps_frame.set_no_show_all(True)
+        ae_steps_scroll = Gtk.ScrolledWindow()
+        ae_steps_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        ae_steps_scroll.set_min_content_height(100)
+        self.ae_steps_listbox = Gtk.ListBox()
+        self.ae_steps_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        ae_steps_scroll.add(self.ae_steps_listbox)
+        self.ae_steps_frame.add(ae_steps_scroll)
+        left_sidebar.pack_start(self.ae_steps_frame, False, False, 5)
+        
+        # Image Metadata Box
+        meta_frame = Gtk.Frame(label="Captured Metadata")
+        self.meta_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        self.meta_box.set_border_width(8)
         meta_frame.add(self.meta_box)
-        sidebar_box.pack_start(meta_frame, True, True, 5)
-
+        left_sidebar.pack_start(meta_frame, True, True, 5)
+        
         self.iso_label = Gtk.Label(label="ISO: --")
         self.iso_label.set_xalign(0.0)
-        self.iso_label.set_yalign(0.5)
         self.iso_label.get_style_context().add_class("meta-label")
         self.meta_box.pack_start(self.iso_label, False, False, 0)
-
+        
         self.shutter_label = Gtk.Label(label="Shutter Speed: --")
         self.shutter_label.set_xalign(0.0)
-        self.shutter_label.set_yalign(0.5)
         self.shutter_label.get_style_context().add_class("meta-label")
         self.meta_box.pack_start(self.shutter_label, False, False, 0)
-
+        
         self.size_label = Gtk.Label(label="Dimensions: --")
         self.size_label.set_xalign(0.0)
-        self.size_label.set_yalign(0.5)
         self.size_label.get_style_context().add_class("meta-label")
         self.meta_box.pack_start(self.size_label, False, False, 0)
-
-        self.files_label = Gtk.Label(label="RAW Filepath(s): --")
+        
+        self.files_label = Gtk.Label(label="RAW Path(s): --")
         self.files_label.set_xalign(0.0)
-        self.files_label.set_yalign(0.5)
         self.files_label.set_line_wrap(True)
         self.files_label.get_style_context().add_class("meta-label")
         self.meta_box.pack_start(self.files_label, False, False, 0)
-
-        # Timing / Debug Labels
+        
         self.capture_time_label = Gtk.Label(label="Capture Duration: --")
         self.capture_time_label.set_xalign(0.0)
-        self.capture_time_label.set_yalign(0.5)
         self.capture_time_label.get_style_context().add_class("meta-label")
         self.meta_box.pack_start(self.capture_time_label, False, False, 0)
-
+        
         self.convert_time_label = Gtk.Label(label="Conversion Duration: --")
         self.convert_time_label.set_xalign(0.0)
-        self.convert_time_label.set_yalign(0.5)
         self.convert_time_label.get_style_context().add_class("meta-label")
         self.meta_box.pack_start(self.convert_time_label, False, False, 0)
 
-        # =====================================================================
-        # CENTER PANEL: Preview Canvas (using Stack)
-        # =====================================================================
-        self.preview_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        self.preview_box.get_style_context().add_class("preview-container")
-        main_box.pack_start(self.preview_box, True, True, 0)
+        # Spinner & status display
+        status_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        self.spinner = Gtk.Spinner()
+        status_box.pack_start(self.spinner, False, False, 0)
+        self.lbl_status = Gtk.Label(label="Status: Connecting")
+        self.lbl_status.set_line_wrap(True)
+        status_box.pack_start(self.lbl_status, True, True, 0)
+        left_sidebar.pack_end(status_box, False, False, 5)
 
-        self.preview_stack = Gtk.Stack()
-        self.preview_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
-        self.preview_stack.set_transition_duration(200)
-        self.preview_box.pack_start(self.preview_stack, True, True, 0)
+        # ================= CENTER NOTEBOOK =================
+        self.notebook = Gtk.Notebook()
+        main_box.pack_start(self.notebook, True, True, 0)
+        
+        # Tab 0: Capture preview area
+        self.capture_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.capture_tab_label = Gtk.Label(label="Capture (Base Needed)")
+        self.capture_tab_label.get_style_context().add_class("warning-label")
+        self.notebook.append_page(self.capture_box, self.capture_tab_label)
+        self.init_capture_tab()
+        
+        # Tab 1: Film Base preview area
+        self.base_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.base_tab_label = Gtk.Label(label="Film Base")
+        self.notebook.append_page(self.base_box, self.base_tab_label)
+        self.init_base_tab()
 
-        # Initial Placeholder Label
-        self.placeholder_label = Gtk.Label()
-        self.placeholder_label.set_markup("<span size='large' foreground='#666666'>No Image Captured\n\nConfigure settings and click CAPTURE to display preview.</span>")
-        self.placeholder_label.set_justify(Gtk.Justification.CENTER)
-        self.preview_stack.add_named(self.placeholder_label, "placeholder")
+        # ================= RIGHT SIDEBAR =================
+        right_sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        right_sidebar.get_style_context().add_class("sidebar")
+        right_sidebar.set_size_request(320, -1)
+        main_box.pack_start(right_sidebar, False, False, 0)
+        
+        lbl_hist_raw = Gtk.Label(label="RAW Linear (Uncorrected)")
+        right_sidebar.pack_start(lbl_hist_raw, False, False, 0)
+        self.hist_raw = HistogramCanvas()
+        right_sidebar.pack_start(self.hist_raw, True, True, 0)
+        
+        lbl_hist_corr = Gtk.Label(label="Corrected Preview")
+        right_sidebar.pack_start(lbl_hist_corr, False, False, 0)
+        self.hist_corr = HistogramCanvas()
+        right_sidebar.pack_start(self.hist_corr, True, True, 0)
+        
+        # Dynamic Range per channel display
+        self.lbl_dr = Gtk.Label()
+        self.lbl_dr.set_use_markup(True)
+        self.lbl_dr.set_xalign(0.0)
+        self.lbl_dr.set_line_wrap(True)
+        self.lbl_dr.get_style_context().add_class("meta-label")
+        right_sidebar.pack_start(self.lbl_dr, False, False, 0)
 
-        # Image DrawingArea for preview & selection (initially hidden inside Stack)
-        self.image_view = Gtk.DrawingArea()
-        self.image_view.set_can_focus(True)
-        self.image_view.add_events(
-            Gdk.EventMask.BUTTON_PRESS_MASK |
-            Gdk.EventMask.BUTTON_RELEASE_MASK |
-            Gdk.EventMask.POINTER_MOTION_MASK |
-            Gdk.EventMask.BUTTON_MOTION_MASK
-        )
-        self.image_view.connect("draw", self.on_draw_image_view)
-        self.image_view.connect("button-press-event", self.on_image_button_press)
-        self.image_view.connect("button-release-event", self.on_image_button_release)
-        self.image_view.connect("motion-notify-event", self.on_image_motion_notify)
-        self.preview_stack.add_named(self.image_view, "preview")
+        # Tab switch listener
+        self.notebook.connect("switch-page", self.on_tab_changed)
 
-        # Start by showing placeholder in center panel
-        self.preview_stack.set_visible_child_name("placeholder")
+    def init_capture_tab(self):
+        # TOP TOOLBAR
+        top_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        top_box.set_margin_top(5)
+        top_box.set_margin_bottom(5)
+        top_box.set_margin_start(5)
+        top_box.set_margin_end(5)
+        self.capture_box.pack_start(top_box, False, False, 0)
+        
+        self.btn_save_tiff = Gtk.Button(label="Save TIFF...")
+        self.btn_save_tiff.get_style_context().add_class("btn-action")
+        self.btn_save_tiff.set_sensitive(False)
+        self.btn_save_tiff.connect("clicked", self.on_save_tiff)
+        top_box.pack_start(self.btn_save_tiff, False, False, 5)
+        
+        top_box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL), False, False, 5)
+        
+        top_box.pack_start(Gtk.Label(label="Gain: "), False, False, 0)
+        btn_g_down = Gtk.Button(label="-")
+        btn_g_down.connect("clicked", lambda x: self.adj_gain(-0.10))
+        top_box.pack_start(btn_g_down, False, False, 0)
+        self.entry_gain = Gtk.Entry()
+        self.entry_gain.set_text("1.00")
+        self.entry_gain.set_width_chars(5)
+        self.entry_gain.connect("activate", self.on_gain_entry_activated)
+        top_box.pack_start(self.entry_gain, False, False, 5)
+        btn_g_up = Gtk.Button(label="+")
+        btn_g_up.connect("clicked", lambda x: self.adj_gain(0.10))
+        top_box.pack_start(btn_g_up, False, False, 0)
+        
+        top_box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL), False, False, 5)
+        
+        for rot in [0, 90, 180, 270]:
+            b = Gtk.Button(label=f"{rot}°")
+            b.connect("clicked", self.on_set_rot, rot)
+            top_box.pack_start(b, False, False, 0)
+        
+        self.btn_hf = Gtk.ToggleButton(label="H-Flip")
+        self.btn_hf.connect("toggled", self.on_hflip)
+        top_box.pack_start(self.btn_hf, False, False, 0)
+        
+        self.btn_vf = Gtk.ToggleButton(label="V-Flip")
+        self.btn_vf.connect("toggled", self.on_vflip)
+        top_box.pack_start(self.btn_vf, False, False, 0)
+        
+        # PREVIEW SCREEN AREA
+        preview_event_box = Gtk.EventBox()
+        preview_event_box.connect("button-press-event", self.on_capture_press)
+        preview_event_box.connect("button-release-event", self.on_capture_release)
+        preview_event_box.connect("motion-notify-event", self.on_capture_motion)
+        
+        self.capture_image_area = Gtk.DrawingArea()
+        self.capture_image_area.connect("draw", self.on_draw_capture)
+        self.capture_image_area.connect("size-allocate", self.on_capture_area_size_allocate)
+        preview_event_box.add(self.capture_image_area)
+        self.capture_box.pack_start(preview_event_box, True, True, 0)
+        
+        # BOTTOM: Target Table list
+        target_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        target_box.pack_start(Gtk.Label(label="Select Profile Target:"), False, False, 5)
+        
+        self.target_liststore = Gtk.ListStore(int, str, str) # Index, Target Name, Mid-grey Match Distance
+        self.target_treeview = Gtk.TreeView(model=self.target_liststore)
+        
+        renderer_text = Gtk.CellRendererText()
+        col1 = Gtk.TreeViewColumn("Target Name", renderer_text, text=1)
+        col2 = Gtk.TreeViewColumn("Mid-Grey Distance", renderer_text, text=2)
+        self.target_treeview.append_column(col1)
+        self.target_treeview.append_column(col2)
+        
+        select = self.target_treeview.get_selection()
+        select.connect("changed", self.on_target_selection_changed)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_min_content_height(100)
+        scroll.add(self.target_treeview)
+        target_box.pack_start(scroll, False, False, 0)
+        
+        self.capture_box.pack_end(target_box, False, False, 0)
 
-        # =====================================================================
-        # RIGHT PANEL: Histograms & Metrics (using Stack)
-        # =====================================================================
-        self.right_panel_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        self.right_panel_box.get_style_context().add_class("right-sidebar")
-        self.right_panel_box.set_size_request(320, -1)
-        main_box.pack_start(self.right_panel_box, False, False, 0)
+    def init_base_tab(self):
+        # TOP TOOLBAR
+        top_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        top_box.set_margin_top(5)
+        top_box.set_margin_bottom(5)
+        top_box.set_margin_start(5)
+        top_box.set_margin_end(5)
+        self.base_box.pack_start(top_box, False, False, 0)
+        
+        btn_read = Gtk.Button(label="Read Film Base Values")
+        btn_read.connect("clicked", self.on_read_film_base)
+        top_box.pack_start(btn_read, False, False, 0)
+        
+        self.lbl_base_vals = Gtk.Label(label="Raw: -- | Corr: --")
+        top_box.pack_start(self.lbl_base_vals, False, False, 0)
 
-        self.right_stack = Gtk.Stack()
-        self.right_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
-        self.right_stack.set_transition_duration(200)
-        self.right_panel_box.pack_start(self.right_stack, True, True, 0)
-
-        # Initial Right Placeholder Label
-        self.right_placeholder_label = Gtk.Label()
-        self.right_placeholder_label.set_markup("<span size='medium' foreground='#666666'>Capture an image or load a profile\nto see histograms.</span>")
-        self.right_placeholder_label.set_justify(Gtk.Justification.CENTER)
-        self.right_stack.add_named(self.right_placeholder_label, "placeholder")
-
-        # Results metrics & Histogram drawing box (initially hidden inside Stack)
-        self.results_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        self.right_stack.add_named(self.results_box, "results")
-
-        # Selection region status label
-        self.selection_status_label = Gtk.Label()
-        self.selection_status_label.set_use_markup(True)
-        self.selection_status_label.set_markup("<b>Selection:</b> Full Image")
-        self.selection_status_label.set_xalign(0.0)
-        self.selection_status_label.get_style_context().add_class("meta-label")
-        self.results_box.pack_start(self.selection_status_label, False, False, 0)
-
-        # Dynamic Range display label
-        self.dr_label = Gtk.Label()
-        self.dr_label.set_use_markup(True)
-        self.dr_label.set_xalign(0.0)
-        self.dr_label.get_style_context().add_class("meta-label")
-        # self.results_box.pack_start(self.dr_label, False, False, 0)
-
-        # VBox to hold the two histograms vertically
-        self.histograms_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        self.results_box.pack_start(self.histograms_vbox, True, True, 0)
-
-        # RAW (Uncorrected) Box
-        raw_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        self.histograms_vbox.pack_start(raw_box, True, True, 0)
-
-        raw_title = Gtk.Label()
-        raw_title.set_markup("<b>Linearized RAW (Uncorrected)</b>")
-        raw_title.set_xalign(0.0)
-        raw_box.pack_start(raw_title, False, False, 0)
-
-        # RAW Matplotlib Canvas Setup
-        self.raw_fig = Figure(figsize=(3, 1.8), dpi=100)
-        self.raw_fig.patch.set_facecolor('#1e1e1e')
-        self.raw_canvas = FigureCanvas(self.raw_fig)
-        self.raw_canvas.set_size_request(-1, 150)
-        self.raw_ax = self.raw_fig.add_subplot(111)
-        self.raw_ax.set_facecolor('#121212')
-        self.raw_ax.spines['top'].set_visible(False)
-        self.raw_ax.spines['right'].set_visible(False)
-        self.raw_ax.spines['left'].set_color('#444444')
-        self.raw_ax.spines['bottom'].set_color('#444444')
-        self.raw_ax.tick_params(colors='#888888', labelsize=7)
-        self.raw_ax.grid(True, color='#2c2c2c', linestyle='--', linewidth=0.5)
-        self.raw_fig.tight_layout()
-        raw_box.pack_start(self.raw_canvas, True, True, 0)
-
-        self.percentiles_label_raw = Gtk.Label()
-        self.percentiles_label_raw.set_use_markup(True)
-        self.percentiles_label_raw.set_xalign(0.0)
-        self.percentiles_label_raw.get_style_context().add_class("meta-label")
-        # raw_box.pack_start(self.percentiles_label_raw, False, False, 2)
-
-        # Crosstalk Corrected Box
-        cc_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        self.histograms_vbox.pack_start(cc_box, True, True, 0)
-
-        cc_title = Gtk.Label()
-        cc_title.set_markup("<b>Crosstalk Corrected</b>")
-        cc_title.set_xalign(0.0)
-        cc_box.pack_start(cc_title, False, False, 0)
-
-        # CC Matplotlib Canvas Setup
-        self.cc_fig = Figure(figsize=(3, 1.8), dpi=100)
-        self.cc_fig.patch.set_facecolor('#1e1e1e')
-        self.cc_canvas = FigureCanvas(self.cc_fig)
-        self.cc_canvas.set_size_request(-1, 150)
-        self.cc_ax = self.cc_fig.add_subplot(111)
-        self.cc_ax.set_facecolor('#121212')
-        self.cc_ax.spines['top'].set_visible(False)
-        self.cc_ax.spines['right'].set_visible(False)
-        self.cc_ax.spines['left'].set_color('#444444')
-        self.cc_ax.spines['bottom'].set_color('#444444')
-        self.cc_ax.tick_params(colors='#888888', labelsize=7)
-        self.cc_ax.grid(True, color='#2c2c2c', linestyle='--', linewidth=0.5)
-        self.cc_fig.tight_layout()
-        cc_box.pack_start(self.cc_canvas, True, True, 0)
-
-        self.percentiles_label_cc = Gtk.Label()
-        self.percentiles_label_cc.set_use_markup(True)
-        self.percentiles_label_cc.set_xalign(0.0)
-        self.percentiles_label_cc.get_style_context().add_class("meta-label")
-        # cc_box.pack_start(self.percentiles_label_cc, False, False, 2)
-
-        # Start by showing placeholder in right panel
-        self.right_stack.set_visible_child_name("placeholder")
-
-        # Initialize selection and array storage variables
-        self.scaled_pixbuf = None
-        self.is_dragging = False
-        self.selection_start = None
-        self.selection_end = None
-        self.normalized_selection = None
-        self.last_arr_raw = None
-        self.last_arr_cc = None
-        self.img_x_offset = 0
-        self.img_y_offset = 0
-
-        # Initialize histogram normalization variables
-        self.hist_r_raw_norm = None
-        self.hist_g_raw_norm = None
-        self.hist_b_raw_norm = None
-        self.p2_raw = None
-        self.p98_raw = None
-
-        self.hist_r_cc_norm = None
-        self.hist_g_cc_norm = None
-        self.hist_b_cc_norm = None
-        self.p2_cc = None
-        self.p98_cc = None
-
-        # Keep reference to the full-size decoded pixbuf to resize on window changes
-        self.current_pixbuf = None
-        self.connect("size-allocate", self.on_window_resized)
-
-        # Crosstalk Correction Profile data
-        self.last_captured_image = None
-        self.correction_matrix = None
-
-        self.show_all()
-
-        # Camera session and auto-connect
-        self.camera_session = None
-        self.is_connected = False
-        self.is_connecting = False
-        self.connect_camera()
-        GLib.timeout_add_seconds(2, self.poll_camera_connection)
+        # PREVIEW AREA
+        preview_event_box = Gtk.EventBox()
+        preview_event_box.connect("button-press-event", self.on_base_press)
+        preview_event_box.connect("button-release-event", self.on_base_release)
+        preview_event_box.connect("motion-notify-event", self.on_base_motion)
+        
+        self.base_image_area = Gtk.DrawingArea()
+        self.base_image_area.connect("draw", self.on_draw_base)
+        self.base_image_area.connect("size-allocate", self.on_base_area_size_allocate)
+        preview_event_box.add(self.base_image_area)
+        self.base_box.pack_start(preview_event_box, True, True, 0)
 
     def poll_camera_connection(self):
         if self.is_connected:
-            # Check if camera was unplugged
             if not negicc_station.is_camera_connected():
                 self.is_connected = False
-                self.update_connection_ui(False, "Camera unplugged.")
+                self.update_connection_ui(False, "Camera disconnected.")
         elif not self.is_connecting:
-            # Check if camera was plugged in
             if negicc_station.is_camera_connected():
                 self.connect_camera()
         return True
@@ -602,9 +625,9 @@ class ScanningAppWindow(Gtk.Window):
         if self.is_connecting or self.is_connected:
             return
         self.is_connecting = True
-        # Run connection in background thread to avoid freezing GTK UI
-        self.capture_button.set_sensitive(False)
-        self.camera_status_label.set_markup("<span><span foreground='#e6a23c'>●</span> Camera: Connecting...</span>")
+        self.btn_cap_img.set_sensitive(False)
+        self.btn_cap_base.set_sensitive(False)
+        self.lbl_camera_status.set_markup("<span><span foreground='#e6a23c'>●</span> <b>Camera: Connecting...</b></span>")
         
         def run():
             try:
@@ -616,7 +639,7 @@ class ScanningAppWindow(Gtk.Window):
                     GLib.idle_add(self.update_connection_ui, True, None)
                 else:
                     self.is_connected = False
-                    GLib.idle_add(self.update_connection_ui, False, "Failed to connect to camera.")
+                    GLib.idle_add(self.update_connection_ui, False, "Connection failed.")
             except Exception as e:
                 self.is_connected = False
                 GLib.idle_add(self.update_connection_ui, False, str(e))
@@ -628,703 +651,752 @@ class ScanningAppWindow(Gtk.Window):
     def update_connection_ui(self, connected, error_msg):
         self.is_connecting = False
         if connected:
-            self.camera_status_label.set_markup("<span foreground='#44ff44'>●</span> <b>Camera: Connected</b>")
-            self.capture_button.set_sensitive(True)
-            self.status_label.set_text("Status: Camera connected, ready.")
+            self.lbl_camera_status.set_markup("<span foreground='#44ff44'>●</span> <b>Camera: Connected</b>")
+            self.btn_cap_img.set_sensitive(True)
+            self.btn_cap_base.set_sensitive(True)
+            self.lbl_status.set_text("Status: Camera connected, ready.")
         else:
-            self.camera_status_label.set_markup("<span foreground='#ff4444'>●</span> <b>Camera: Disconnected</b>")
-            self.capture_button.set_sensitive(False)
+            self.lbl_camera_status.set_markup("<span foreground='#ff4444'>●</span> <b>Camera: Disconnected</b>")
+            self.btn_cap_img.set_sensitive(False)
+            self.btn_cap_base.set_sensitive(False)
             if error_msg:
-                self.status_label.set_text(f"Status: Connection failed ({error_msg})")
+                self.lbl_status.set_text(f"Status: Disconnected ({error_msg})")
             else:
-                self.status_label.set_text("Status: Camera disconnected.")
+                self.lbl_status.set_text("Status: Disconnected.")
 
-    def on_capture_clicked(self, widget):
-        # Read UI values on main thread (thread-safe)
-        mode_id = int(self.mode_combo.get_active_id())
-        shutter_str = self.shutter_combo.get_active_text()
-        is_ae = self.ae_checkbox.get_active()
-        cc_active = self.cc_checkbox.get_active()
+    def adj_gain(self, delta):
+        self.gain = max(0.1, self.gain + delta)
+        self.entry_gain.set_text(f"{self.gain:.2f}")
+        self.update_capture_preview()
 
-        # Disable controls during capture thread run
-        self.capture_button.set_sensitive(False)
-        self.mode_combo.set_sensitive(False)
-        self.shutter_combo.set_sensitive(False)
-        self.ae_checkbox.set_sensitive(False)
-        self.btn_save_tiff.set_sensitive(False)
-        self.spinner.start()
-        self.status_label.set_text("Status: Tethering and capturing...")
-
-        # Run capture in background thread to keep GTK UI responsive
-        capture_thread = threading.Thread(
-            target=self.background_capture_and_convert,
-            args=(mode_id, shutter_str, is_ae, cc_active)
-        )
-        capture_thread.daemon = True
-        capture_thread.start()
-
-    def background_capture_and_convert(self, mode_id, start_shutter_str, is_ae, cc_active):
-        # Clean up the previous image if it exists
-        if self.last_captured_image is not None:
-            try:
-                self.last_captured_image.discard()
-            except Exception as e:
-                print(f"Error discarding previous image: {e}")
-            self.last_captured_image = None
-
-        if not self.is_connected or self.camera_session is None:
-            GLib.idle_add(self.update_ui_failure, "Camera is not connected.")
-            return
-
+    def on_gain_entry_activated(self, entry):
+        text = entry.get_text()
         try:
-            final_shutter_str = start_shutter_str
+            val = float(text)
+            self.gain = max(0.1, val)
+            entry.set_text(f"{self.gain:.2f}")
+            self.update_capture_preview()
+        except ValueError:
+            entry.set_text(f"{self.gain:.2f}")
 
-            if is_ae:
-                # 1. Clear search steps and show frame
-                GLib.idle_add(self.clear_ae_steps)
-                GLib.idle_add(self.ae_steps_frame.show_all)
-
-                # 2. Define capture callback for search
-                def ae_local_capture(idx):
-                    shutter_s = auto_exposure.SHUTTER_SPEEDS[idx]
-                    GLib.idle_add(self.status_label.set_text, f"AE Search: Capturing {shutter_s}...")
-                    num, den = parse_shutter_speed(shutter_s)
-                    img = self.camera_session.capture(type=0, shutter_num=num, shutter_den=den) # Single-shot
-                    arr = img.to_numpy(half=True)
-                    img.discard()
-                    return arr
-
-                # 3. Define progress callback
-                def ae_progress(idx, shutter_s, dr_channels, avg_dr):
-                    dr_r, dr_g, dr_b = dr_channels
-                    GLib.idle_add(self.add_ae_step_to_listbox, idx, shutter_s, dr_r, dr_g, dr_b, avg_dr)
-
-                # 4. Run auto-exposure search
-                GLib.idle_add(self.status_label.set_text, "AE Search: Finding optimal exposure...")
-                opt_shutter, steps = auto_exposure.run_auto_exposure(
-                    start_shutter_str=start_shutter_str,
-                    capture_func=ae_local_capture,
-                    progress_callback=ae_progress
-                )
-
-                final_shutter_str = opt_shutter
-                GLib.idle_add(self.set_shutter_speed_active, opt_shutter)
-            else:
-                # Hide the AE steps frame if not auto-exposure
-                GLib.idle_add(self.ae_steps_frame.hide)
-
-            # Get current crosstalk matrix if active and loaded
-            matrix = None
-            if self.correction_matrix is not None:
-                matrix = [val for row in self.correction_matrix for val in row]
-
-            # Take the final shot
-            GLib.idle_add(self.status_label.set_text, f"Status: Capturing final image at {final_shutter_str}...")
-            shutter_num, shutter_den = parse_shutter_speed(final_shutter_str)
-
-            t_cap_start = time.time()
-            img = self.camera_session.capture(type=mode_id, shutter_num=shutter_num, shutter_den=shutter_den)
-            self.last_captured_image = img
-            t_cap_duration = time.time() - t_cap_start
-
-            # Fetch metadata
-            iso = img.iso
-            shutter_sec = img.shutter_speed
-            paths = img.filepaths
-
-            # Convert to half-size numpy array for fast screen preview
-            t_conv_start = time.time()
-            arr_raw = img.to_numpy(half=True, crosstalk_matrix=None)
-            if matrix is not None:
-                matrix_3x3 = np.array(matrix).reshape(3, 3)
-                arr_cc = np.clip(np.dot(arr_raw.astype(np.float32), matrix_3x3.T), 0, 65535).astype(np.uint16)
-            else:
-                arr_cc = arr_raw
-            t_conv_duration = time.time() - t_conv_start
-
-            self.last_arr_raw = arr_raw
-            self.last_arr_cc = arr_cc
-
-            # Crop if there is a normalized selection
-            arr_raw_crop, arr_cc_crop = self.get_current_crop(arr_raw, arr_cc)
-
-            # Calculate metrics for both
-            hists_raw, p2_raw, p98_raw, dr_metrics_raw, mean_metrics_raw = compute_hist_and_percentiles(arr_raw_crop)
-            hists_cc, p2_cc, p98_cc, dr_metrics_cc, mean_metrics_cc = compute_hist_and_percentiles(arr_cc_crop)
-
-            arr_display = arr_cc if cc_active else arr_raw
-            height, width, channels = arr_display.shape
-            arr_8bit = (arr_display >> 8).astype(np.uint8)
-            raw_bytes = arr_8bit.tobytes()
-
-            # Schedule UI updates back onto the GTK main thread safely
-            GLib.idle_add(
-                self.update_ui_success_with_metrics,
-                raw_bytes, width, height, iso, shutter_sec, paths,
-                t_cap_duration, t_conv_duration,
-                hists_raw, p2_raw, p98_raw, dr_metrics_raw, mean_metrics_raw,
-                hists_cc, p2_cc, p98_cc, dr_metrics_cc, mean_metrics_cc
-            )
-        except Exception as e:
-            GLib.idle_add(self.update_ui_failure, str(e))
-
-    def update_ui_success(self, raw_bytes, width, height, iso, shutter_sec, paths, t_cap_duration, t_conv_duration):
-        # Stop spinner and enable UI controls
-        self.spinner.stop()
-        self.capture_button.set_sensitive(self.is_connected)
-        self.mode_combo.set_sensitive(True)
-        self.shutter_combo.set_sensitive(not self.ae_checkbox.get_active())
-        self.ae_checkbox.set_sensitive(True)
-        self.btn_save_tiff.set_sensitive(True)
-        self.status_label.set_text("Status: Success!")
-
-        # Update metadata panel
-        self.iso_label.set_text(f"ISO: {iso}")
-        self.shutter_label.set_text(f"Shutter Speed: {shutter_sec:.4f}s")
-        self.size_label.set_text(f"Dimensions: {width} x {height} (Half-size)")
-        self.files_label.set_text(f"RAW Filepath(s):\n" + "\n".join(paths))
-        self.capture_time_label.set_text(f"Capture Duration: {t_cap_duration:.3f}s")
-        self.convert_time_label.set_text(f"Conversion Duration: {t_conv_duration:.3f}s")
-
-        t_render_start = time.time()
-        # Create Pixbuf from raw bytes safely using GLib.Bytes
-        glib_bytes = GLib.Bytes.new(raw_bytes)
-        self.current_pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
-            glib_bytes,
-            GdkPixbuf.Colorspace.RGB,
-            False,  # Has alpha
-            8,      # Bits per sample
-            width,
-            height,
-            width * 3  # Rowstride
-        )
-
-        # Show image preview inside preview_stack
-        self.preview_stack.set_visible_child_name("preview")
-
-        # Update preview canvas image
-        self.refresh_preview_image()
-        t_render_duration = time.time() - t_render_start
-
-        # Print detailed timing information to stdout
-        print("\n=== Capture & Processing Timing (seconds) ===")
-        print(f"  Capture & Transfer:   {t_cap_duration:.3f}s")
-        print(f"  Linear Conversion:    {t_conv_duration:.3f}s")
-        print(f"  UI Render & Display:  {t_render_duration:.3f}s")
-        print(f"  Total pipeline:       {t_cap_duration + t_conv_duration + t_render_duration:.3f}s")
-        print("=============================================")
-
-    def update_ui_success_with_metrics(self, raw_bytes, width, height, iso, shutter_sec, paths, t_cap_duration, t_conv_duration,
-                                       hists_raw, p2_raw, p98_raw, dr_metrics_raw, mean_metrics_raw,
-                                       hists_cc, p2_cc, p98_cc, dr_metrics_cc, mean_metrics_cc):
-        self.update_ui_success(raw_bytes, width, height, iso, shutter_sec, paths, t_cap_duration, t_conv_duration)
-        self.update_metrics_and_histograms(hists_raw, p2_raw, p98_raw, dr_metrics_raw, mean_metrics_raw,
-                                           hists_cc, p2_cc, p98_cc, dr_metrics_cc, mean_metrics_cc)
-
-    def update_metrics_and_histograms(self, hists_raw, p2_raw, p98_raw, dr_metrics_raw, mean_metrics_raw,
-                                      hists_cc, p2_cc, p98_cc, dr_metrics_cc, mean_metrics_cc):
-        # Unpack raw metrics
-        self.hist_r_raw_norm, self.hist_g_raw_norm, self.hist_b_raw_norm = hists_raw
-        self.p2_raw = p2_raw
-        self.p98_raw = p98_raw
+    def on_key_press(self, widget, event):
+        keyval = event.keyval
         
-        # Unpack cc metrics
-        self.hist_r_cc_norm, self.hist_g_cc_norm, self.hist_b_cc_norm = hists_cc
-        self.p2_cc = p2_cc
-        self.p98_cc = p98_cc
+        # Don't intercept gain keys if typing in entry
+        focus_widget = self.get_focus()
+        if focus_widget == self.entry_gain:
+            return False
+            
+        if keyval in (Gdk.KEY_plus, Gdk.KEY_equal, Gdk.KEY_KP_Add):
+            self.adj_gain(0.10)
+            return True
+        elif keyval in (Gdk.KEY_minus, Gdk.KEY_underscore, Gdk.KEY_KP_Subtract):
+            self.adj_gain(-0.10)
+            return True
+            
+        return False
 
-        # Show results inside stack
-        self.right_stack.set_visible_child_name("results")
+    def on_set_rot(self, btn, rot):
+        self.orientation = rot
+        self.update_capture_preview()
 
-        # Plot histograms using matplotlib
-        draw_matplotlib_histogram(self.raw_ax, hists_raw, p2_raw, p98_raw, dr_metrics_raw, mean_metrics_raw)
-        draw_matplotlib_histogram(self.cc_ax, hists_cc, p2_cc, p98_cc, dr_metrics_cc, mean_metrics_cc, show_overexposure=False)
+    def on_hflip(self, btn):
+        self.hflip = btn.get_active()
+        self.update_capture_preview()
 
-    def update_ui_failure(self, error_msg):
-        self.spinner.stop()
-        self.capture_button.set_sensitive(self.is_connected)
-        self.mode_combo.set_sensitive(True)
-        self.shutter_combo.set_sensitive(not self.ae_checkbox.get_active())
-        self.ae_checkbox.set_sensitive(True)
-        self.btn_save_tiff.set_sensitive(self.last_captured_image is not None)
-        self.status_label.set_text("Status: Failed!")
+    def on_vflip(self, btn):
+        self.vflip = btn.get_active()
+        self.update_capture_preview()
 
-        # Show error dialog
-        dialog = Gtk.MessageDialog(
-            transient_for=self,
-            flags=0,
-            message_type=Gtk.MessageType.ERROR,
-            buttons=Gtk.ButtonsType.OK,
-            text="Capture Error"
+    def on_load_profile(self, widget):
+        dialog = Gtk.FileChooserDialog(
+            title="Load Profile JSON", parent=self,
+            action=Gtk.FileChooserAction.OPEN
         )
-        dialog.format_secondary_text(error_msg)
-        dialog.run()
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
+        
+        # Add filter for json
+        filter_json = Gtk.FileFilter()
+        filter_json.set_name("JSON Profile")
+        filter_json.add_pattern("*.json")
+        dialog.add_filter(filter_json)
+
+        if dialog.run() == Gtk.ResponseType.OK:
+            filepath = dialog.get_filename()
+            try:
+                self.profile = FilmProfile(filepath)
+                self.profile_filename = filepath
+                
+                self.has_icc = bool(getattr(self.profile, 'icc_profile_bytes', None))
+                self.has_crosstalk = hasattr(self.profile, 'crosstalk_matrix') and self.profile.crosstalk_matrix is not None
+                
+                status_txt = f"Loaded: {self.profile.film_name}\n"
+                if self.has_icc: status_txt += "• Has ICC curves/targets\n"
+                if self.has_crosstalk: status_txt += "• Has Crosstalk matrix"
+                
+                self.lbl_profile_info.set_text(status_txt)
+                self.lbl_status.set_text(f"Status: Profile loaded: {os.path.basename(filepath)}")
+                
+                # Update targets table dropdown
+                self.target_liststore.clear()
+                if hasattr(self.profile, 'raw_data') and 'targets' in self.profile.raw_data:
+                    for idx, tgt in enumerate(self.profile.raw_data['targets']):
+                        name = tgt.get('name', f"Target {idx}")
+                        self.target_liststore.append([idx, name, "--"])
+                        
+                self.update_capture_preview()
+            except Exception as e:
+                self.lbl_profile_info.set_text(f"Error: {e}")
+                self.lbl_status.set_text("Status: Failed to load profile.")
+                self.profile = None
+                
         dialog.destroy()
 
-    def on_ae_toggled(self, button):
-        is_active = button.get_active()
-        self.shutter_combo.set_sensitive(not is_active)
+    def on_reset_profile(self, widget):
+        self.profile = None
+        self.profile_filename = ""
+        self.has_icc = False
+        self.has_crosstalk = False
+        self.lbl_profile_info.set_text("No profile loaded.")
+        self.lbl_status.set_text("Status: Profile cleared.")
+        self.target_liststore.clear()
+        self.update_capture_preview()
+
+    def on_target_selection_changed(self, selection):
+        model, treeiter = selection.get_selected()
+        if treeiter is not None:
+            idx = model[treeiter][0]
+            if idx != self.selected_target_idx:
+                self.selected_target_idx = idx
+                self.update_capture_preview()
+
+    def on_tab_changed(self, notebook, page, page_num):
+        if page_num == 0:
+            self.update_capture_histograms()
+        else:
+            self.update_base_histograms()
+
+    def on_ae_toggled(self, checkbox):
+        self.shutter_combo.set_sensitive(not checkbox.get_active())
+
+    def on_capture_image_clicked(self, widget):
+        self.on_capture(is_base=False)
+
+    def on_capture_base_clicked(self, widget):
+        self.on_capture(is_base=True)
+
+    def on_capture(self, is_base=False):
+        if not self.is_connected or not self.camera_session:
+            self.lbl_status.set_text("Error: Camera not connected.")
+            return
+            
+        shutter_str = self.shutter_combo.get_active_text()
+        is_ae = self.ae_checkbox.get_active()
+        mode_id = int(self.mode_combo.get_active_id())
+        
+        self.lbl_status.set_text("Capturing...")
+        self.clear_ae_steps()
+        
+        self.btn_cap_img.set_sensitive(False)
+        self.btn_cap_base.set_sensitive(False)
+        self.btn_save_tiff.set_sensitive(False)
+        self.spinner.start()
+        
+        def task():
+            try:
+                final_shutter_str = shutter_str
+                
+                if is_ae:
+                    GLib.idle_add(self.lbl_status.set_text, "Running Auto Exposure...")
+                    GLib.idle_add(self.ae_steps_frame.show_all)
+                    
+                    def ae_local_capture(idx):
+                        ss = auto_exposure.SHUTTER_SPEEDS[idx]
+                        GLib.idle_add(self.lbl_status.set_text, f"AE: Capturing {ss}...")
+                        num, den = auto_exposure.parse_shutter_speed(ss)
+                        ae_img = self.camera_session.capture(type=0, shutter_num=num, shutter_den=den) # Single shot for AE search
+                        arr = ae_img.to_numpy(half=True)
+                        ae_img.discard()
+                        return arr
+                    
+                    def ae_progress(step_idx, ss, ch_dr, avg_dr):
+                        dr_r, dr_g, dr_b = ch_dr
+                        GLib.idle_add(self.add_ae_step, ss, dr_r, dr_g, dr_b, avg_dr)
+                    
+                    opt_shutter, steps = auto_exposure.run_auto_exposure(
+                        start_shutter_str=shutter_str,
+                        capture_func=ae_local_capture,
+                        progress_callback=ae_progress
+                    )
+                    final_shutter_str = opt_shutter
+                    GLib.idle_add(self._set_shutter_combo, opt_shutter)
+                else:
+                    GLib.idle_add(self.ae_steps_frame.hide)
+                
+                GLib.idle_add(self.lbl_status.set_text, f"Capturing at {final_shutter_str}...")
+                num, den = auto_exposure.parse_shutter_speed(final_shutter_str)
+                
+                cap_type = 0 if is_base else mode_id
+                t_start = time.time()
+                img = self.camera_session.capture(type=cap_type, shutter_num=num, shutter_den=den)
+                t_dur = time.time() - t_start
+                
+                if not img:
+                    GLib.idle_add(self.update_ui_failure, "C++ capture returned null")
+                    return
+                    
+                GLib.idle_add(self.process_captured_image, img, is_base, t_dur)
+            except Exception as e:
+                import traceback
+                print(f"Capture error: {e}", file=sys.stdout)
+                traceback.print_exc(file=sys.stdout)
+                sys.stdout.flush()
+                GLib.idle_add(self.update_ui_failure, str(e))
+                
+        t = threading.Thread(target=task)
+        t.daemon = True
+        t.start()
+
+    def _set_shutter_combo(self, shutter_str):
+        if shutter_str in auto_exposure.SHUTTER_SPEEDS:
+            self.shutter_combo.set_active(auto_exposure.SHUTTER_SPEEDS.index(shutter_str))
 
     def clear_ae_steps(self):
         for child in self.ae_steps_listbox.get_children():
             self.ae_steps_listbox.remove(child)
 
-    def add_ae_step_to_listbox(self, idx, shutter_str, dr_r, dr_g, dr_b, avg_dr):
+    def add_ae_step(self, ss, dr_r, dr_g, dr_b, avg_dr):
+        def fmt_dr(v):
+            return "<span foreground='#ff6666'>OVR</span>" if v < 0 else f"{v:.0f}"
+            
         row_label = Gtk.Label()
         row_label.set_markup(
             f"<span size='small' font_family='monospace'>"
-            f"Step {len(self.ae_steps_listbox.get_children()) + 1}: <b>{shutter_str}</b>\n"
-            f"  DR: R:{dr_r:.1f} G:{dr_g:.1f} B:{dr_b:.1f} | <b>Avg:{avg_dr:.1f}</b>"
+            f"Speed: <b>{ss}</b>\n"
+            f"DR: R:{fmt_dr(dr_r)} G:{fmt_dr(dr_g)} B:{fmt_dr(dr_b)} | <b>Avg:{fmt_dr(avg_dr)}</b>"
             f"</span>"
         )
         row_label.set_xalign(0.0)
-        row_label.set_padding(4, 4)
-
         row = Gtk.ListBoxRow()
         row.add(row_label)
         self.ae_steps_listbox.add(row)
         self.ae_steps_listbox.show_all()
 
-    def set_shutter_speed_active(self, shutter_str):
-        if shutter_str in SHUTTER_SPEEDS:
-            self.shutter_combo.set_active(SHUTTER_SPEEDS.index(shutter_str))
-
-
-
-    def refresh_preview_image(self):
-        if not self.current_pixbuf:
-            return
-
-        # Calculate max size based on current preview pane size (with margins)
-        alloc = self.preview_box.get_allocation()
-        max_w = max(100, alloc.width - 30)
-        max_h = max(100, alloc.height - 30)
-
-        w = self.current_pixbuf.get_width()
-        h = self.current_pixbuf.get_height()
-
-        scale = min(max_w / w, max_h / h)
-        new_w = max(1, int(w * scale))
-        new_h = max(1, int(h * scale))
-
-        self.scaled_pixbuf = self.current_pixbuf.scale_simple(new_w, new_h, GdkPixbuf.InterpType.BILINEAR)
-        self.image_view.queue_draw()
-
-    def on_window_resized(self, widget, allocation):
-        # Dynamically scale preview on window resizing
-        if self.current_pixbuf:
-            self.refresh_preview_image()
-
-    def on_destroy(self, widget):
-        if self.last_captured_image:
-            try:
-                self.last_captured_image.discard()
-            except Exception:
-                pass
-        if hasattr(self, 'camera_session') and self.camera_session:
-            try:
-                self.camera_session.close()
-            except Exception:
-                pass
-        Gtk.main_quit()
-
-    def on_cc_toggled(self, button):
-        if self.last_captured_image:
-            self.update_preview_from_last_captured()
-
-    def update_preview_from_last_captured(self):
-        if not self.last_captured_image:
-            return
-
-        self.status_label.set_text("Status: Re-processing image...")
-        self.capture_button.set_sensitive(False)
-        self.btn_save_tiff.set_sensitive(False)
-        self.spinner.start()
-
-        def run():
-            try:
-                matrix = None
-                if self.correction_matrix is not None:
-                    matrix = [val for row in self.correction_matrix for val in row]
-
-                t_conv_start = time.time()
-                arr_raw = self.last_captured_image.to_numpy(half=True, crosstalk_matrix=None)
-                if matrix is not None:
-                    matrix_3x3 = np.array(matrix).reshape(3, 3)
-                    arr_cc = np.clip(np.dot(arr_raw.astype(np.float32), matrix_3x3.T), 0, 65535).astype(np.uint16)
-                else:
-                    arr_cc = arr_raw
-                t_conv_duration = time.time() - t_conv_start
-
-                self.last_arr_raw = arr_raw
-                self.last_arr_cc = arr_cc
-
-                # Crop if there is a normalized selection
-                arr_raw_crop, arr_cc_crop = self.get_current_crop(arr_raw, arr_cc)
-
-                # Calculate metrics for both
-                hists_raw, p2_raw, p98_raw, dr_metrics_raw, mean_metrics_raw = compute_hist_and_percentiles(arr_raw_crop)
-                hists_cc, p2_cc, p98_cc, dr_metrics_cc, mean_metrics_cc = compute_hist_and_percentiles(arr_cc_crop)
-
-                arr_display = arr_cc if self.cc_checkbox.get_active() else arr_raw
-                height, width, channels = arr_display.shape
-                arr_8bit = (arr_display >> 8).astype(np.uint8)
-                raw_bytes = arr_8bit.tobytes()
-
-                GLib.idle_add(
-                    self.update_ui_success_with_metrics_no_cap,
-                    raw_bytes, width, height, t_conv_duration,
-                    hists_raw, p2_raw, p98_raw, dr_metrics_raw, mean_metrics_raw,
-                    hists_cc, p2_cc, p98_cc, dr_metrics_cc, mean_metrics_cc
-                )
-            except Exception as e:
-                GLib.idle_add(self.update_ui_failure, str(e))
-
-        thread = threading.Thread(target=run)
-        thread.daemon = True
-        thread.start()
-
-    def update_ui_success_with_metrics_no_cap(self, raw_bytes, width, height, t_conv_duration,
-                                              hists_raw, p2_raw, p98_raw, dr_metrics_raw, mean_metrics_raw,
-                                              hists_cc, p2_cc, p98_cc, dr_metrics_cc, mean_metrics_cc):
-        # Stop spinner and enable UI controls
-        self.spinner.stop()
-        self.capture_button.set_sensitive(self.is_connected)
-        self.mode_combo.set_sensitive(True)
-        self.shutter_combo.set_sensitive(not self.ae_checkbox.get_active())
-        self.ae_checkbox.set_sensitive(True)
-        self.btn_save_tiff.set_sensitive(True)
-        self.status_label.set_text("Status: Reprocessed successfully!")
-
-        # Update metadata panel
-        self.size_label.set_text(f"Dimensions: {width} x {height} (Half-size)")
-        self.convert_time_label.set_text(f"Conversion Duration: {t_conv_duration:.3f}s")
-
-        # Create Pixbuf
-        glib_bytes = GLib.Bytes.new(raw_bytes)
-        self.current_pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
-            glib_bytes,
-            GdkPixbuf.Colorspace.RGB,
-            False,
-            8,
-            width,
-            height,
-            width * 3
-        )
-        # Show image preview inside preview_stack
-        self.preview_stack.set_visible_child_name("preview")
-        self.refresh_preview_image()
-
-        self.update_metrics_and_histograms(hists_raw, p2_raw, p98_raw, dr_metrics_raw, mean_metrics_raw,
-                                           hists_cc, p2_cc, p98_cc, dr_metrics_cc, mean_metrics_cc)
-
-    def get_current_crop(self, arr_raw, arr_cc):
-        if self.normalized_selection is not None:
-            nx1, ny1, nx2, ny2 = self.normalized_selection
-            h_raw, w_raw, _ = arr_raw.shape
-            crop_x1 = int(nx1 * w_raw)
-            crop_x2 = int(nx2 * w_raw)
-            crop_y1 = int(ny1 * h_raw)
-            crop_y2 = int(ny2 * h_raw)
-            if crop_x2 > crop_x1 and crop_y2 > crop_y1:
-                return arr_raw[crop_y1:crop_y2, crop_x1:crop_x2], arr_cc[crop_y1:crop_y2, crop_x1:crop_x2]
-        return arr_raw, arr_cc
-
-    def update_preview_histograms_only(self):
-        if self.last_arr_raw is None or self.last_arr_cc is None:
-            return
-
-        def run():
-            try:
-                arr_raw = self.last_arr_raw
-                arr_cc = self.last_arr_cc
-                
-                arr_raw_crop, arr_cc_crop = self.get_current_crop(arr_raw, arr_cc)
-
-                hists_raw, p2_raw, p98_raw, dr_metrics_raw, mean_metrics_raw = compute_hist_and_percentiles(arr_raw_crop)
-                hists_cc, p2_cc, p98_cc, dr_metrics_cc, mean_metrics_cc = compute_hist_and_percentiles(arr_cc_crop)
-
-                GLib.idle_add(
-                    self.update_metrics_and_histograms_only_success,
-                    hists_raw, p2_raw, p98_raw, dr_metrics_raw, mean_metrics_raw,
-                    hists_cc, p2_cc, p98_cc, dr_metrics_cc, mean_metrics_cc
-                )
-            except Exception as e:
-                print(f"Error updating histograms of selection: {e}")
-
-        thread = threading.Thread(target=run)
-        thread.daemon = True
-        thread.start()
-
-    def update_metrics_and_histograms_only_success(self, hists_raw, p2_raw, p98_raw, dr_metrics_raw, mean_metrics_raw,
-                                                 hists_cc, p2_cc, p98_cc, dr_metrics_cc, mean_metrics_cc):
-        self.update_metrics_and_histograms(hists_raw, p2_raw, p98_raw, dr_metrics_raw, mean_metrics_raw,
-                                           hists_cc, p2_cc, p98_cc, dr_metrics_cc, mean_metrics_cc)
-
-    def on_draw_image_view(self, widget, cr):
-        if not self.scaled_pixbuf:
-            return False
-
-        alloc = widget.get_allocation()
-        img_w = self.scaled_pixbuf.get_width()
-        img_h = self.scaled_pixbuf.get_height()
-
-        self.img_x_offset = max(0, (alloc.width - img_w) // 2)
-        self.img_y_offset = max(0, (alloc.height - img_h) // 2)
-
-        # Draw centered image preview
-        Gdk.cairo_set_source_pixbuf(cr, self.scaled_pixbuf, self.img_x_offset, self.img_y_offset)
-        cr.paint()
-
-        # Draw selection rectangle
-        if self.is_dragging and self.selection_start and self.selection_end:
-            x1, y1 = self.selection_start
-            x2, y2 = self.selection_end
-            x_min, x_max = min(x1, x2), max(x1, x2)
-            y_min, y_max = min(y1, y2), max(y1, y2)
-
-            cr.set_source_rgba(0.2, 0.6, 1.0, 0.15)
-            cr.rectangle(x_min, y_min, x_max - x_min, y_max - y_min)
-            cr.fill_preserve()
-
-            cr.set_source_rgba(0.2, 0.6, 1.0, 0.8)
-            cr.set_line_width(1.5)
-            cr.set_dash([4.0, 4.0], 0)
-            cr.stroke()
-            cr.set_dash([], 0)
-
-        elif self.normalized_selection is not None:
-            nx1, ny1, nx2, ny2 = self.normalized_selection
-            x_min = int(nx1 * img_w) + self.img_x_offset
-            y_min = int(ny1 * img_h) + self.img_y_offset
-            x_max = int(nx2 * img_w) + self.img_x_offset
-            y_max = int(ny2 * img_h) + self.img_y_offset
-
-            cr.set_source_rgba(0.2, 0.6, 1.0, 0.15)
-            cr.rectangle(x_min, y_min, x_max - x_min, y_max - y_min)
-            cr.fill_preserve()
-
-            cr.set_source_rgba(0.2, 0.6, 1.0, 0.8)
-            cr.set_line_width(1.5)
-            cr.set_dash([4.0, 4.0], 0)
-            cr.stroke()
-            cr.set_dash([], 0)
-
-        return True
-
-    def on_image_button_press(self, widget, event):
-        if not self.scaled_pixbuf:
-            return False
-
-        if event.button == 1:  # Left mouse button
-            img_w = self.scaled_pixbuf.get_width()
-            img_h = self.scaled_pixbuf.get_height()
+    def process_captured_image(self, img_obj, is_base, capture_duration):
+        self.lbl_status.set_text("Processing capture...")
+        
+        t_conv_start = time.time()
+        raw_linear = img_obj.to_numpy(half=True)
+        conv_duration = time.time() - t_conv_start
+        
+        if is_base:
+            if self.film_base_img: self.film_base_img.discard()
+            self.film_base_img = img_obj
+            self.film_base_raw_linear = raw_linear
+            self.base_rect_start = None
+            self.base_rect_end = None
+            self.base_rect_raw = None
             
-            # Bound start coordinates within image rectangle
-            x = max(self.img_x_offset, min(event.x, self.img_x_offset + img_w))
-            y = max(self.img_y_offset, min(event.y, self.img_y_offset + img_h))
+            raw = np.clip(raw_linear, 0, 16384)
+            img_array = (raw / 16384.0 * 255).astype(np.uint8)
+            img_array = np.ascontiguousarray(img_array)
+            h, w, c = img_array.shape
+            self.base_preview_pixbuf = GdkPixbuf.Pixbuf.new_from_data(
+                img_array.tobytes(), GdkPixbuf.Colorspace.RGB, False, 8, w, h, w * 3
+            )
+            
+            self.refresh_base_preview()
+            self.update_base_histograms()
+            self.notebook.set_current_page(1)
+            
+            self.btn_cap_img.set_sensitive(self.is_connected)
+            self.btn_cap_base.set_sensitive(self.is_connected)
+            self.btn_save_tiff.set_sensitive(self.raw_image is not None)
+            self.spinner.stop()
+            self.lbl_status.set_text("Status: Film base updated.")
+            
+        else:
+            if self.raw_image: self.raw_image.discard()
+            self.raw_image = img_obj
+            self.raw_linear_pixels = raw_linear
+            self.capture_rect_start = None
+            self.capture_rect_end = None
+            self.capture_rect_raw = None
+            
+            self.gain = 1.0
+            self.entry_gain.set_text(f"{self.gain:.2f}")
+            
+            if self.film_base_rgb is not None and self.profile is not None and len(self.target_liststore) > 0:
+                best_idx, dist = find_best_target_index(self.profile, raw_linear, self.film_base_rgb)
+                self.selected_target_idx = best_idx
+                
+                for row in self.target_liststore:
+                    row[2] = f"{dist:.2f}" if row[0] == best_idx else "--"
+                    
+                select = self.target_treeview.get_selection()
+                for i, row in enumerate(self.target_liststore):
+                    if row[0] == best_idx:
+                        select.select_path(Gtk.TreePath.new_from_indices([i]))
+                        break
+                        
+            # Update labels
+            self.iso_label.set_text(f"ISO: {img_obj.iso}")
+            self.shutter_label.set_text(f"Shutter Speed: {img_obj.shutter_speed:.4f}s")
+            h, w = raw_linear.shape[:2]
+            self.size_label.set_text(f"Dimensions: {w} x {h} (Half-size)")
+            self.files_label.set_text("RAW Filepath(s):\n" + "\n".join(img_obj.filepaths))
+            self.capture_time_label.set_text(f"Capture Duration: {capture_duration:.3f}s")
+            self.convert_time_label.set_text(f"Conversion Duration: {conv_duration:.3f}s")
+            
+            self.update_capture_preview()
+            self.notebook.set_current_page(0)
+            
+            self.btn_cap_img.set_sensitive(self.is_connected)
+            self.btn_cap_base.set_sensitive(self.is_connected)
+            self.btn_save_tiff.set_sensitive(True)
+            self.spinner.stop()
+            self.lbl_status.set_text("Status: Image updated successfully.")
 
-            self.is_dragging = True
-            self.selection_start = (x, y)
-            self.selection_end = (x, y)
-            widget.queue_draw()
-            return True
-        return False
-
-    def on_image_motion_notify(self, widget, event):
-        if self.is_dragging and self.selection_start:
-            img_w = self.scaled_pixbuf.get_width()
-            img_h = self.scaled_pixbuf.get_height()
-
-            # Bound current coordinates within image rectangle
-            x = max(self.img_x_offset, min(event.x, self.img_x_offset + img_w))
-            y = max(self.img_y_offset, min(event.y, self.img_y_offset + img_h))
-
-            self.selection_end = (x, y)
-            widget.queue_draw()
-            return True
-        return False
-
-    def on_image_button_release(self, widget, event):
-        if event.button == 1 and self.is_dragging:
-            self.is_dragging = False
-            if self.selection_start and self.selection_end:
-                x1, y1 = self.selection_start
-                x2, y2 = self.selection_end
-
-                if abs(x2 - x1) > 5 and abs(y2 - y1) > 5:
-                    img_w = self.scaled_pixbuf.get_width()
-                    img_h = self.scaled_pixbuf.get_height()
-
-                    img_x1 = max(0, min(x1, x2) - self.img_x_offset)
-                    img_x2 = min(img_w, max(x1, x2) - self.img_x_offset)
-                    img_y1 = max(0, min(y1, y2) - self.img_y_offset)
-                    img_y2 = min(img_h, max(y1, y2) - self.img_y_offset)
-
-                    self.normalized_selection = (
-                        img_x1 / img_w,
-                        img_y1 / img_h,
-                        img_x2 / img_w,
-                        img_y2 / img_h
-                    )
-                    self.selection_status_label.set_markup(
-                        f"<b>Selection:</b> Region ({int(img_x1)}, {int(img_y1)}) to ({int(img_x2)}, {int(img_y2)})"
-                    )
-                else:
-                    self.normalized_selection = None
-                    self.selection_status_label.set_markup("<b>Selection:</b> Full Image")
-
-                # Update histograms immediately
-                self.update_preview_histograms_only()
-
-            widget.queue_draw()
-            return True
-        return False
-
-    def on_load_profile_clicked(self, button):
-        dialog = Gtk.FileChooserDialog(
-            title="Load Calibration Profile",
-            parent=self,
-            action=Gtk.FileChooserAction.OPEN
-        )
-        dialog.add_buttons(
-            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-            Gtk.STOCK_OPEN, Gtk.ResponseType.OK
-        )
-
-        # Add filter for json files
-        filter_json = Gtk.FileFilter()
-        filter_json.set_name("JSON files")
-        filter_json.add_mime_type("application/json")
-        filter_json.add_pattern("*.json")
-        dialog.add_filter(filter_json)
-
-        response = dialog.run()
-        if response == Gtk.ResponseType.OK:
-            filepath = dialog.get_filename()
-            try:
-                with open(filepath, 'r') as f:
-                    profile = json.load(f)
-
-                # Check for correction matrix
-                if "crosstalk_correction_matrix" in profile:
-                    self.correction_matrix = profile["crosstalk_correction_matrix"]
-                    filename = os.path.basename(filepath)
-                    self.lbl_profile_status.set_text(f"Profile: {filename}")
-
-                    self.cc_checkbox.set_sensitive(True)
-                    self.cc_checkbox.handler_block(self.cc_handler_id)
-                    self.cc_checkbox.set_active(True)
-                    self.cc_checkbox.handler_unblock(self.cc_handler_id)
-
-                    # Update preview if we have a captured image
-                    if self.last_captured_image:
-                        self.update_preview_from_last_captured()
-                    else:
-                        self.status_label.set_text(f"Status: Profile loaded: {filename}")
-                else:
-                    self.status_label.set_text("Status: Invalid profile (missing matrix)")
-                    self.show_error_dialog("Invalid Profile", "The loaded JSON file does not contain a 'crosstalk_correction_matrix'.")
-            except Exception as e:
-                self.status_label.set_text(f"Status: Error loading profile: {str(e)}")
-                self.show_error_dialog("Load Error", f"Failed to parse calibration profile:\n{str(e)}")
-
-        dialog.destroy()
-
-    def show_error_dialog(self, title, message):
-        dialog = Gtk.MessageDialog(
-            transient_for=self,
-            flags=0,
-            message_type=Gtk.MessageType.ERROR,
-            buttons=Gtk.ButtonsType.OK,
-            text=title
-        )
-        dialog.format_secondary_text(message)
-        dialog.run()
-        dialog.destroy()
-
-    def on_save_tiff_clicked(self, button):
-        if not self.last_captured_image:
+    def update_base_histograms(self):
+        if self.film_base_raw_linear is None:
+            self.hist_raw.clear()
+            self.hist_corr.clear()
             return
+            
+        data = self.film_base_raw_linear
+        if hasattr(self, 'base_rect_raw') and self.base_rect_raw is not None:
+            x1, y1, x2, y2 = self.base_rect_raw
+            dh, dw = data.shape[:2]
+            x1, x2 = max(0, x1), min(dw, x2)
+            y1, y2 = max(0, y1), min(dh, y2)
+            if x2 > x1 and y2 > y1:
+                data = data[y1:y2, x1:x2]
+                
+        self.hist_raw.plot_histogram(data, is_corrected=False, has_icc=False, show_overexposure=True)
+        self.hist_corr.clear()
 
+    def on_read_film_base(self, btn):
+        if self.film_base_raw_linear is None:
+            return
+            
+        data = self.film_base_raw_linear
+        if hasattr(self, 'base_rect_raw') and self.base_rect_raw is not None:
+            x1, y1, x2, y2 = self.base_rect_raw
+            dh, dw = data.shape[:2]
+            x1, x2 = max(0, x1), min(dw, x2)
+            y1, y2 = max(0, y1), min(dh, y2)
+            if x2 > x1 and y2 > y1:
+                data = data[y1:y2, x1:x2]
+                
+        rgb = np.mean(data, axis=(0, 1))
+        self.film_base_rgb = (rgb[0], rgb[1], rgb[2])
+        
+        self.base_tab_label.set_markup("<span foreground='green'>Film Base</span>")
+        self.capture_tab_label.set_markup("<span>Capture</span>")
+        
+        corr_rgb = rgb
+        if self.has_crosstalk:
+            corr_rgb = np.dot(rgb, self.profile.crosstalk_matrix.T)
+            
+        self.lbl_base_vals.set_text(f"Raw: {rgb[0]:.1f}, {rgb[1]:.1f}, {rgb[2]:.1f} | "
+                                    f"Corr: {corr_rgb[0]:.1f}, {corr_rgb[1]:.1f}, {corr_rgb[2]:.1f}")
+                                    
+        if self.raw_image:
+            self.update_capture_preview()
+
+    def refresh_capture_preview(self):
+        if not hasattr(self, 'capture_preview_pixbuf') or self.capture_preview_pixbuf is None:
+            self.scaled_capture_pixbuf = None
+            return
+            
+        w_alloc = self.capture_image_area.get_allocated_width()
+        h_alloc = self.capture_image_area.get_allocated_height()
+        if w_alloc < 10 or h_alloc < 10:
+            self.scaled_capture_pixbuf = None
+            return
+            
+        w_img = self.capture_preview_pixbuf.get_width()
+        h_img = self.capture_preview_pixbuf.get_height()
+        
+        scale = min(w_alloc / w_img, h_alloc / h_img)
+        new_w = max(1, int(w_img * scale))
+        new_h = max(1, int(h_img * scale))
+        
+        self.scaled_capture_pixbuf = self.capture_preview_pixbuf.scale_simple(
+            new_w, new_h, GdkPixbuf.InterpType.BILINEAR
+        )
+        self.capture_image_area.queue_draw()
+
+    def refresh_base_preview(self):
+        if not hasattr(self, 'base_preview_pixbuf') or self.base_preview_pixbuf is None:
+            self.scaled_base_pixbuf = None
+            return
+            
+        w_alloc = self.base_image_area.get_allocated_width()
+        h_alloc = self.base_image_area.get_allocated_height()
+        if w_alloc < 10 or h_alloc < 10:
+            self.scaled_base_pixbuf = None
+            return
+            
+        w_img = self.base_preview_pixbuf.get_width()
+        h_img = self.base_preview_pixbuf.get_height()
+        
+        scale = min(w_alloc / w_img, h_alloc / h_img)
+        new_w = max(1, int(w_img * scale))
+        new_h = max(1, int(h_img * scale))
+        
+        self.scaled_base_pixbuf = self.base_preview_pixbuf.scale_simple(
+            new_w, new_h, GdkPixbuf.InterpType.BILINEAR
+        )
+        self.base_image_area.queue_draw()
+
+    def on_capture_area_size_allocate(self, widget, allocation):
+        self.refresh_capture_preview()
+
+    def on_base_area_size_allocate(self, widget, allocation):
+        self.refresh_base_preview()
+
+    def update_capture_preview(self):
+        if self.raw_linear_pixels is None:
+            return
+            
+        img_array = None
+        corr_hist_array = None
+        
+        if self.profile:
+            if self.has_icc and self.film_base_rgb:
+                prof_data = json.loads(json.dumps(self.profile.raw_data))
+                if 'targets' in prof_data and self.selected_target_idx < len(prof_data['targets']):
+                    prof_data['targets'] = [prof_data['targets'][self.selected_target_idx]]
+                    tgt = prof_data['targets'][0]
+                    if 'icc_profile_base64' in tgt:
+                        prof_data['icc_profile_base64'] = tgt['icc_profile_base64']
+                        
+                temp_profile = FilmProfile(prof_data)
+                if getattr(self.profile, 'icc_profile_bytes', None):
+                    temp_profile.icc_profile_bytes = self.profile.icc_profile_bytes
+                    
+                res = color_conversion.convert_raw_to_tiff(
+                    img=self.raw_image, profile=temp_profile, output_path="",
+                    exposure_comp=self.gain, half=True, film_base_rgb=self.film_base_rgb
+                )
+                img_array = res
+                corr_hist_array = res
+            else:
+                raw = self.raw_linear_pixels.astype(np.float32)
+                if self.has_crosstalk:
+                    raw = np.dot(raw, self.profile.crosstalk_matrix.T)
+                raw = np.clip(raw * self.gain, 0, 16384)
+                img_array = (raw / 16384.0 * 255).astype(np.uint8)
+                corr_hist_array = raw
+        else:
+            raw = self.raw_linear_pixels.astype(np.float32) * self.gain
+            raw_c = np.clip(raw, 0, 16384)
+            img_array = (raw_c / 16384.0 * 255).astype(np.uint8)
+            corr_hist_array = raw_c
+            
+        img_array = apply_transforms_numpy(img_array, self.hflip, self.vflip, self.orientation)
+        
+        h, w, c = img_array.shape
+        img_array = np.ascontiguousarray(img_array)
+        self.capture_preview_pixbuf = GdkPixbuf.Pixbuf.new_from_data(
+            img_array.tobytes(), GdkPixbuf.Colorspace.RGB, False, 8, w, h, w * 3
+        )
+        self.capture_corr_hist_data = apply_transforms_numpy(corr_hist_array, self.hflip, self.vflip, self.orientation)
+        self.capture_raw_hist_data = apply_transforms_numpy(self.raw_linear_pixels, self.hflip, self.vflip, self.orientation)
+        
+        self.refresh_capture_preview()
+        if self.notebook.get_current_page() == 0:
+            self.update_capture_histograms()
+
+    def update_capture_histograms(self):
+        if not hasattr(self, 'hist_raw') or self.hist_raw is None:
+            return
+        if not hasattr(self, 'capture_raw_hist_data') or self.capture_raw_hist_data is None:
+            self.hist_raw.clear()
+            self.hist_corr.clear()
+            return
+            
+        raw_d = self.capture_raw_hist_data
+        corr_d = self.capture_corr_hist_data
+        
+        if hasattr(self, 'capture_rect_raw') and self.capture_rect_raw is not None:
+            x1, y1, x2, y2 = self.capture_rect_raw
+            dh, dw = raw_d.shape[:2]
+            x1, x2 = max(0, x1), min(dw, x2)
+            y1, y2 = max(0, y1), min(dh, y2)
+            if x2 > x1 and y2 > y1:
+                raw_d = raw_d[y1:y2, x1:x2]
+                corr_d = corr_d[y1:y2, x1:x2]
+                
+        self.hist_raw.plot_histogram(raw_d, is_corrected=False, has_icc=False, show_overexposure=True)
+        self.hist_corr.plot_histogram(corr_d, is_corrected=True, has_icc=self.has_icc, show_overexposure=False)
+        
+        self._update_dr_label(raw_d)
+
+    def _update_dr_label(self, raw_data):
+        if not hasattr(self, 'lbl_dr') or self.lbl_dr is None:
+            return
+        if raw_data is None or raw_data.size == 0:
+            self.lbl_dr.set_text("")
+            return
+        
+        avg_dr, (dr_r, dr_g, dr_b) = auto_exposure.calculate_dynamic_range(raw_data)
+        
+        def fmt(v):
+            return "<span foreground='#ff6666'><b>Overexposed</b></span>" if v < 0 else f"{v:.0f}"
+        
+        self.lbl_dr.set_markup(
+            f"<b>Dynamic Range</b> (p5-p95)\n"
+            f"  R: {fmt(dr_r)}  G: {fmt(dr_g)}  B: {fmt(dr_b)}\n"
+            f"  Avg: {fmt(avg_dr)}"
+        )
+
+    def on_draw_capture(self, widget, cr):
+        if hasattr(self, 'scaled_capture_pixbuf') and self.scaled_capture_pixbuf is not None:
+            w_alloc = widget.get_allocated_width()
+            h_alloc = widget.get_allocated_height()
+            w_img = self.scaled_capture_pixbuf.get_width()
+            h_img = self.scaled_capture_pixbuf.get_height()
+            off_x = (w_alloc - w_img) / 2
+            off_y = (h_alloc - h_img) / 2
+            
+            cr.save()
+            Gdk.cairo_set_source_pixbuf(cr, self.scaled_capture_pixbuf, off_x, off_y)
+            cr.paint()
+            cr.restore()
+            
+            # Draw selection border
+            if self.is_dragging_capture and self.capture_rect_start and self.capture_rect_end:
+                cr.set_source_rgba(0, 1, 0, 0.8)
+                cr.set_line_width(2)
+                x = min(self.capture_rect_start[0], self.capture_rect_end[0])
+                y = min(self.capture_rect_start[1], self.capture_rect_end[1])
+                w = abs(self.capture_rect_start[0] - self.capture_rect_end[0])
+                h = abs(self.capture_rect_start[1] - self.capture_rect_end[1])
+                cr.rectangle(x, y, w, h)
+                cr.stroke()
+            elif hasattr(self, 'capture_rect_raw') and self.capture_rect_raw is not None and self.capture_preview_pixbuf is not None:
+                x1_raw, y1_raw, x2_raw, y2_raw = self.capture_rect_raw
+                w_orig = self.capture_preview_pixbuf.get_width()
+                h_orig = self.capture_preview_pixbuf.get_height()
+                scale = min(w_alloc / w_orig, h_alloc / h_orig)
+                off_x = (w_alloc - w_orig * scale) / 2
+                off_y = (h_alloc - h_orig * scale) / 2
+                
+                cr.set_source_rgba(0, 1, 0, 0.8)
+                cr.set_line_width(2)
+                x = x1_raw * scale + off_x
+                y = y1_raw * scale + off_y
+                w = (x2_raw - x1_raw) * scale
+                h = (y2_raw - y1_raw) * scale
+                cr.rectangle(x, y, w, h)
+                cr.stroke()
+
+    def on_draw_base(self, widget, cr):
+        if hasattr(self, 'scaled_base_pixbuf') and self.scaled_base_pixbuf is not None:
+            w_alloc = widget.get_allocated_width()
+            h_alloc = widget.get_allocated_height()
+            w_img = self.scaled_base_pixbuf.get_width()
+            h_img = self.scaled_base_pixbuf.get_height()
+            off_x = (w_alloc - w_img) / 2
+            off_y = (h_alloc - h_img) / 2
+            
+            cr.save()
+            Gdk.cairo_set_source_pixbuf(cr, self.scaled_base_pixbuf, off_x, off_y)
+            cr.paint()
+            cr.restore()
+            
+            if self.is_dragging_base and self.base_rect_start and self.base_rect_end:
+                cr.set_source_rgba(0, 1, 0, 0.8)
+                cr.set_line_width(2)
+                x = min(self.base_rect_start[0], self.base_rect_end[0])
+                y = min(self.base_rect_start[1], self.base_rect_end[1])
+                w = abs(self.base_rect_start[0] - self.base_rect_end[0])
+                h = abs(self.base_rect_start[1] - self.base_rect_end[1])
+                cr.rectangle(x, y, w, h)
+                cr.stroke()
+            elif hasattr(self, 'base_rect_raw') and self.base_rect_raw is not None and self.base_preview_pixbuf is not None:
+                x1_raw, y1_raw, x2_raw, y2_raw = self.base_rect_raw
+                w_orig = self.base_preview_pixbuf.get_width()
+                h_orig = self.base_preview_pixbuf.get_height()
+                scale = min(w_alloc / w_orig, h_alloc / h_orig)
+                off_x = (w_alloc - w_orig * scale) / 2
+                off_y = (h_alloc - h_orig * scale) / 2
+                
+                cr.set_source_rgba(0, 1, 0, 0.8)
+                cr.set_line_width(2)
+                x = x1_raw * scale + off_x
+                y = y1_raw * scale + off_y
+                w = (x2_raw - x1_raw) * scale
+                h = (y2_raw - y1_raw) * scale
+                cr.rectangle(x, y, w, h)
+                cr.stroke()
+
+    # Mouse events
+    def on_base_press(self, w, e):
+        self.is_dragging_base = True
+        self.base_rect_start = (e.x, e.y)
+        self.base_rect_end = (e.x, e.y)
+        self.base_rect_raw = None
+        self.base_image_area.queue_draw()
+
+    def on_base_motion(self, w, e):
+        if self.is_dragging_base:
+            self.base_rect_end = (e.x, e.y)
+            self.base_image_area.queue_draw()
+
+    def on_base_release(self, w, e):
+        if self.is_dragging_base:
+            self.is_dragging_base = False
+            self.base_rect_end = (e.x, e.y)
+            
+            if self.base_preview_pixbuf:
+                w_alloc = self.base_image_area.get_allocated_width()
+                h_alloc = self.base_image_area.get_allocated_height()
+                w_img = self.base_preview_pixbuf.get_width()
+                h_img = self.base_preview_pixbuf.get_height()
+                scale = min(w_alloc / w_img, h_alloc / h_img)
+                off_x = (w_alloc - w_img * scale) / 2
+                off_y = (h_alloc - h_img * scale) / 2
+                
+                x1 = int((min(self.base_rect_start[0], self.base_rect_end[0]) - off_x) / scale)
+                x2 = int((max(self.base_rect_start[0], self.base_rect_end[0]) - off_x) / scale)
+                y1 = int((min(self.base_rect_start[1], self.base_rect_end[1]) - off_y) / scale)
+                y2 = int((max(self.base_rect_start[1], self.base_rect_end[1]) - off_y) / scale)
+                
+                if x2 > x1 and y2 > y1:
+                    self.base_rect_raw = (x1, y1, x2, y2)
+                else:
+                    self.base_rect_raw = None
+            else:
+                self.base_rect_raw = None
+                
+            self.base_image_area.queue_draw()
+            if self.notebook.get_current_page() == 1:
+                self.update_base_histograms()
+
+    def on_capture_press(self, w, e):
+        self.is_dragging_capture = True
+        self.capture_rect_start = (e.x, e.y)
+        self.capture_rect_end = (e.x, e.y)
+        self.capture_rect_raw = None
+        self.capture_image_area.queue_draw()
+
+    def on_capture_motion(self, w, e):
+        if self.is_dragging_capture:
+            self.capture_rect_end = (e.x, e.y)
+            self.capture_image_area.queue_draw()
+
+    def on_capture_release(self, w, e):
+        if self.is_dragging_capture:
+            self.is_dragging_capture = False
+            self.capture_rect_end = (e.x, e.y)
+            
+            if self.capture_preview_pixbuf:
+                w_alloc = self.capture_image_area.get_allocated_width()
+                h_alloc = self.capture_image_area.get_allocated_height()
+                w_img = self.capture_preview_pixbuf.get_width()
+                h_img = self.capture_preview_pixbuf.get_height()
+                scale = min(w_alloc / w_img, h_alloc / h_img)
+                off_x = (w_alloc - w_img * scale) / 2
+                off_y = (h_alloc - h_img * scale) / 2
+                
+                x1 = int((min(self.capture_rect_start[0], self.capture_rect_end[0]) - off_x) / scale)
+                x2 = int((max(self.capture_rect_start[0], self.capture_rect_end[0]) - off_x) / scale)
+                y1 = int((min(self.capture_rect_start[1], self.capture_rect_end[1]) - off_y) / scale)
+                y2 = int((max(self.capture_rect_start[1], self.capture_rect_end[1]) - off_y) / scale)
+                
+                if x2 > x1 and y2 > y1:
+                    self.capture_rect_raw = (x1, y1, x2, y2)
+                else:
+                    self.capture_rect_raw = None
+            else:
+                self.capture_rect_raw = None
+                
+            self.capture_image_area.queue_draw()
+            if self.notebook.get_current_page() == 0:
+                self.update_capture_histograms()
+
+    def on_save_tiff(self, btn):
+        if not self.raw_image:
+            return
+        
         dialog = Gtk.FileChooserDialog(
-            title="Save Image to TIFF",
-            parent=self,
-            action=Gtk.FileChooserAction.SAVE
+            title="Save TIFF", parent=self, action=Gtk.FileChooserAction.SAVE
         )
-        dialog.add_buttons(
-            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-            Gtk.STOCK_SAVE, Gtk.ResponseType.OK
-        )
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_SAVE, Gtk.ResponseType.OK)
         dialog.set_do_overwrite_confirmation(True)
-
-        raw_paths = self.last_captured_image.filepaths
+        
+        raw_paths = self.raw_image.filepaths
         if raw_paths:
             base = os.path.splitext(os.path.basename(raw_paths[0]))[0]
             if len(raw_paths) == 4:
                 base += "_merged"
             default_filename = f"{base}.tiff"
         else:
-            default_filename = "captured_image.tiff"
+            default_filename = "capture.tiff"
         dialog.set_current_name(default_filename)
-
-        filter_tiff = Gtk.FileFilter()
-        filter_tiff.set_name("TIFF images")
-        filter_tiff.add_pattern("*.tiff")
-        filter_tiff.add_pattern("*.tif")
-        dialog.add_filter(filter_tiff)
-
-        response = dialog.run()
-        if response == Gtk.ResponseType.OK:
+        
+        if dialog.run() == Gtk.ResponseType.OK:
             filepath = dialog.get_filename()
             dialog.destroy()
-
-            # Save in a background thread to keep UI responsive
-            self.capture_button.set_sensitive(False)
+            
+            self.lbl_status.set_text("Saving TIFF image...")
+            self.btn_cap_img.set_sensitive(False)
+            self.btn_cap_base.set_sensitive(False)
             self.btn_save_tiff.set_sensitive(False)
             self.spinner.start()
-            self.status_label.set_text("Status: Saving TIFF image...")
-
-            # Get current crosstalk matrix if checkbox is checked
-            matrix = None
-            if self.cc_checkbox.get_active() and self.correction_matrix is not None:
-                matrix = [val for row in self.correction_matrix for val in row]
-
-            def save_thread():
+            
+            def save_task():
                 try:
                     t_start = time.time()
-                    # Write TIFF using full resolution (half=False)
-                    success = self.last_captured_image.write_tiff(
-                        filepath,
-                        half=False,
-                        crosstalk_matrix=matrix
-                    )
-                    t_dur = time.time() - t_start
-                    if success:
-                        GLib.idle_add(self.on_save_tiff_success, filepath, t_dur)
+                    if self.film_base_rgb and self.profile and self.has_icc:
+                        prof_data = json.loads(json.dumps(self.profile.raw_data))
+                        if 'targets' in prof_data and self.selected_target_idx < len(prof_data['targets']):
+                            prof_data['targets'] = [prof_data['targets'][self.selected_target_idx]]
+                            tgt = prof_data['targets'][0]
+                            if 'icc_profile_base64' in tgt:
+                                prof_data['icc_profile_base64'] = tgt['icc_profile_base64']
+                        temp_profile = FilmProfile(prof_data)
+                        if getattr(self.profile, 'icc_profile_bytes', None):
+                            temp_profile.icc_profile_bytes = self.profile.icc_profile_bytes
+                            
+                        color_conversion.convert_raw_to_tiff(
+                            img=self.raw_image, profile=temp_profile, output_path=filepath,
+                            exposure_comp=self.gain, half=False, film_base_rgb=self.film_base_rgb
+                        )
                     else:
-                        GLib.idle_add(self.update_ui_failure, "C++ write_tiff returned false.")
+                        matrix = None
+                        if self.profile and self.has_crosstalk:
+                            matrix = [val for row in self.profile.crosstalk_matrix for val in row]
+                        self.raw_image.write_tiff(filepath, half=False, crosstalk_matrix=matrix)
+                        
+                    tag_val = get_exif_orientation(self.hflip, self.vflip, self.orientation)
+                    set_tiff_orientation_inplace(filepath, tag_val)
+                    
+                    t_dur = time.time() - t_start
+                    GLib.idle_add(self.on_save_success, filepath, t_dur)
                 except Exception as e:
-                    GLib.idle_add(self.update_ui_failure, f"Error saving TIFF: {str(e)}")
-
-            thread = threading.Thread(target=save_thread)
-            thread.daemon = True
-            thread.start()
+                    import traceback
+                    print(f"Save error: {e}", file=sys.stdout)
+                    traceback.print_exc(file=sys.stdout)
+                    sys.stdout.flush()
+                    GLib.idle_add(self.update_ui_failure, f"Save Error: {e}")
+            
+            t = threading.Thread(target=save_task)
+            t.daemon = True
+            t.start()
         else:
             dialog.destroy()
 
-    def on_save_tiff_success(self, filepath, duration):
+    def on_save_success(self, filepath, duration):
         self.spinner.stop()
-        self.capture_button.set_sensitive(self.is_connected)
+        self.btn_cap_img.set_sensitive(self.is_connected)
+        self.btn_cap_base.set_sensitive(self.is_connected)
         self.btn_save_tiff.set_sensitive(True)
-        self.mode_combo.set_sensitive(True)
-        self.shutter_combo.set_sensitive(not self.ae_checkbox.get_active())
-        self.ae_checkbox.set_sensitive(True)
-
-        filename = os.path.basename(filepath)
-        self.status_label.set_text(f"Status: Saved {filename} in {duration:.2f}s")
-
-        # Show success dialog
+        self.lbl_status.set_text(f"Status: Saved {os.path.basename(filepath)} in {duration:.2f}s")
+        
         dialog = Gtk.MessageDialog(
             transient_for=self,
             flags=0,
@@ -1336,10 +1408,39 @@ class ScanningAppWindow(Gtk.Window):
         dialog.run()
         dialog.destroy()
 
+    def update_ui_failure(self, error_msg):
+        self.spinner.stop()
+        self.btn_cap_img.set_sensitive(self.is_connected)
+        self.btn_cap_base.set_sensitive(self.is_connected)
+        self.mode_combo.set_sensitive(True)
+        self.shutter_combo.set_sensitive(not self.ae_checkbox.get_active())
+        self.ae_checkbox.set_sensitive(True)
+        self.btn_save_tiff.set_sensitive(self.raw_image is not None)
+        self.lbl_status.set_text(f"Status: Capture failed. See terminal.")
+
     def on_window_resized(self, widget, allocation):
-        # Dynamically scale preview on window resizing
-        if self.current_pixbuf:
-            self.refresh_preview_image()
+        if self.capture_preview_pixbuf:
+            self.refresh_capture_preview()
+        if self.base_preview_pixbuf:
+            self.refresh_base_preview()
+
+    def on_destroy(self, widget):
+        if self.raw_image:
+            try:
+                self.raw_image.discard()
+            except Exception:
+                pass
+        if self.film_base_img:
+            try:
+                self.film_base_img.discard()
+            except Exception:
+                pass
+        if self.camera_session:
+            try:
+                self.camera_session.close()
+            except Exception:
+                pass
+        Gtk.main_quit()
 
 def main():
     # Preload the Sony CrSDK shared library from the virtual environment
@@ -1349,8 +1450,8 @@ def main():
         import ctypes
         ctypes.CDLL(lib_path)
 
-    # Launch GUI
     app = ScanningAppWindow()
+    app.show_all()
     Gtk.main()
 
 if __name__ == '__main__':

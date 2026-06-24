@@ -93,11 +93,14 @@ class FilmProfile:
             self.film_name = basename
 
         # Camera name
-        self.camera_name = data.get('camera_name', 'Unknown')
+        self.camera_name = data.get('camera_name', data.get('camera_model', 'Unknown'))
 
         # Crosstalk correction matrix (3x3)
         ct_profile = data.get('crosstalk_profile', {})
         cc_matrix = ct_profile.get('crosstalk_correction_matrix', None)
+        if cc_matrix is None:
+            cc_matrix = data.get('crosstalk_correction_matrix', None)
+            
         if cc_matrix is not None:
             self.crosstalk_matrix = np.array(cc_matrix, dtype=np.float64)
         else:
@@ -106,12 +109,16 @@ class FilmProfile:
         # Targets — use first target by default
         targets = data.get('targets', [])
         if not targets:
-            raise ValueError("Profile JSON contains no targets.")
-        target = targets[0]
-        self.target_name = target.get('name', 'Target 1')
-        self.target_iso = target.get('iso', 100)
-        self.target_shutter = target.get('shutter', '1/8s')
-        self.patches = target.get('patches', {})
+            self.target_name = 'None'
+            self.target_iso = 100
+            self.target_shutter = '1/8s'
+            self.patches = {}
+        else:
+            target = targets[0]
+            self.target_name = target.get('name', 'Target 1')
+            self.target_iso = target.get('iso', 100)
+            self.target_shutter = target.get('shutter', '1/8s')
+            self.patches = target.get('patches', {})
 
         # Film base values
         fb = data.get('film_base', {})

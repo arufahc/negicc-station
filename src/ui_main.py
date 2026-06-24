@@ -9,7 +9,7 @@ from gi.repository import Gtk, Gdk, GLib
 class LauncherWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title="NEGICC Station Launcher")
-        self.set_default_size(700, 200)
+        self.set_default_size(700, 360)
         self.set_resizable(False)
         self.set_position(Gtk.WindowPosition.CENTER)
 
@@ -22,44 +22,44 @@ class LauncherWindow(Gtk.Window):
         css_provider.load_from_data(b"""
             .main-window {
                 background-color: #121212;
-                padding: 15px 20px;
+                padding: 30px;
             }
             .header-title {
                 font-family: 'Inter', 'Outfit', 'sans-serif';
-                font-size: 24px;
+                font-size: 26px;
                 font-weight: 800;
                 color: #ffffff;
             }
             .header-subtitle {
                 font-family: 'Inter', 'Outfit', 'sans-serif';
-                font-size: 12px;
+                font-size: 13px;
                 color: #888888;
-                margin-bottom: 8px;
+                margin-bottom: 25px;
             }
             .card-box {
                 background-color: #1a1a1a;
                 border: 1px solid #2e2e2e;
                 border-radius: 8px;
-                padding: 10px 12px;
+                padding: 20px;
             }
             .card-title {
                 font-family: 'Inter', 'sans-serif';
-                font-size: 15px;
+                font-size: 16px;
                 font-weight: 600;
                 color: #ffffff;
             }
             .card-desc {
                 font-family: 'Inter', 'sans-serif';
-                font-size: 11px;
+                font-size: 12px;
                 color: #aaaaaa;
             }
             .btn-action {
                 font-family: 'Inter', 'sans-serif';
-                font-size: 12px;
+                font-size: 13px;
                 font-weight: bold;
                 color: white;
                 border-radius: 6px;
-                padding: 8px 12px;
+                padding: 10px 16px;
                 border: none;
             }
             .btn-blue {
@@ -89,8 +89,6 @@ class LauncherWindow(Gtk.Window):
 
         self.init_ui()
 
-
-
     def init_ui(self):
         # Main layout container
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -98,14 +96,14 @@ class LauncherWindow(Gtk.Window):
         self.add(main_box)
 
         # Header Title
-        title_label = Gtk.Label()
-        title_label.set_markup("<span class='header-title'>NEGICC Station</span>")
+        title_label = Gtk.Label(label="NEGICC Station")
+        title_label.get_style_context().add_class("header-title")
         title_label.set_xalign(0.0)
         main_box.pack_start(title_label, False, False, 0)
 
         # Header Subtitle
-        subtitle_label = Gtk.Label()
-        subtitle_label.set_markup("<span class='header-subtitle'>Sony A7R4 Film Scanning Control Panel</span>")
+        subtitle_label = Gtk.Label(label="Sony A7R4 Film Scanning Control Panel")
+        subtitle_label.get_style_context().add_class("header-subtitle")
         subtitle_label.set_xalign(0.0)
         main_box.pack_start(subtitle_label, False, False, 0)
 
@@ -151,18 +149,18 @@ class LauncherWindow(Gtk.Window):
 
     def create_launcher_card(self, title, desc, btn_label, btn_class, target_script):
         # Card container
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         card.get_style_context().add_class("card-box")
 
         # Card Title
-        lbl_title = Gtk.Label()
-        lbl_title.set_markup(f"<span class='card-title'>{title}</span>")
+        lbl_title = Gtk.Label(label=title)
+        lbl_title.get_style_context().add_class("card-title")
         lbl_title.set_xalign(0.0)
         card.pack_start(lbl_title, False, False, 0)
 
         # Card Description
-        lbl_desc = Gtk.Label()
-        lbl_desc.set_markup(f"<span class='card-desc'>{desc}</span>")
+        lbl_desc = Gtk.Label(label=desc)
+        lbl_desc.get_style_context().add_class("card-desc")
         lbl_desc.set_line_wrap(True)
         lbl_desc.set_xalign(0.0)
         lbl_desc.set_yalign(0.0)
