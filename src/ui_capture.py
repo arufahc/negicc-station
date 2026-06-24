@@ -462,43 +462,7 @@ class ScanningAppWindow(Gtk.Window):
         self.ae_steps_frame.add(ae_steps_scroll)
         left_sidebar.pack_start(self.ae_steps_frame, False, False, 5)
         
-        # Image Metadata Box
-        meta_frame = Gtk.Frame(label="Captured Metadata")
-        self.meta_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
-        self.meta_box.set_border_width(8)
-        meta_frame.add(self.meta_box)
-        left_sidebar.pack_start(meta_frame, True, True, 5)
-        
-        self.iso_label = Gtk.Label(label="ISO: --")
-        self.iso_label.set_xalign(0.0)
-        self.iso_label.get_style_context().add_class("meta-label")
-        self.meta_box.pack_start(self.iso_label, False, False, 0)
-        
-        self.shutter_label = Gtk.Label(label="Shutter Speed: --")
-        self.shutter_label.set_xalign(0.0)
-        self.shutter_label.get_style_context().add_class("meta-label")
-        self.meta_box.pack_start(self.shutter_label, False, False, 0)
-        
-        self.size_label = Gtk.Label(label="Dimensions: --")
-        self.size_label.set_xalign(0.0)
-        self.size_label.get_style_context().add_class("meta-label")
-        self.meta_box.pack_start(self.size_label, False, False, 0)
-        
-        self.files_label = Gtk.Label(label="RAW Path(s): --")
-        self.files_label.set_xalign(0.0)
-        self.files_label.set_line_wrap(True)
-        self.files_label.get_style_context().add_class("meta-label")
-        self.meta_box.pack_start(self.files_label, False, False, 0)
-        
-        self.capture_time_label = Gtk.Label(label="Capture Duration: --")
-        self.capture_time_label.set_xalign(0.0)
-        self.capture_time_label.get_style_context().add_class("meta-label")
-        self.meta_box.pack_start(self.capture_time_label, False, False, 0)
-        
-        self.convert_time_label = Gtk.Label(label="Conversion Duration: --")
-        self.convert_time_label.set_xalign(0.0)
-        self.convert_time_label.get_style_context().add_class("meta-label")
-        self.meta_box.pack_start(self.convert_time_label, False, False, 0)
+
 
         # Spinner & status display
         status_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
@@ -987,14 +951,13 @@ class ScanningAppWindow(Gtk.Window):
                         select.select_path(Gtk.TreePath.new_from_indices([i]))
                         break
                         
-            # Update labels
-            self.iso_label.set_text(f"ISO: {img_obj.iso}")
-            self.shutter_label.set_text(f"Shutter Speed: {img_obj.shutter_speed:.4f}s")
+            # Print captured metadata, capture duration, and preview conversion to stdout
+            paths_str = ", ".join(img_obj.filepaths)
             h, w = raw_linear.shape[:2]
-            self.size_label.set_text(f"Dimensions: {w} x {h} (Half-size)")
-            self.files_label.set_text("RAW Filepath(s):\n" + "\n".join(img_obj.filepaths))
-            self.capture_time_label.set_text(f"Capture Duration: {capture_duration:.3f}s")
-            self.convert_time_label.set_text(f"Conversion Duration: {conv_duration:.3f}s")
+            print(f"[Capture] Filepath(s): {paths_str}", file=sys.stdout)
+            print(f"[Capture] ISO: {img_obj.iso} | Shutter: {img_obj.shutter_speed:.4f}s | Dimensions: {w}x{h}", file=sys.stdout)
+            print(f"[Capture] Capture Duration: {capture_duration:.3f}s | Conversion Duration: {conv_duration:.3f}s", file=sys.stdout)
+            sys.stdout.flush()
             
             self.update_capture_preview()
             self.notebook.set_current_page(0)
@@ -1301,20 +1264,42 @@ class ScanningAppWindow(Gtk.Window):
             # Draw captured metadata overlay (top-right)
             if self.raw_image and self.raw_linear_pixels is not None:
                 h_p, w_p = self.raw_linear_pixels.shape[:2]
-                meta_text = f"ISO {self.raw_image.iso} | {self.raw_image.shutter_speed:.4f}s | {w_p}x{h_p}"
+                paths_str = ", ".join(self.raw_image.filepaths)
+                lines = [
+                    f"ISO {self.raw_image.iso} | {self.raw_image.shutter_speed:.4f}s | {w_p}x{h_p}",
+                    paths_str
+                ]
+                
                 cr.save()
                 cr.select_font_face("Inter", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
                 cr.set_font_size(10)
-                extents_m = cr.text_extents(meta_text)
-                box_w_m = extents_m.width + 16
-                box_h_m = extents_m.height + 10
+                
+                max_w = 0
+                line_heights = []
+                for line in lines:
+                    ext = cr.text_extents(line)
+                    if ext.width > max_w:
+                        max_w = ext.width
+                    line_heights.append(ext.height)
+                
+                box_w_m = max_w + 16
+                spacing = 4
+                total_text_height = sum(line_heights) + spacing * (len(lines) - 1)
+                box_h_m = total_text_height + 10
+                
                 x_pos = off_x + w_img - box_w_m - 10
                 cr.set_source_rgba(0.08, 0.08, 0.08, 0.75)
                 cr.rectangle(x_pos, off_y + 10, box_w_m, box_h_m)
                 cr.fill()
+                
                 cr.set_source_rgb(0.9, 0.9, 0.9)
-                cr.move_to(x_pos + 8, off_y + 10 + 5 + extents_m.height)
-                cr.show_text(meta_text)
+                curr_y = off_y + 10 + 5
+                for i, line in enumerate(lines):
+                    curr_y += line_heights[i]
+                    cr.move_to(x_pos + 8, curr_y)
+                    cr.show_text(line)
+                    curr_y += spacing
+                    
                 cr.restore()
 
     def on_draw_base(self, widget, cr):
@@ -1380,20 +1365,42 @@ class ScanningAppWindow(Gtk.Window):
             # Draw captured metadata overlay (top-right)
             if self.film_base_img and self.film_base_raw_linear is not None:
                 h_p, w_p = self.film_base_raw_linear.shape[:2]
-                meta_text = f"ISO {self.film_base_img.iso} | {self.film_base_img.shutter_speed:.4f}s | {w_p}x{h_p}"
+                paths_str = ", ".join(self.film_base_img.filepaths)
+                lines = [
+                    f"ISO {self.film_base_img.iso} | {self.film_base_img.shutter_speed:.4f}s | {w_p}x{h_p}",
+                    paths_str
+                ]
+                
                 cr.save()
                 cr.select_font_face("Inter", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
                 cr.set_font_size(10)
-                extents_m = cr.text_extents(meta_text)
-                box_w_m = extents_m.width + 16
-                box_h_m = extents_m.height + 10
+                
+                max_w = 0
+                line_heights = []
+                for line in lines:
+                    ext = cr.text_extents(line)
+                    if ext.width > max_w:
+                        max_w = ext.width
+                    line_heights.append(ext.height)
+                
+                box_w_m = max_w + 16
+                spacing = 4
+                total_text_height = sum(line_heights) + spacing * (len(lines) - 1)
+                box_h_m = total_text_height + 10
+                
                 x_pos = off_x + w_img - box_w_m - 10
                 cr.set_source_rgba(0.08, 0.08, 0.08, 0.75)
                 cr.rectangle(x_pos, off_y + 10, box_w_m, box_h_m)
                 cr.fill()
+                
                 cr.set_source_rgb(0.9, 0.9, 0.9)
-                cr.move_to(x_pos + 8, off_y + 10 + 5 + extents_m.height)
-                cr.show_text(meta_text)
+                curr_y = off_y + 10 + 5
+                for i, line in enumerate(lines):
+                    curr_y += line_heights[i]
+                    cr.move_to(x_pos + 8, curr_y)
+                    cr.show_text(line)
+                    curr_y += spacing
+                    
                 cr.restore()
 
     # Mouse events
@@ -1625,18 +1632,9 @@ class ScanningAppWindow(Gtk.Window):
         self.btn_cap_img.set_sensitive(self.is_connected)
         self.btn_cap_base.set_sensitive(self.is_connected)
         self.btn_save_tiff.set_sensitive(True)
-        self.lbl_status.set_text(f"Status: Saved {os.path.basename(filepath)} in {duration:.2f}s")
-        
-        dialog = Gtk.MessageDialog(
-            transient_for=self,
-            flags=0,
-            message_type=Gtk.MessageType.INFO,
-            buttons=Gtk.ButtonsType.OK,
-            text="Save Successful"
-        )
-        dialog.format_secondary_text(f"Image saved successfully to:\n{filepath}\n\nTime taken: {duration:.2f}s")
-        dialog.run()
-        dialog.destroy()
+        self.lbl_status.set_text(f"Status: Saved {os.path.basename(filepath)}.")
+        print(f"[Save TIFF] Image saved successfully to: {filepath} | Time taken: {duration:.2f}s", file=sys.stdout)
+        sys.stdout.flush()
 
     def update_ui_failure(self, error_msg):
         self.spinner.stop()
