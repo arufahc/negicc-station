@@ -502,7 +502,7 @@ class ScanningAppWindow(Gtk.Window):
         # ================= RIGHT SIDEBAR =================
         right_sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         right_sidebar.get_style_context().add_class("sidebar")
-        right_sidebar.set_size_request(440, -1)
+        right_sidebar.set_size_request(540, -1)
         main_box.pack_start(right_sidebar, False, False, 0)
         
         lbl_hist_raw = Gtk.Label(label="RAW Linear (Uncorrected)")
