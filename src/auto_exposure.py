@@ -57,6 +57,14 @@ def calculate_dynamic_range(arr):
     # Exclude 5% borders
     cropped = arr[h_border:H-h_border, w_border:W-w_border, :]
     
+    # Decimate if cropped array is large to make percentile calculations lightning fast
+    cH, cW = cropped.shape[:2]
+    total_pixels = cH * cW
+    if total_pixels > 200000:
+        step = int(np.sqrt(total_pixels / 200000))
+        step = max(1, step)
+        cropped = cropped[::step, ::step, :]
+        
     OVEREXPOSURE_THRESHOLD = 13107.2  # 80% of 16384
     
     dr_channels = []

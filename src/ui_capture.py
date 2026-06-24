@@ -117,7 +117,8 @@ def apply_transforms_numpy(img_array, hflip, vflip, rot_cw):
 class HistogramCanvas(Gtk.Box):
     def __init__(self):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
-        self.figure = Figure(figsize=(3, 1.8), dpi=100)
+        # Enforce 3:2 width-to-height ratio (2:3 height-to-width)
+        self.figure = Figure(figsize=(3.0, 2.0), dpi=100)
         self.figure.patch.set_facecolor('#1e1e1e')
         self.canvas = FigureCanvas(self.figure)
         self.pack_start(self.canvas, True, True, 0)
@@ -131,12 +132,13 @@ class HistogramCanvas(Gtk.Box):
         self.ax.grid(True, color='#2c2c2c', linestyle='--', linewidth=0.5)
         self.figure.tight_layout()
         
-        # Connect size-allocate to dynamically force height as a ratio of width (aspect ratio 55%)
+        # Connect size-allocate to dynamically force height as a 2:3 ratio of width
         self.canvas.connect("size-allocate", self.on_size_allocate)
 
     def on_size_allocate(self, widget, allocation):
-        target_height = int(allocation.width * 0.55)
-        target_height = max(120, target_height)
+        # Enforce 2:3 height-to-width ratio
+        target_height = int(allocation.width * 2 // 3)
+        target_height = max(100, target_height)
         if widget.get_size_request()[1] != target_height:
             widget.set_size_request(-1, target_height)
 
@@ -154,12 +156,22 @@ class HistogramCanvas(Gtk.Box):
             self.canvas.draw_idle()
             return
             
+        # Decimate large data arrays for extremely fast plotting and percentile calculations
+        H, W = data.shape[:2]
+        total_pixels = H * W
+        if total_pixels > 200000:
+            step = int(np.sqrt(total_pixels / 200000))
+            step = max(1, step)
+            data_sampled = data[::step, ::step, :]
+        else:
+            data_sampled = data
+            
         max_val = 65535 if (is_corrected and has_icc) else 16384
         
         bins = 256
-        hist_r, _ = np.histogram(data[:, :, 0], bins=bins, range=(0, max_val))
-        hist_g, _ = np.histogram(data[:, :, 1], bins=bins, range=(0, max_val))
-        hist_b, _ = np.histogram(data[:, :, 2], bins=bins, range=(0, max_val))
+        hist_r, _ = np.histogram(data_sampled[:, :, 0], bins=bins, range=(0, max_val))
+        hist_g, _ = np.histogram(data_sampled[:, :, 1], bins=bins, range=(0, max_val))
+        hist_b, _ = np.histogram(data_sampled[:, :, 2], bins=bins, range=(0, max_val))
         max_hist_val = max(hist_r.max(), hist_g.max(), hist_b.max(), 1)
         
         hist_r_norm = hist_r / max_hist_val
@@ -186,10 +198,10 @@ class HistogramCanvas(Gtk.Box):
                          bbox=dict(boxstyle='round,pad=0.15', facecolor='#121212', alpha=0.6, edgecolor='none'))
 
         # Calculate percentiles and metrics excluding 5% borders
-        H, W, C = data.shape
-        h_border = int(H * 0.05)
-        w_border = int(W * 0.05)
-        cropped = data[h_border:H-h_border, w_border:W-w_border, :]
+        H_s, W_s, C_s = data_sampled.shape
+        h_border = int(H_s * 0.05)
+        w_border = int(W_s * 0.05)
+        cropped = data_sampled[h_border:H_s-h_border, w_border:W_s-w_border, :]
         
         p2_r = float(np.percentile(cropped[:, :, 0], 2))
         p98_r = float(np.percentile(cropped[:, :, 0], 98))
@@ -484,12 +496,12 @@ class ScanningAppWindow(Gtk.Window):
         lbl_hist_raw = Gtk.Label(label="RAW Linear (Uncorrected)")
         right_sidebar.pack_start(lbl_hist_raw, False, False, 0)
         self.hist_raw = HistogramCanvas()
-        right_sidebar.pack_start(self.hist_raw, True, True, 0)
+        right_sidebar.pack_start(self.hist_raw, False, False, 0)
         
         lbl_hist_corr = Gtk.Label(label="Corrected Preview")
         right_sidebar.pack_start(lbl_hist_corr, False, False, 0)
         self.hist_corr = HistogramCanvas()
-        right_sidebar.pack_start(self.hist_corr, True, True, 0)
+        right_sidebar.pack_start(self.hist_corr, False, False, 0)
         
         # Dynamic Range per channel display
         self.lbl_dr = Gtk.Label()
@@ -1141,7 +1153,17 @@ class ScanningAppWindow(Gtk.Window):
             self.lbl_dr.set_text("")
             return
         
-        avg_dr, (dr_r, dr_g, dr_b) = auto_exposure.calculate_dynamic_range(raw_data)
+        # Decimate if raw_data is large to ensure snappy UI responsiveness
+        H, W = raw_data.shape[:2]
+        total_pixels = H * W
+        if total_pixels > 200000:
+            step = int(np.sqrt(total_pixels / 200000))
+            step = max(1, step)
+            raw_data_sampled = raw_data[::step, ::step, :]
+        else:
+            raw_data_sampled = raw_data
+            
+        avg_dr, (dr_r, dr_g, dr_b) = auto_exposure.calculate_dynamic_range(raw_data_sampled)
         
         def fmt(v):
             return "<span foreground='#ff6666'><b>Overexposed</b></span>" if v < 0 else f"{v:.0f}"
