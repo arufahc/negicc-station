@@ -9,7 +9,7 @@ from gi.repository import Gtk, Gdk, GLib
 class LauncherWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title="NEGICC Station Launcher")
-        self.set_default_size(700, 360)
+        self.set_default_size(480, 520)
         self.set_resizable(False)
         self.set_position(Gtk.WindowPosition.CENTER)
 
@@ -22,40 +22,40 @@ class LauncherWindow(Gtk.Window):
         css_provider.load_from_data(b"""
             .main-window {
                 background-color: #121212;
-                padding: 30px;
+                padding: 25px;
             }
             .header-title {
                 font-family: 'Inter', 'Outfit', 'sans-serif';
-                font-size: 26px;
+                font-size: 22px;
                 font-weight: 800;
                 color: #ffffff;
             }
             .header-subtitle {
                 font-family: 'Inter', 'Outfit', 'sans-serif';
-                font-size: 13px;
+                font-size: 12px;
                 color: #888888;
-                margin-bottom: 25px;
+                margin-bottom: 20px;
             }
             .card-box {
                 background-color: #1a1a1a;
                 border: 1px solid #2e2e2e;
                 border-radius: 8px;
-                padding: 20px;
+                padding: 15px 20px;
             }
             .card-title {
                 font-family: 'Inter', 'sans-serif';
-                font-size: 16px;
+                font-size: 15px;
                 font-weight: 600;
                 color: #ffffff;
             }
             .card-desc {
                 font-family: 'Inter', 'sans-serif';
-                font-size: 12px;
+                font-size: 11px;
                 color: #aaaaaa;
             }
             .btn-action {
                 font-family: 'Inter', 'sans-serif';
-                font-size: 13px;
+                font-size: 12px;
                 font-weight: bold;
                 color: white;
                 border-radius: 6px;
@@ -107,8 +107,8 @@ class LauncherWindow(Gtk.Window):
         subtitle_label.set_xalign(0.0)
         main_box.pack_start(subtitle_label, False, False, 0)
 
-        # Cards container (Horizontal)
-        cards_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
+        # Cards container (Vertical Stack)
+        cards_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         main_box.pack_start(cards_box, True, True, 0)
 
         # Script paths resolved relative to this script
@@ -148,15 +148,18 @@ class LauncherWindow(Gtk.Window):
         self.show_all()
 
     def create_launcher_card(self, title, desc, btn_label, btn_class, target_script):
-        # Card container
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        # Card container (Horizontal for side-by-side alignment of text and button)
+        card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
         card.get_style_context().add_class("card-box")
+
+        # Vertical text box for Title and Description
+        text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
 
         # Card Title
         lbl_title = Gtk.Label(label=title)
         lbl_title.get_style_context().add_class("card-title")
         lbl_title.set_xalign(0.0)
-        card.pack_start(lbl_title, False, False, 0)
+        text_box.pack_start(lbl_title, False, False, 0)
 
         # Card Description
         lbl_desc = Gtk.Label(label=desc)
@@ -164,14 +167,20 @@ class LauncherWindow(Gtk.Window):
         lbl_desc.set_line_wrap(True)
         lbl_desc.set_xalign(0.0)
         lbl_desc.set_yalign(0.0)
-        card.pack_start(lbl_desc, True, True, 0)
+        text_box.pack_start(lbl_desc, True, True, 0)
 
-        # Launch Button
+        card.pack_start(text_box, True, True, 0)
+
+        # Launch Button vertical container to handle alignment
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         btn = Gtk.Button(label=btn_label)
         btn.get_style_context().add_class("btn-action")
         btn.get_style_context().add_class(btn_class)
+        btn.set_valign(Gtk.Align.CENTER)
         btn.connect("clicked", self.on_launch_clicked, target_script)
-        card.pack_end(btn, False, False, 0)
+        btn_box.pack_start(btn, True, False, 0)
+        
+        card.pack_end(btn_box, False, False, 0)
 
         return card
 
