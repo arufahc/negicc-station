@@ -1,8 +1,10 @@
 import numpy as np
 
-def find_best_target_index(profile, raw_image, film_base_rgb):
+def find_best_target_index(profile, raw_image, film_base_rgb, scan_shutter=None, scan_iso=100, base_shutter=None, base_iso=100):
     """
     Selects the best target from a FilmProfile based on the dynamic range of the raw image.
+    Adjusts raw measurements by the exposure ratio between the captured scan and the film base
+    to ensure transmittance calculations are physically correct.
     """
     if not hasattr(profile, 'raw_data') or 'targets' not in profile.raw_data:
         return 0, 0.0 # Default to first target if no targets list
@@ -41,9 +43,30 @@ def find_best_target_index(profile, raw_image, film_base_rgb):
     fb_g = film_base_rgb[1]
     if fb_g <= 0:
         fb_g = 1.0 # Prevent division by zero
+
+    # Compute exposure ratio: exposure_base / exposure_scan
+    t_scan = scan_shutter if scan_shutter is not None else 1.0
+    iso_scan = scan_iso if scan_iso is not None else 100
+    
+    if base_shutter is not None:
+        t_base = base_shutter
+        iso_base = base_iso if base_iso is not None else 100
+    else:
+        film_base_shutter = getattr(profile, 'film_base_shutter', None)
+        if film_base_shutter:
+            from auto_exposure import parse_shutter_speed
+            base_num, base_den = parse_shutter_speed(film_base_shutter)
+            t_base = base_num / base_den
+        else:
+            t_base = 1.0
+        iso_base = getattr(profile, 'film_base_iso', 100)
+
+    exposure_base = t_base * (iso_base / 100.0)
+    exposure_scan = t_scan * (iso_scan / 100.0)
+    exposure_ratio = exposure_base / exposure_scan if exposure_scan > 0 else 1.0
         
-    t_2 = p2 / fb_g
-    t_98 = p98 / fb_g
+    t_2 = (p2 / fb_g) * exposure_ratio
+    t_98 = (p98 / fb_g) * exposure_ratio
     
     best_target_idx = 0
     min_dist_to_mid_grey = float('inf')

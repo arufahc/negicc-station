@@ -939,7 +939,15 @@ class ScanningAppWindow(Gtk.Window):
             self.entry_gain.set_text(f"{self.gain:.2f}")
             
             if self.film_base_rgb is not None and self.profile is not None and len(self.target_liststore) > 0:
-                best_idx, dist = find_best_target_index(self.profile, raw_linear, self.film_base_rgb)
+                scan_shutter = img_obj.shutter_speed
+                scan_iso = img_obj.iso
+                base_shutter = self.film_base_img.shutter_speed if self.film_base_img else None
+                base_iso = self.film_base_img.iso if self.film_base_img else 100
+                best_idx, dist = find_best_target_index(
+                    self.profile, raw_linear, self.film_base_rgb,
+                    scan_shutter=scan_shutter, scan_iso=scan_iso,
+                    base_shutter=base_shutter, base_iso=base_iso
+                )
                 self.selected_target_idx = best_idx
                 
                 for row in self.target_liststore:
@@ -1095,7 +1103,8 @@ class ScanningAppWindow(Gtk.Window):
                     
                 res = color_conversion.convert_raw_to_tiff(
                     img=self.raw_image, profile=temp_profile, output_path="",
-                    exposure_comp=self.gain, half=True, film_base_rgb=self.film_base_rgb
+                    exposure_comp=self.gain, half=True, film_base_rgb=self.film_base_rgb,
+                    film_base_img=self.film_base_img
                 )
                 img_array = res
                 corr_hist_array = res
@@ -1601,7 +1610,8 @@ class ScanningAppWindow(Gtk.Window):
                             
                         color_conversion.convert_raw_to_tiff(
                             img=self.raw_image, profile=temp_profile, output_path=filepath,
-                            exposure_comp=self.gain, half=False, film_base_rgb=self.film_base_rgb
+                            exposure_comp=self.gain, half=False, film_base_rgb=self.film_base_rgb,
+                            film_base_img=self.film_base_img
                         )
                     else:
                         matrix = None
