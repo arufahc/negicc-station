@@ -10,7 +10,7 @@ This repository contains the software for a negative film scanning station desig
   * [image_capture.cpp](src/image_capture.cpp): CapturedImage definition and linear TIFF writer.
   * [python_bindings.cpp](src/python_bindings.cpp): CPython bindings exposing tethered capture and raw conversion to Python.
   * [sample_capture_tiff.py](src/sample_capture_tiff.py): Simple command-line capture example.
-  * [sample_ui.py](src/sample_ui.py): PyGObject/GTK3 desktop UI application for scanner control and preview.
+  * [ui_capture.py](src/ui_capture.py): PyGObject/GTK3 desktop UI application for scanner control and preview.
 * **[tests/](tests/)**: Integration tests ([test_cpython.py](tests/test_cpython.py) and [test_live_parity.py](tests/test_live_parity.py)).
 * **[test_imgs/](test_imgs/)**: reference RAW images stored using LZMA compression ([test_capture_ref.ARW.xz](test_imgs/test_capture_ref.ARW.xz)).
 * **[3rd_party/](3rd_party/)**: Local third-party dependencies, minimal headers, and SDK configuration.
@@ -134,7 +134,7 @@ make
 ./venv/bin/python3 src/ui_crosstalk_correction.py
 
 # Run the basic scanner control UI
-./venv/bin/python3 src/sample_ui.py
+./venv/bin/python3 src/ui_capture.py
 ```
 
 ---

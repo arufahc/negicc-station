@@ -114,7 +114,7 @@ Refer to the following source files for implementation details:
 - [image_capture.h](src/image_capture.h): C++ CapturedImage interface representing camera parameters, captured raw file locations, and linear RGB/TIFF conversion routines.
 - [image_capture.cpp](src/image_capture.cpp): Core implementation of single and pixel-shift linear conversions, including 2x2 downsampling.
 - [python_bindings.cpp](src/python_bindings.cpp): CPython glue code exposing `negicc_station.capture()`, `negicc_station.CapturedImage`, and C-API NumPy array generation.
-- [sample_ui.py](src/sample_ui.py): PyGObject/GTK3 desktop graphical interface demonstrating real-time camera controls, preview rendering, and timing diagnostics.
+- [ui_capture.py](src/ui_capture.py): PyGObject/GTK3 desktop graphical interface demonstrating real-time camera controls, preview rendering, and timing diagnostics.
 
 ---
 
