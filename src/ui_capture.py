@@ -244,6 +244,74 @@ def apply_transforms_numpy(img_array, hflip, vflip, rot_cw):
     elif rot_cw == 270: img_array = np.rot90(img_array, -3)
     return img_array
 
+def map_raw_to_transformed_coords(x_raw, y_raw, w_raw, h_raw, hflip, vflip, rot_cw):
+    x, y = x_raw, y_raw
+    w, h = w_raw, h_raw
+    if hflip:
+        x = w - 1 - x
+    if vflip:
+        y = h - 1 - y
+    if rot_cw == 90:
+        x_new = h - 1 - y
+        y_new = x
+        w, h = h, w
+        x, y = x_new, y_new
+    elif rot_cw == 180:
+        x_new = w - 1 - x
+        y_new = h - 1 - y
+        x, y = x_new, y_new
+    elif rot_cw == 270:
+        x_new = y
+        y_new = w - 1 - x
+        w, h = h, w
+        x, y = x_new, y_new
+    return x, y
+
+def map_transformed_to_raw_coords(x_trans, y_trans, w_trans, h_trans, hflip, vflip, rot_cw):
+    if rot_cw == 90:
+        x_mid = y_trans
+        y_mid = w_trans - 1 - x_trans
+        w_mid, h_mid = h_trans, w_trans
+    elif rot_cw == 180:
+        x_mid = w_trans - 1 - x_trans
+        y_mid = h_trans - 1 - y_trans
+        w_mid, h_mid = w_trans, h_trans
+    elif rot_cw == 270:
+        x_mid = h_trans - 1 - y_trans
+        y_mid = x_trans
+        w_mid, h_mid = h_trans, w_trans
+    else:
+        x_mid = x_trans
+        y_mid = y_trans
+        w_mid, h_mid = w_trans, h_trans
+    if vflip:
+        y_pre = h_mid - 1 - y_mid
+    else:
+        y_pre = y_mid
+    x_pre = x_mid
+    if hflip:
+        x_raw = w_mid - 1 - x_pre
+    else:
+        x_raw = x_pre
+    y_raw = y_pre
+    return x_raw, y_raw
+
+def map_transformed_rect_to_raw(rect, w_trans, h_trans, hflip, vflip, rot_cw):
+    if rect is None:
+        return None
+    x1, y1, x2, y2 = rect
+    rx1, ry1 = map_transformed_to_raw_coords(x1, y1, w_trans, h_trans, hflip, vflip, rot_cw)
+    rx2, ry2 = map_transformed_to_raw_coords(x2, y2, w_trans, h_trans, hflip, vflip, rot_cw)
+    return (min(rx1, rx2), min(ry1, ry2), max(rx1, rx2), max(ry1, ry2))
+
+def map_raw_rect_to_transformed(rect, w_raw, h_raw, hflip, vflip, rot_cw):
+    if rect is None:
+        return None
+    x1, y1, x2, y2 = rect
+    tx1, ty1 = map_raw_to_transformed_coords(x1, y1, w_raw, h_raw, hflip, vflip, rot_cw)
+    tx2, ty2 = map_raw_to_transformed_coords(x2, y2, w_raw, h_raw, hflip, vflip, rot_cw)
+    return (min(tx1, tx2), min(ty1, ty2), max(tx1, tx2), max(ty1, ty2))
+
 class HistogramCanvas(Gtk.Box):
     def __init__(self):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
@@ -1782,14 +1850,21 @@ class ScanningAppWindow(Gtk.Window):
         raw_d = self.capture_raw_hist_data
         corr_d = self.capture_corr_hist_data
         
-        if hasattr(self, 'capture_rect_raw') and self.capture_rect_raw is not None:
-            x1, y1, x2, y2 = self.capture_rect_raw
-            dh, dw = raw_d.shape[:2]
-            x1, x2 = max(0, x1), min(dw, x2)
-            y1, y2 = max(0, y1), min(dh, y2)
-            if x2 > x1 and y2 > y1:
-                raw_d = raw_d[y1:y2, x1:x2]
-                corr_d = corr_d[y1:y2, x1:x2]
+        if hasattr(self, 'capture_rect_raw') and self.capture_rect_raw is not None and self.raw_linear_pixels is not None:
+            h_raw, w_raw = self.raw_linear_pixels.shape[:2]
+            rect_trans = map_raw_rect_to_transformed(
+                self.capture_rect_raw, w_raw, h_raw, self.hflip, self.vflip, self.orientation
+            )
+            if rect_trans is not None:
+                x1_trans, y1_trans, x2_trans, y2_trans = rect_trans
+                dh, dw = raw_d.shape[:2]
+                x1 = max(0, x1_trans)
+                x2 = min(dw, x2_trans)
+                y1 = max(0, y1_trans)
+                y2 = min(dh, y2_trans)
+                if x2 > x1 and y2 > y1:
+                    raw_d = raw_d[y1:y2, x1:x2]
+                    corr_d = corr_d[y1:y2, x1:x2]
                 
         self.hist_raw.plot_histogram(raw_d, is_corrected=False, has_icc=False, show_overexposure=True)
         self.hist_corr.plot_histogram(corr_d, is_corrected=True, has_icc=self.has_icc, show_overexposure=False)
@@ -1820,22 +1895,27 @@ class ScanningAppWindow(Gtk.Window):
                 h = abs(self.capture_rect_start[1] - self.capture_rect_end[1])
                 cr.rectangle(x, y, w, h)
                 cr.stroke()
-            elif hasattr(self, 'capture_rect_raw') and self.capture_rect_raw is not None and self.capture_preview_pixbuf is not None:
-                x1_raw, y1_raw, x2_raw, y2_raw = self.capture_rect_raw
-                w_orig = self.capture_preview_pixbuf.get_width()
-                h_orig = self.capture_preview_pixbuf.get_height()
-                scale = min(w_alloc / w_orig, h_alloc / h_orig)
-                off_x = (w_alloc - w_orig * scale) / 2
-                off_y = (h_alloc - h_orig * scale) / 2
-                
-                cr.set_source_rgba(0, 1, 0, 0.8)
-                cr.set_line_width(2)
-                x = x1_raw * scale + off_x
-                y = y1_raw * scale + off_y
-                w = (x2_raw - x1_raw) * scale
-                h = (y2_raw - y1_raw) * scale
-                cr.rectangle(x, y, w, h)
-                cr.stroke()
+            elif hasattr(self, 'capture_rect_raw') and self.capture_rect_raw is not None and self.capture_preview_pixbuf is not None and self.raw_linear_pixels is not None:
+                h_raw, w_raw = self.raw_linear_pixels.shape[:2]
+                rect_trans = map_raw_rect_to_transformed(
+                    self.capture_rect_raw, w_raw, h_raw, self.hflip, self.vflip, self.orientation
+                )
+                if rect_trans is not None:
+                    x1_trans, y1_trans, x2_trans, y2_trans = rect_trans
+                    w_orig = self.capture_preview_pixbuf.get_width()
+                    h_orig = self.capture_preview_pixbuf.get_height()
+                    scale = min(w_alloc / w_orig, h_alloc / h_orig)
+                    off_x = (w_alloc - w_orig * scale) / 2
+                    off_y = (h_alloc - h_orig * scale) / 2
+                    
+                    cr.set_source_rgba(0, 1, 0, 0.8)
+                    cr.set_line_width(2)
+                    x = x1_trans * scale + off_x
+                    y = y1_trans * scale + off_y
+                    w = (x2_trans - x1_trans) * scale
+                    h = (y2_trans - y1_trans) * scale
+                    cr.rectangle(x, y, w, h)
+                    cr.stroke()
 
             # Draw processing version overlay (top-left)
             if self.profile:
@@ -1926,22 +2006,27 @@ class ScanningAppWindow(Gtk.Window):
                 h = abs(self.base_rect_start[1] - self.base_rect_end[1])
                 cr.rectangle(x, y, w, h)
                 cr.stroke()
-            elif hasattr(self, 'base_rect_raw') and self.base_rect_raw is not None and self.base_preview_pixbuf is not None:
-                x1_raw, y1_raw, x2_raw, y2_raw = self.base_rect_raw
-                w_orig = self.base_preview_pixbuf.get_width()
-                h_orig = self.base_preview_pixbuf.get_height()
-                scale = min(w_alloc / w_orig, h_alloc / h_orig)
-                off_x = (w_alloc - w_orig * scale) / 2
-                off_y = (h_alloc - h_orig * scale) / 2
-                
-                cr.set_source_rgba(0, 1, 0, 0.8)
-                cr.set_line_width(2)
-                x = x1_raw * scale + off_x
-                y = y1_raw * scale + off_y
-                w = (x2_raw - x1_raw) * scale
-                h = (y2_raw - y1_raw) * scale
-                cr.rectangle(x, y, w, h)
-                cr.stroke()
+            elif hasattr(self, 'base_rect_raw') and self.base_rect_raw is not None and self.base_preview_pixbuf is not None and self.film_base_raw_linear is not None:
+                h_raw, w_raw = self.film_base_raw_linear.shape[:2]
+                rect_trans = map_raw_rect_to_transformed(
+                    self.base_rect_raw, w_raw, h_raw, self.hflip, self.vflip, self.orientation
+                )
+                if rect_trans is not None:
+                    x1_trans, y1_trans, x2_trans, y2_trans = rect_trans
+                    w_orig = self.base_preview_pixbuf.get_width()
+                    h_orig = self.base_preview_pixbuf.get_height()
+                    scale = min(w_alloc / w_orig, h_alloc / h_orig)
+                    off_x = (w_alloc - w_orig * scale) / 2
+                    off_y = (h_alloc - h_orig * scale) / 2
+                    
+                    cr.set_source_rgba(0, 1, 0, 0.8)
+                    cr.set_line_width(2)
+                    x = x1_trans * scale + off_x
+                    y = y1_trans * scale + off_y
+                    w = (x2_trans - x1_trans) * scale
+                    h = (y2_trans - y1_trans) * scale
+                    cr.rectangle(x, y, w, h)
+                    cr.stroke()
 
             # Draw processing version overlay (top-left)
             if self.profile and self.has_crosstalk:
@@ -2069,7 +2154,9 @@ class ScanningAppWindow(Gtk.Window):
                 y2 = max(0, min(h_orig, y2))
                 
                 if x2 > x1 and y2 > y1:
-                    self.base_rect_raw = (x1, y1, x2, y2)
+                    self.base_rect_raw = map_transformed_rect_to_raw(
+                        (x1, y1, x2, y2), w_orig, h_orig, self.hflip, self.vflip, self.orientation
+                    )
                 else:
                     self.base_rect_raw = None
             else:
@@ -2144,7 +2231,9 @@ class ScanningAppWindow(Gtk.Window):
                     y2 = max(0, min(h_orig, y2))
                     
                     if x2 > x1 and y2 > y1:
-                        self.capture_rect_raw = (x1, y1, x2, y2)
+                        self.capture_rect_raw = map_transformed_rect_to_raw(
+                            (x1, y1, x2, y2), w_orig, h_orig, self.hflip, self.vflip, self.orientation
+                        )
                     else:
                         self.capture_rect_raw = None
                 else:
