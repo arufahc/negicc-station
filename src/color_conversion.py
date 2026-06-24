@@ -247,30 +247,22 @@ def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=
     # 5. Load uncorrected linear RAW image to NumPy (half or full size)
     arr_raw = img.to_numpy(half=half, crosstalk_matrix=None)
     
-    # 6. Apply adjusted crosstalk matrix in Python (with 0.5f rounding and clipping)
+    # Convert to float32 normalized range [0.0, 1.0] immediately
+    img_float = arr_raw.astype(np.float32) / 65535.0
+    
+    # 6. Apply adjusted crosstalk matrix in Python (entirely in float32, clipped to [0.0, 1.0])
     adjusted_cc = adjust_correction_matrix(flat_merged_matrix, exposure_comp, None, None)
     
-    arr_corrected = np.zeros_like(arr_raw)
     if len(adjusted_cc) > 0:
-        r_c = arr_raw[..., 0] * adjusted_cc[0] + arr_raw[..., 1] * adjusted_cc[1] + arr_raw[..., 2] * adjusted_cc[2] + 0.5
-        g_c = arr_raw[..., 0] * adjusted_cc[3] + arr_raw[..., 1] * adjusted_cc[4] + arr_raw[..., 2] * adjusted_cc[5] + 0.5
-        b_c = arr_raw[..., 0] * adjusted_cc[6] + arr_raw[..., 1] * adjusted_cc[7] + arr_raw[..., 2] * adjusted_cc[8] + 0.5
-        arr_corrected[..., 0] = np.clip(r_c, 0, 65535)
-        arr_corrected[..., 1] = np.clip(g_c, 0, 65535)
-        arr_corrected[..., 2] = np.clip(b_c, 0, 65535)
-    else:
-        arr_corrected = arr_raw
+        r_c = img_float[..., 0] * adjusted_cc[0] + img_float[..., 1] * adjusted_cc[1] + img_float[..., 2] * adjusted_cc[2]
+        g_c = img_float[..., 0] * adjusted_cc[3] + img_float[..., 1] * adjusted_cc[4] + img_float[..., 2] * adjusted_cc[5]
+        b_c = img_float[..., 0] * adjusted_cc[6] + img_float[..., 1] * adjusted_cc[7] + img_float[..., 2] * adjusted_cc[8]
+        img_float = np.stack([r_c, g_c, b_c], axis=-1)
+        np.clip(img_float, 0.0, 1.0, out=img_float)
 
-    # Convert to 16-bit integer representation
-    arr_corrected = arr_corrected.astype(np.uint16)
-
-    # 7. Apply post-correction gamma
+    # 7. Apply post-correction gamma in float32 directly using power calculation
     if abs(post_correction_gamma - 1.0) > 1e-5:
-        curve = make_gamma_curve(post_correction_gamma)
-        arr_corrected = curve[arr_corrected]
-
-    # Normalize to [0.0, 1.0] float for profile mapping
-    img_float = arr_corrected.astype(np.float32) / 65535.0
+        img_float = np.power(img_float, 1.0 / post_correction_gamma)
 
     # 8. Parse Film ICC Profile Stages using Little CMS via ctypes
     lcms = LittleCMS()
