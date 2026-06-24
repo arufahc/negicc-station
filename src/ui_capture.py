@@ -946,6 +946,12 @@ class ScanningAppWindow(Gtk.Window):
         self.btn_save_tiff.connect("clicked", self.on_save_tiff)
         top_box.pack_start(self.btn_save_tiff, False, False, 5)
         
+        self.btn_save_raw_capture = Gtk.Button(label="Save RAW...")
+        self.btn_save_raw_capture.get_style_context().add_class("btn-action")
+        self.btn_save_raw_capture.set_sensitive(False)
+        self.btn_save_raw_capture.connect("clicked", self.on_save_raw_capture)
+        top_box.pack_start(self.btn_save_raw_capture, False, False, 5)
+        
         top_box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL), False, False, 5)
         
         top_box.pack_start(Gtk.Label(label="Gain: "), False, False, 0)
@@ -1029,6 +1035,12 @@ class ScanningAppWindow(Gtk.Window):
         btn_read = Gtk.Button(label="Read Film Base Values")
         btn_read.connect("clicked", self.on_read_film_base)
         top_box.pack_start(btn_read, False, False, 0)
+        
+        self.btn_save_raw_base = Gtk.Button(label="Save RAW...")
+        self.btn_save_raw_base.get_style_context().add_class("btn-action")
+        self.btn_save_raw_base.set_sensitive(False)
+        self.btn_save_raw_base.connect("clicked", self.on_save_raw_base)
+        top_box.pack_start(self.btn_save_raw_base, False, False, 0)
         
         self.lbl_base_vals = Gtk.Label(label="Raw: -- | Corr: --")
         top_box.pack_start(self.lbl_base_vals, False, False, 0)
@@ -1393,6 +1405,8 @@ class ScanningAppWindow(Gtk.Window):
         self.is_capturing = True
         self.btn_capture.set_sensitive(False)
         self.btn_save_tiff.set_sensitive(False)
+        self.btn_save_raw_capture.set_sensitive(False)
+        self.btn_save_raw_base.set_sensitive(False)
         self.spinner.start()
         
         def task():
@@ -1542,7 +1556,7 @@ class ScanningAppWindow(Gtk.Window):
             
             self.is_capturing = False
             self.update_capture_button_sensitivity()
-            self.btn_save_tiff.set_sensitive(self.raw_image is not None)
+            self.update_save_buttons_sensitivity()
             self.spinner.stop()
             self.lbl_status.set_text("Status: Film base updated.")
             
@@ -1592,7 +1606,7 @@ class ScanningAppWindow(Gtk.Window):
             
             self.is_capturing = False
             self.update_capture_button_sensitivity()
-            self.btn_save_tiff.set_sensitive(True)
+            self.update_save_buttons_sensitivity()
             self.spinner.stop()
             self.lbl_status.set_text("Status: Image updated successfully.")
 
@@ -1790,7 +1804,7 @@ class ScanningAppWindow(Gtk.Window):
         # Convert to 8-bit strictly for display (GdkPixbuf requires 8-bit)
         assert img_array.dtype in (np.uint16, np.float32), f"Expected 16-bit image array for preview scaling, got {img_array.dtype}"
         img_8bit = (img_array / 64.0).astype(np.uint8)
-        img_8bit = apply_transforms_numpy(img_8bit, self.hflip, self.vflip, self.orientation)
+        img_8bit = apply_transforms_numpy(img_8bit, False, False, 0)
         img_8bit = np.ascontiguousarray(img_8bit)
         h, w, c = img_8bit.shape
         self.base_preview_pixbuf = GdkPixbuf.Pixbuf.new_from_data(
@@ -1838,6 +1852,17 @@ class ScanningAppWindow(Gtk.Window):
         else:
             self.base_tab_label.set_markup("<span>Film Base</span>")
             self.capture_tab_label.set_markup("<span>Capture</span>")
+
+    def update_save_buttons_sensitivity(self):
+        has_raw = getattr(self, 'raw_image', None) is not None
+        has_base = getattr(self, 'film_base_img', None) is not None
+        
+        if hasattr(self, 'btn_save_tiff'):
+            self.btn_save_tiff.set_sensitive(has_raw)
+        if hasattr(self, 'btn_save_raw_capture'):
+            self.btn_save_raw_capture.set_sensitive(has_raw)
+        if hasattr(self, 'btn_save_raw_base'):
+            self.btn_save_raw_base.set_sensitive(has_base)
 
     def update_capture_histograms(self):
         if not hasattr(self, 'hist_raw') or self.hist_raw is None:
@@ -2009,7 +2034,7 @@ class ScanningAppWindow(Gtk.Window):
             elif hasattr(self, 'base_rect_raw') and self.base_rect_raw is not None and self.base_preview_pixbuf is not None and self.film_base_raw_linear is not None:
                 h_raw, w_raw = self.film_base_raw_linear.shape[:2]
                 rect_trans = map_raw_rect_to_transformed(
-                    self.base_rect_raw, w_raw, h_raw, self.hflip, self.vflip, self.orientation
+                    self.base_rect_raw, w_raw, h_raw, False, False, 0
                 )
                 if rect_trans is not None:
                     x1_trans, y1_trans, x2_trans, y2_trans = rect_trans
@@ -2155,7 +2180,7 @@ class ScanningAppWindow(Gtk.Window):
                 
                 if x2 > x1 and y2 > y1:
                     self.base_rect_raw = map_transformed_rect_to_raw(
-                        (x1, y1, x2, y2), w_orig, h_orig, self.hflip, self.vflip, self.orientation
+                        (x1, y1, x2, y2), w_orig, h_orig, False, False, 0
                     )
                 else:
                     self.base_rect_raw = None
@@ -2272,6 +2297,8 @@ class ScanningAppWindow(Gtk.Window):
             self.lbl_status.set_text("Saving TIFF image...")
             self.btn_capture.set_sensitive(False)
             self.btn_save_tiff.set_sensitive(False)
+            self.btn_save_raw_capture.set_sensitive(False)
+            self.btn_save_raw_base.set_sensitive(False)
             self.spinner.start()
             
             def save_task():
@@ -2318,11 +2345,98 @@ class ScanningAppWindow(Gtk.Window):
         else:
             dialog.destroy()
 
+    def on_save_raw_capture(self, btn):
+        self.on_save_raw(self.raw_image, is_base=False)
+
+    def on_save_raw_base(self, btn):
+        self.on_save_raw(self.film_base_img, is_base=True)
+
+    def on_save_raw(self, img_obj, is_base):
+        if not img_obj:
+            return
+        
+        filepaths = img_obj.filepaths
+        if not filepaths:
+            return
+            
+        dialog = Gtk.FileChooserDialog(
+            title="Save RAW", parent=self, action=Gtk.FileChooserAction.SAVE
+        )
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_SAVE, Gtk.ResponseType.OK)
+        dialog.set_do_overwrite_confirmation(True)
+        
+        # Suggest filename based on the source files
+        base = os.path.splitext(os.path.basename(filepaths[0]))[0]
+        if len(filepaths) == 1:
+            default_filename = f"{base}.ARW"
+            
+            filter_arw = Gtk.FileFilter()
+            filter_arw.set_name("Sony RAW Image (*.ARW)")
+            filter_arw.add_pattern("*.arw")
+            filter_arw.add_pattern("*.ARW")
+            dialog.add_filter(filter_arw)
+        else:
+            default_filename = f"{base}_pixelshift.zip"
+            
+            filter_zip = Gtk.FileFilter()
+            filter_zip.set_name("ZIP Archive (*.zip)")
+            filter_zip.add_pattern("*.zip")
+            dialog.add_filter(filter_zip)
+            
+        dialog.set_current_name(default_filename)
+        
+        if dialog.run() == Gtk.ResponseType.OK:
+            dest_path = dialog.get_filename()
+            dialog.destroy()
+            
+            self.lbl_status.set_text("Saving RAW image...")
+            self.btn_capture.set_sensitive(False)
+            self.btn_save_tiff.set_sensitive(False)
+            self.btn_save_raw_capture.set_sensitive(False)
+            self.btn_save_raw_base.set_sensitive(False)
+            self.spinner.start()
+            
+            def save_task():
+                try:
+                    t_start = time.time()
+                    if len(filepaths) == 1:
+                        # Copy single ARW
+                        shutil.copy2(filepaths[0], dest_path)
+                    else:
+                        # Create ZIP archive
+                        with zipfile.ZipFile(dest_path, 'w', zipfile.ZIP_DEFLATED) as z:
+                            for path in filepaths:
+                                z.write(path, os.path.basename(path))
+                                
+                    t_dur = time.time() - t_start
+                    GLib.idle_add(self.on_save_raw_success, dest_path, t_dur)
+                except Exception as e:
+                    import traceback
+                    print(f"Save RAW error: {e}", file=sys.stdout)
+                    traceback.print_exc(file=sys.stdout)
+                    sys.stdout.flush()
+                    GLib.idle_add(self.update_ui_failure, f"Save RAW Error: {e}")
+            
+            t = threading.Thread(target=save_task)
+            t.daemon = True
+            t.start()
+        else:
+            dialog.destroy()
+
+    def on_save_raw_success(self, filepath, duration):
+        self.spinner.stop()
+        self.is_capturing = False
+        self.update_capture_button_sensitivity()
+        self.update_save_buttons_sensitivity()
+        self.lbl_status.set_text(f"Status: Saved RAW to {os.path.basename(filepath)}.")
+        print(f"[Save RAW] RAW image saved successfully to: {filepath} | Time taken: {duration:.2f}s", file=sys.stdout)
+        sys.stdout.flush()
+
     def on_save_success(self, filepath, duration):
         self.spinner.stop()
         self.is_capturing = False
         self.update_capture_button_sensitivity()
-        self.btn_save_tiff.set_sensitive(True)
+        self.update_save_buttons_sensitivity()
         self.lbl_status.set_text(f"Status: Saved {os.path.basename(filepath)}.")
         print(f"[Save TIFF] Image saved successfully to: {filepath} | Time taken: {duration:.2f}s", file=sys.stdout)
         sys.stdout.flush()
@@ -2334,7 +2448,7 @@ class ScanningAppWindow(Gtk.Window):
         self.mode_combo.set_sensitive(True)
         self.shutter_combo.set_sensitive(not self.ae_checkbox.get_active())
         self.ae_checkbox.set_sensitive(True)
-        self.btn_save_tiff.set_sensitive(self.raw_image is not None)
+        self.update_save_buttons_sensitivity()
         self.lbl_status.set_text(f"Status: Capture failed.")
         
         dialog = Gtk.MessageDialog(

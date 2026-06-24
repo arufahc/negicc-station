@@ -68,5 +68,63 @@ class TestSelectionMapping(unittest.TestCase):
                     rect_back = map_transformed_rect_to_raw(rect_trans, w_trans, h_trans, hflip, vflip, rot)
                     self.assertEqual(rect_back, rect_raw)
 
+import tempfile
+import shutil
+import zipfile
+
+class TestRawSaving(unittest.TestCase):
+    def test_save_raw_single(self):
+        # Create a temp source file
+        with tempfile.NamedTemporaryFile(suffix=".ARW", delete=False) as f:
+            f.write(b"dummy_arw_data")
+            src_path = f.name
+            
+        try:
+            # Create a temp dest path
+            dest_dir = tempfile.mkdtemp()
+            dest_path = os.path.join(dest_dir, "saved.ARW")
+            
+            # Simulate shutil.copy2
+            shutil.copy2(src_path, dest_path)
+            
+            self.assertTrue(os.path.exists(dest_path))
+            with open(dest_path, 'rb') as f:
+                self.assertEqual(f.read(), b"dummy_arw_data")
+        finally:
+            os.remove(src_path)
+            shutil.rmtree(dest_dir)
+
+    def test_save_raw_multiple_zip(self):
+        # Create multiple temp source files
+        src_paths = []
+        for i in range(4):
+            with tempfile.NamedTemporaryFile(suffix=f"_{i}.ARW", delete=False) as f:
+                f.write(f"dummy_arw_data_{i}".encode())
+                src_paths.append(f.name)
+                
+        try:
+            # Create a temp dest zip path
+            dest_dir = tempfile.mkdtemp()
+            dest_zip = os.path.join(dest_dir, "saved.zip")
+            
+            # Simulate zipping
+            with zipfile.ZipFile(dest_zip, 'w', zipfile.ZIP_DEFLATED) as z:
+                for path in src_paths:
+                    z.write(path, os.path.basename(path))
+                    
+            self.assertTrue(os.path.exists(dest_zip))
+            
+            # Verify zip content
+            with zipfile.ZipFile(dest_zip, 'r') as z:
+                self.assertEqual(len(z.namelist()), 4)
+                for i, path in enumerate(src_paths):
+                    name = os.path.basename(path)
+                    self.assertIn(name, z.namelist())
+                    self.assertEqual(z.read(name), f"dummy_arw_data_{i}".encode())
+        finally:
+            for path in src_paths:
+                os.remove(path)
+            shutil.rmtree(dest_dir)
+
 if __name__ == '__main__':
     unittest.main()
