@@ -871,10 +871,12 @@ class ScanningAppWindow(Gtk.Window):
                         GLib.idle_add(self.lbl_status.set_text, f"AE: Capturing {ss}...")
                         num, den = auto_exposure.parse_shutter_speed(ss)
                         ae_img = self.camera_session.capture(type=0, shutter_num=num, shutter_den=den) # Single shot for AE search
+                        if not ae_img:
+                            raise RuntimeError("AE Capture returned Null. Camera capture or download failed.")
                         arr = ae_img.to_numpy(half=True)
-                        arr.iso = ae_img.iso  # Attach ISO to array!
+                        arr_annotated = auto_exposure.AnnotatedArray(arr, iso=ae_img.iso)
                         ae_img.discard()
-                        return arr
+                        return arr_annotated
                     
                     def ae_progress(step_idx, ss, iso, ch_dr, avg_dr):
                         dr_r, dr_g, dr_b = ch_dr
@@ -1644,7 +1646,18 @@ class ScanningAppWindow(Gtk.Window):
         self.shutter_combo.set_sensitive(not self.ae_checkbox.get_active())
         self.ae_checkbox.set_sensitive(True)
         self.btn_save_tiff.set_sensitive(self.raw_image is not None)
-        self.lbl_status.set_text(f"Status: Capture failed. See terminal.")
+        self.lbl_status.set_text(f"Status: Capture failed.")
+        
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=0,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.OK,
+            text="Capture Error"
+        )
+        dialog.format_secondary_text(error_msg if error_msg else "An unknown error occurred during image capture.")
+        dialog.run()
+        dialog.destroy()
 
     def on_window_resized(self, widget, allocation):
         if self.capture_preview_pixbuf:

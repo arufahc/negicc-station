@@ -2428,6 +2428,8 @@ class FilmProfilingAppWindow(Gtk.Window):
                 GLib.idle_add(self.status_lbl.set_text, f"Status: Capturing final image at {optimal_speed}...")
                 num, den = parse_shutter_speed(optimal_speed)
                 img = session.capture(type=0, shutter_num=num, shutter_den=den)
+                if not img:
+                    raise RuntimeError("Camera capture returned Null/None. The download might have failed or the camera is unresponsive.")
                 
                 # Get uncorrected linear RAW
                 arr_raw = img.to_numpy(half=True)
@@ -2450,6 +2452,10 @@ class FilmProfilingAppWindow(Gtk.Window):
                 target_tab_or_base = active_target if is_target else "base"
                 GLib.idle_add(self.on_capture_success, target_tab_or_base, raw_bytes, w, h, arr_raw, arr_cc, exposure_info, captured_filepaths, img)
             except Exception as e:
+                import traceback
+                print("Capture Exception caught in ui_film_profiling.py:", file=sys.stdout)
+                traceback.print_exc(file=sys.stdout)
+                sys.stdout.flush()
                 GLib.idle_add(self.on_capture_failure, str(e))
 
         t = threading.Thread(target=thread_func)
@@ -2524,6 +2530,8 @@ class FilmProfilingAppWindow(Gtk.Window):
     def on_capture_failure(self, err_msg):
         self.spinner.stop()
         self.set_controls_sensitive(self.is_connected)
+        if not err_msg:
+            err_msg = "An unknown error occurred during image capture/download."
         self.status_lbl.set_text(f"Status: Capture failed ({err_msg})")
 
         dialog = Gtk.MessageDialog(

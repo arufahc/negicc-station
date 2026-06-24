@@ -6,6 +6,18 @@ Provides functions to search for optimal shutter speed by maximizing average dyn
 
 import numpy as np
 
+class AnnotatedArray(np.ndarray):
+    def __new__(cls, input_array, **kwargs):
+        obj = np.asarray(input_array).view(cls)
+        for k, v in kwargs.items():
+            setattr(obj, k, v)
+        return obj
+
+    def __array_finalize__(self, obj):
+        if obj is None:
+            return
+        self.__dict__.update(getattr(obj, '__dict__', {}))
+
 SHUTTER_SPEEDS = [
     "30s", "25s", "20s", "15s", "13s", "10s", "8s", "6s", "5s", "4s", "3.2s", "2.5s", "2s", "1.6s", "1.3s", "1s",
     "0.8s", "0.6s", "0.5s", "0.4s", "1/3s", "1/4s", "1/5s", "1/6s", "1/8s", "1/10s", "1/13s", "1/15s", "1/20s",
@@ -39,11 +51,14 @@ def capture_exposure_frame(shutter_str, half=True, session=None):
         img = session.capture(type=0, shutter_num=num, shutter_den=den)
     else:
         img = negicc_station.capture(type=0, shutter_num=num, shutter_den=den)
+    if not img:
+        raise RuntimeError("Camera capture returned Null/None. The download might have failed or the camera is unresponsive.")
     try:
         arr = img.to_numpy(half=half)
+        arr_annotated = AnnotatedArray(arr, iso=img.iso)
     finally:
         img.discard()
-    return arr
+    return arr_annotated
 
 def calculate_dynamic_range(arr):
     """Calculates the dynamic range for each channel and the average, on the center square
