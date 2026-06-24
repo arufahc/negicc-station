@@ -1309,10 +1309,10 @@ class ScanningAppWindow(Gtk.Window):
             box_w = extents.width + 16
             box_h = extents.height + 10
             cr.set_source_rgba(0.08, 0.08, 0.08, 0.75)
-            cr.rectangle(off_x + 10, off_y + 10, box_w, box_h)
+            cr.rectangle(10, 10, box_w, box_h)
             cr.fill()
             cr.set_source_rgb(0.9, 0.9, 0.9)
-            cr.move_to(off_x + 18, off_y + 10 + 5 + extents.height)
+            cr.move_to(18, 10 + 5 + extents.height)
             cr.show_text(status_text)
             cr.restore()
 
@@ -1342,13 +1342,13 @@ class ScanningAppWindow(Gtk.Window):
                 total_text_height = sum(line_heights) + spacing * (len(lines) - 1)
                 box_h_m = total_text_height + 10
                 
-                x_pos = off_x + w_img - box_w_m - 10
+                x_pos = w_alloc - box_w_m - 10
                 cr.set_source_rgba(0.08, 0.08, 0.08, 0.75)
-                cr.rectangle(x_pos, off_y + 10, box_w_m, box_h_m)
+                cr.rectangle(x_pos, 10, box_w_m, box_h_m)
                 cr.fill()
                 
                 cr.set_source_rgb(0.9, 0.9, 0.9)
-                curr_y = off_y + 10 + 5
+                curr_y = 10 + 5
                 for i, line in enumerate(lines):
                     curr_y += line_heights[i]
                     cr.move_to(x_pos + 8, curr_y)
@@ -1410,10 +1410,10 @@ class ScanningAppWindow(Gtk.Window):
             box_w = extents.width + 16
             box_h = extents.height + 10
             cr.set_source_rgba(0.08, 0.08, 0.08, 0.75)
-            cr.rectangle(off_x + 10, off_y + 10, box_w, box_h)
+            cr.rectangle(10, 10, box_w, box_h)
             cr.fill()
             cr.set_source_rgb(0.9, 0.9, 0.9)
-            cr.move_to(off_x + 18, off_y + 10 + 5 + extents.height)
+            cr.move_to(18, 10 + 5 + extents.height)
             cr.show_text(status_text)
             cr.restore()
 
@@ -1443,13 +1443,13 @@ class ScanningAppWindow(Gtk.Window):
                 total_text_height = sum(line_heights) + spacing * (len(lines) - 1)
                 box_h_m = total_text_height + 10
                 
-                x_pos = off_x + w_img - box_w_m - 10
+                x_pos = w_alloc - box_w_m - 10
                 cr.set_source_rgba(0.08, 0.08, 0.08, 0.75)
-                cr.rectangle(x_pos, off_y + 10, box_w_m, box_h_m)
+                cr.rectangle(x_pos, 10, box_w_m, box_h_m)
                 cr.fill()
                 
                 cr.set_source_rgb(0.9, 0.9, 0.9)
-                curr_y = off_y + 10 + 5
+                curr_y = 10 + 5
                 for i, line in enumerate(lines):
                     curr_y += line_heights[i]
                     cr.move_to(x_pos + 8, curr_y)
