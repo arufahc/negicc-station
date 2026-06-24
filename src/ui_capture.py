@@ -1682,6 +1682,7 @@ class ScanningAppWindow(Gtk.Window):
             self.capture_corr_hist_cache = corr_hist_array
             
         # Convert to 8-bit strictly for display (GdkPixbuf requires 8-bit)
+        assert img_array.dtype in (np.uint16, np.float32), f"Expected 16-bit image array for preview scaling, got {img_array.dtype}"
         if self.profile and self.has_icc:
             # Range is [0, 65535]
             img_8bit = (img_array / 256.0).astype(np.uint8)
@@ -1719,6 +1720,7 @@ class ScanningAppWindow(Gtk.Window):
             self.base_converted_rgb_cache = img_array
             
         # Convert to 8-bit strictly for display (GdkPixbuf requires 8-bit)
+        assert img_array.dtype in (np.uint16, np.float32), f"Expected 16-bit image array for preview scaling, got {img_array.dtype}"
         img_8bit = (img_array / 64.0).astype(np.uint8)
         img_8bit = apply_transforms_numpy(img_8bit, self.hflip, self.vflip, self.orientation)
         img_8bit = np.ascontiguousarray(img_8bit)
