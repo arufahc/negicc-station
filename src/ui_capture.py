@@ -1174,6 +1174,19 @@ class ScanningAppWindow(Gtk.Window):
                 self.has_icc = bool(getattr(self.profile, 'icc_profile_bytes', None))
                 self.has_crosstalk = hasattr(self.profile, 'crosstalk_matrix') and self.profile.crosstalk_matrix is not None
                 
+                if hasattr(self.profile, 'film_base') and self.profile.film_base:
+                    fb_r = self.profile.film_base.get('r_avg', 0.0)
+                    fb_g = self.profile.film_base.get('g_avg', 0.0)
+                    fb_b = self.profile.film_base.get('b_avg', 0.0)
+                    if fb_r > 0 or fb_g > 0 or fb_b > 0:
+                        self.film_base_rgb = (fb_r, fb_g, fb_b)
+                        corr_r, corr_g, corr_b = fb_r, fb_g, fb_b
+                        if self.has_crosstalk:
+                            corr_rgb = np.dot([fb_r, fb_g, fb_b], self.profile.crosstalk_matrix.T)
+                            corr_r, corr_g, corr_b = corr_rgb[0], corr_rgb[1], corr_rgb[2]
+                        self.lbl_base_vals.set_text(f"Raw: {fb_r:.1f}, {fb_g:.1f}, {fb_b:.1f} | "
+                                                    f"Corr: {corr_r:.1f}, {corr_g:.1f}, {corr_b:.1f}")
+                
                 # Clip name to 10 chars
                 film_name = self.profile.film_name if self.profile.film_name else "Unknown"
                 name_clipped = film_name[:10] + "..." if len(film_name) > 10 else film_name
@@ -1236,6 +1249,9 @@ class ScanningAppWindow(Gtk.Window):
         self.capture_converted_rgb_cache = None
         self.capture_corr_hist_cache = None
         self.base_converted_rgb_cache = None
+        if not getattr(self, 'film_base_img', None):
+            self.film_base_rgb = None
+            self.lbl_base_vals.set_text("Raw: -- | Corr: --")
         self.update_profile_dependencies()
         self.update_capture_preview()
         self.update_base_preview()
