@@ -222,35 +222,37 @@ def set_tiff_orientation_inplace(filepath, orientation_value):
         return False
 
 def get_exif_orientation(hflip, vflip, rot_cw):
-    row_pos = 1 # Top
-    col_pos = 3 # Left
-    if hflip: col_pos = 4 if col_pos == 3 else 3
-    if vflip: row_pos = 2 if row_pos == 1 else 1
-    for _ in range(rot_cw // 90):
-        new_row = {1:4, 4:2, 2:3, 3:1}[row_pos]
-        new_col = {1:4, 4:2, 2:3, 3:1}[col_pos]
-        row_pos, col_pos = new_row, new_col
-    tag_map = {
-        (1, 3): 1, (1, 4): 2, (2, 4): 3, (2, 3): 4,
-        (3, 1): 5, (4, 1): 6, (4, 2): 7, (3, 2): 8
+    grid = np.array([[1, 2], [3, 4]])
+    if rot_cw == 90: grid = np.rot90(grid, -1)
+    elif rot_cw == 180: grid = np.rot90(grid, -2)
+    elif rot_cw == 270: grid = np.rot90(grid, -3)
+    if hflip: grid = np.fliplr(grid)
+    if vflip: grid = np.flipud(grid)
+    
+    key = tuple(grid.flatten())
+    mapping = {
+        (1, 2, 3, 4): 1,
+        (2, 1, 4, 3): 2,
+        (4, 3, 2, 1): 3,
+        (3, 4, 1, 2): 4,
+        (1, 3, 2, 4): 5,
+        (3, 1, 4, 2): 6,
+        (4, 2, 3, 1): 7,
+        (2, 4, 1, 3): 8
     }
-    return tag_map.get((row_pos, col_pos), 1)
+    return mapping.get(key, 1)
 
 def apply_transforms_numpy(img_array, hflip, vflip, rot_cw):
-    if hflip: img_array = np.fliplr(img_array)
-    if vflip: img_array = np.flipud(img_array)
     if rot_cw == 90: img_array = np.rot90(img_array, -1)
     elif rot_cw == 180: img_array = np.rot90(img_array, -2)
     elif rot_cw == 270: img_array = np.rot90(img_array, -3)
+    if hflip: img_array = np.fliplr(img_array)
+    if vflip: img_array = np.flipud(img_array)
     return img_array
 
 def map_raw_to_transformed_coords(x_raw, y_raw, w_raw, h_raw, hflip, vflip, rot_cw):
     x, y = x_raw, y_raw
     w, h = w_raw, h_raw
-    if hflip:
-        x = w - 1 - x
-    if vflip:
-        y = h - 1 - y
     if rot_cw == 90:
         x_new = h - 1 - y
         y_new = x
@@ -265,36 +267,32 @@ def map_raw_to_transformed_coords(x_raw, y_raw, w_raw, h_raw, hflip, vflip, rot_
         y_new = w - 1 - x
         w, h = h, w
         x, y = x_new, y_new
+    if hflip:
+        x = w - 1 - x
+    if vflip:
+        y = h - 1 - y
     return x, y
 
 def map_transformed_to_raw_coords(x_trans, y_trans, w_trans, h_trans, hflip, vflip, rot_cw):
-    if rot_cw == 90:
-        x_mid = y_trans
-        y_mid = w_trans - 1 - x_trans
-        w_mid, h_mid = h_trans, w_trans
-    elif rot_cw == 180:
-        x_mid = w_trans - 1 - x_trans
-        y_mid = h_trans - 1 - y_trans
-        w_mid, h_mid = w_trans, h_trans
-    elif rot_cw == 270:
-        x_mid = h_trans - 1 - y_trans
-        y_mid = x_trans
-        w_mid, h_mid = h_trans, w_trans
-    else:
-        x_mid = x_trans
-        y_mid = y_trans
-        w_mid, h_mid = w_trans, h_trans
-    if vflip:
-        y_pre = h_mid - 1 - y_mid
-    else:
-        y_pre = y_mid
-    x_pre = x_mid
+    x, y = x_trans, y_trans
+    w, h = w_trans, h_trans
     if hflip:
-        x_raw = w_mid - 1 - x_pre
-    else:
-        x_raw = x_pre
-    y_raw = y_pre
-    return x_raw, y_raw
+        x = w - 1 - x
+    if vflip:
+        y = h - 1 - y
+    if rot_cw == 90:
+        x_new = y
+        y_new = w - 1 - x
+        x, y = x_new, y_new
+    elif rot_cw == 180:
+        x_new = w - 1 - x
+        y_new = h - 1 - y
+        x, y = x_new, y_new
+    elif rot_cw == 270:
+        x_new = h - 1 - y
+        y_new = x
+        x, y = x_new, y_new
+    return x, y
 
 def map_transformed_rect_to_raw(rect, w_trans, h_trans, hflip, vflip, rot_cw):
     if rect is None:
