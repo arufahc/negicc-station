@@ -128,15 +128,28 @@ Once the system dependencies are installed and the Sony SDK files are populated 
 # Build everything
 make
 
-# Run the film profiling UI
+# Run the central UI launcher (recommended)
+./venv/bin/python3 src/ui_main.py
+```
+
+The central launcher window ([ui_main.py](src/ui_main.py)) acts as the control panel for the scanning station, providing quick access to the following three components:
+
+1. **Crosstalk Calibration**: Calibrate RGB sensor crosstalk correction matrices using red, green, and blue negative color target exposures.
+2. **Film Profiling**: Capture and read IT8 target patches, perform curve fitting, and compile custom film ICC profiles.
+3. **Capture & Scan**: Manage tethered Sony A7R4 sessions over USB, trigger live single-shot or 4-shot IBIS captures, apply film negative inversions using loaded profiles, and save 16-bit linear TIFF files.
+
+Alternatively, you can start any of the desktop application modules directly:
+```bash
+# Launch the film profiling UI directly
 ./venv/bin/python3 src/ui_film_profiling.py
 
-# Run the crosstalk calibration UI
+# Launch the crosstalk calibration UI directly
 ./venv/bin/python3 src/ui_crosstalk_correction.py
 
-# Run the basic scanner control UI
+# Launch the scanner capture UI directly
 ./venv/bin/python3 src/ui_capture.py
 ```
+
 
 ### CUDA Acceleration & Pipeline Benchmarking
 
