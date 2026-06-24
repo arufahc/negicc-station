@@ -184,14 +184,15 @@ def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=
     src_dir = os.path.dirname(os.path.abspath(__file__))
     project_dir = os.path.dirname(src_dir)
     
-    if colorspace == "srgb":
-        out_icc_path = os.path.join(project_dir, "profiles/sRGB_elle_V2_srgbtrc.icc")
-        with open(out_icc_path, 'rb') as f:
-            out_icc_bytes = f.read()
-    elif colorspace == "srgb-g10":
-        out_icc_path = os.path.join(project_dir, "profiles/sRGB_elle_V2_g10.icc")
-        with open(out_icc_path, 'rb') as f:
-            out_icc_bytes = f.read()
+    if colorspace in ("srgb", "srgb-g10"):
+        elle_dir = os.path.join(project_dir, "3rd_party/elle_icc_profiles")
+        if elle_dir not in sys.path:
+            sys.path.insert(0, elle_dir)
+        import elle_profiles
+        if colorspace == "srgb":
+            out_icc_bytes = elle_profiles.get_srgb_srgbtrc_bytes()
+        else:
+            out_icc_bytes = elle_profiles.get_srgb_g10_bytes()
     else:
         # Custom profile path
         if os.path.exists(colorspace):
@@ -338,15 +339,19 @@ def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=
                     flat_lut = np.ctypeslib.as_array(raw_lut_ptr, shape=(total_elements,))
                     clut_grid = (flat_lut.astype(np.float32) / 65535.0).reshape(reshape_dims)
                 
-                # Perform vectorized trilinear interpolation
+                # Perform vectorized tetrahedral interpolation
                 scaled = img_float * np.array(Domain, dtype=np.float32)
                 floor_idx = np.floor(scaled).astype(np.int32)
                 ceil_idx = np.clip(floor_idx + 1, 0, np.array(Domain))
                 
                 delta = scaled - floor_idx
-                dr = delta[..., 0, np.newaxis]
-                dg = delta[..., 1, np.newaxis]
-                db = delta[..., 2, np.newaxis]
+                dr = delta[..., 0]
+                dg = delta[..., 1]
+                db = delta[..., 2]
+                
+                dr_e = dr[..., np.newaxis]
+                dg_e = dg[..., np.newaxis]
+                db_e = db[..., np.newaxis]
                 
                 rf, gf, bf = floor_idx[..., 0], floor_idx[..., 1], floor_idx[..., 2]
                 rc, gc, bc = ceil_idx[..., 0], ceil_idx[..., 1], ceil_idx[..., 2]
@@ -360,15 +365,48 @@ def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=
                 v011 = clut_grid[rf, gc, bc]
                 v111 = clut_grid[rc, gc, bc]
                 
-                c00 = v000 * (1.0 - dr) + v100 * dr
-                c01 = v001 * (1.0 - dr) + v101 * dr
-                c10 = v010 * (1.0 - dr) + v110 * dr
-                c11 = v011 * (1.0 - dr) + v111 * dr
+                res = np.zeros(img_float.shape[:-1] + (n_outputs,), dtype=np.float32)
                 
-                c0 = c00 * (1.0 - dg) + c10 * dg
-                c1 = c01 * (1.0 - dg) + c11 * dg
+                # Masks for the 6 tetrahedra
+                m1 = (dr >= dg) & (dg >= db)
+                m2 = (dr >= db) & (db > dg)
+                m3 = (db > dr) & (dr >= dg)
+                m4 = (dg > dr) & (dr >= db)
+                m5 = (dg >= db) & (db > dr)
+                m6 = (db > dg) & (dg > dr)
                 
-                img_float = c0 * (1.0 - db) + c1 * db
+                if np.any(m1):
+                    res[m1] = (v000[m1] * (1.0 - dr_e[m1]) +
+                               v100[m1] * (dr_e[m1] - dg_e[m1]) +
+                               v110[m1] * (dg_e[m1] - db_e[m1]) +
+                               v111[m1] * db_e[m1])
+                if np.any(m2):
+                    res[m2] = (v000[m2] * (1.0 - dr_e[m2]) +
+                               v100[m2] * (dr_e[m2] - db_e[m2]) +
+                               v101[m2] * (db_e[m2] - dg_e[m2]) +
+                               v111[m2] * dg_e[m2])
+                if np.any(m3):
+                    res[m3] = (v000[m3] * (1.0 - db_e[m3]) +
+                               v001[m3] * (db_e[m3] - dr_e[m3]) +
+                               v101[m3] * (dr_e[m3] - dg_e[m3]) +
+                               v111[m3] * dg_e[m3])
+                if np.any(m4):
+                    res[m4] = (v000[m4] * (1.0 - dg_e[m4]) +
+                               v010[m4] * (dg_e[m4] - dr_e[m4]) +
+                               v110[m4] * (dr_e[m4] - db_e[m4]) +
+                               v111[m4] * db_e[m4])
+                if np.any(m5):
+                    res[m5] = (v000[m5] * (1.0 - dg_e[m5]) +
+                               v010[m5] * (dg_e[m5] - db_e[m5]) +
+                               v011[m5] * (db_e[m5] - dr_e[m5]) +
+                               v111[m5] * dr_e[m5])
+                if np.any(m6):
+                    res[m6] = (v000[m6] * (1.0 - db_e[m6]) +
+                               v001[m6] * (db_e[m6] - dg_e[m6]) +
+                               v011[m6] * (dg_e[m6] - dr_e[m6]) +
+                               v111[m6] * dr_e[m6])
+                
+                img_float = res
                 
             stage_ptr = lcms.lib.cmsStageNext(stage_ptr)
             

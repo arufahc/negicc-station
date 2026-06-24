@@ -151,7 +151,7 @@ def main():
     )
     
     if args.compare:
-        import python_color_pipeline
+        import color_conversion
         
         # Run C++ conversion
         cpp_output_path = output_path.replace(".tiff", "_cpp.tiff").replace(".tif", "_cpp.tif")
@@ -171,7 +171,7 @@ def main():
         # Run Python conversion
         py_output_path = output_path.replace(".tiff", "_py.tiff").replace(".tif", "_py.tif")
         print(f"Converting and saving TIFF (Python pipeline) to: {py_output_path}...")
-        py_success = python_color_pipeline.convert_raw_to_tiff(
+        py_success = color_conversion.convert_raw_to_tiff(
             img=img,
             profile=sc_profile,
             output_path=py_output_path,
@@ -223,9 +223,9 @@ def main():
             print("WARNING: Large difference between C++ and Python conversions.")
             
     elif args.python:
-        import python_color_pipeline
+        import color_conversion
         print(f"Converting and saving TIFF (Python pipeline) to: {output_path}...")
-        success = python_color_pipeline.convert_raw_to_tiff(
+        success = color_conversion.convert_raw_to_tiff(
             img=img,
             profile=sc_profile,
             output_path=output_path,

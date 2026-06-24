@@ -110,7 +110,7 @@ def main():
     print("Comparing Python full-size NumPy array with C++ output TIFF payload...")
     with open(tiff_full_path, "rb") as f:
         tiff_data = f.read()
-    pixel_bytes = tiff_data[header_size:]
+    pixel_bytes = tiff_data[-arr_full.size * 2:]
     cpp_arr_full = np.frombuffer(pixel_bytes, dtype=np.uint16).reshape(arr_full.shape)
 
     if not np.array_equal(arr_full, cpp_arr_full):
@@ -122,7 +122,7 @@ def main():
     print("Comparing Python half-size NumPy array with C++ output TIFF payload...")
     with open(tiff_half_path, "rb") as f:
         tiff_data_half = f.read()
-    pixel_bytes_half = tiff_data_half[header_size:]
+    pixel_bytes_half = tiff_data_half[-arr_half.size * 2:]
     cpp_arr_half = np.frombuffer(pixel_bytes_half, dtype=np.uint16).reshape(arr_half.shape)
 
     if not np.array_equal(arr_half, cpp_arr_half):

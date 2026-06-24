@@ -83,14 +83,14 @@ def main():
     print("Comparing Python full-size NumPy array with C++ output TIFF payload...")
     with open(tiff_full_cpp, "rb") as f:
         tiff_data = f.read()
-    cpp_arr_full = np.frombuffer(tiff_data[header_size:], dtype=np.uint16).reshape(arr_full_py.shape)
+    cpp_arr_full = np.frombuffer(tiff_data[-arr_full_py.size * 2:], dtype=np.uint16).reshape(arr_full_py.shape)
     assert np.array_equal(arr_full_py, cpp_arr_full), "ERROR: Full-size SINGLE pixel mismatch!"
     print("  [PASS] Full-size SINGLE arrays match exactly!")
 
     print("Comparing Python half-size NumPy array with C++ output TIFF payload...")
     with open(tiff_half_cpp, "rb") as f:
         tiff_data_half = f.read()
-    cpp_arr_half = np.frombuffer(tiff_data_half[header_size:], dtype=np.uint16).reshape(arr_half_py.shape)
+    cpp_arr_half = np.frombuffer(tiff_data_half[-arr_half_py.size * 2:], dtype=np.uint16).reshape(arr_half_py.shape)
     assert np.array_equal(arr_half_py, cpp_arr_half), "ERROR: Half-size SINGLE pixel mismatch!"
     print("  [PASS] Half-size SINGLE arrays match exactly!")
 
@@ -155,14 +155,14 @@ def main():
     print("Comparing Python full-size NumPy array with C++ output TIFF payload...")
     with open(tiff_full_cpp_ps, "rb") as f:
         tiff_data_ps = f.read()
-    cpp_arr_full_ps = np.frombuffer(tiff_data_ps[header_size:], dtype=np.uint16).reshape(arr_full_py_ps.shape)
+    cpp_arr_full_ps = np.frombuffer(tiff_data_ps[-arr_full_py_ps.size * 2:], dtype=np.uint16).reshape(arr_full_py_ps.shape)
     assert np.array_equal(arr_full_py_ps, cpp_arr_full_ps), "ERROR: Full-size SONY_PIXEL_SHIFT_4 pixel mismatch!"
     print("  [PASS] Full-size SONY_PIXEL_SHIFT_4 arrays match exactly!")
 
     print("Comparing Python half-size NumPy array with C++ output TIFF payload...")
     with open(tiff_half_cpp_ps, "rb") as f:
         tiff_data_half_ps = f.read()
-    cpp_arr_half_ps = np.frombuffer(tiff_data_half_ps[header_size:], dtype=np.uint16).reshape(arr_half_py_ps.shape)
+    cpp_arr_half_ps = np.frombuffer(tiff_data_half_ps[-arr_half_py_ps.size * 2:], dtype=np.uint16).reshape(arr_half_py_ps.shape)
     assert np.array_equal(arr_half_py_ps, cpp_arr_half_ps), "ERROR: Half-size SONY_PIXEL_SHIFT_4 pixel mismatch!"
     print("  [PASS] Half-size SONY_PIXEL_SHIFT_4 arrays match exactly!")
 
