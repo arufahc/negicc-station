@@ -231,6 +231,8 @@ def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=
         t_base = film_base_img.shutter_speed
         iso_base = film_base_img.iso
     else:
+        print("[Warning] color_conversion: film_base_img is None. Falling back to profile film_base_shutter and film_base_iso.", file=sys.stdout)
+        sys.stdout.flush()
         base_num, base_den = parse_shutter_speed(profile.film_base_shutter)
         t_base = base_num / base_den
         iso_base = profile.film_base_iso

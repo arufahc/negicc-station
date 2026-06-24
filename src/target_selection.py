@@ -52,6 +52,9 @@ def find_best_target_index(profile, raw_image, film_base_rgb, scan_shutter=None,
         t_base = base_shutter
         iso_base = base_iso if base_iso is not None else 100
     else:
+        import sys
+        print("[Warning] target_selection: base_shutter is None. Falling back to profile film_base_shutter and film_base_iso.", file=sys.stdout)
+        sys.stdout.flush()
         film_base_shutter = getattr(profile, 'film_base_shutter', None)
         if film_base_shutter:
             from auto_exposure import parse_shutter_speed
