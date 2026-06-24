@@ -223,7 +223,7 @@ class TargetTabState:
 
 class ProfileProgressDialog(Gtk.Dialog):
     def __init__(self, parent, num_targets):
-        super().__init__(title="Generating Film Profile", parent=parent, flags=Gtk.DialogFlags.MODAL)
+        super().__init__(title="Generating Film Profile", transient_for=parent, modal=True, destroy_with_parent=True)
         self.set_default_size(400, 150)
         self.set_keep_above(True)
         
@@ -254,7 +254,9 @@ class ProfileProgressDialog(Gtk.Dialog):
 
 class ProfileReportWindow(Gtk.Window):
     def __init__(self, parent, results_report, film_base_values, arr_raw_base, reference_xyz_path):
-        super().__init__(title="Film Profiling Report", parent=parent)
+        super().__init__(title="Film Profiling Report")
+        self.set_transient_for(parent)
+        self.set_destroy_with_parent(True)
         self.set_default_size(1100, 750)
         self.set_position(Gtk.WindowPosition.CENTER_ON_PARENT)
         self.reference_xyz_path = reference_xyz_path
@@ -379,12 +381,13 @@ class ProfileReportWindow(Gtk.Window):
         vbox_prof.set_border_width(8)
         frame_prof.add(vbox_prof)
         
+        import html
         prof_text = target_data["profcheck_output"] or "No profcheck output."
         lbl_prof = Gtk.Label()
-        lbl_prof.set_alignment(0.0, 0.5)
-        lbl_prof.set_monospace(True)
+        lbl_prof.set_xalign(0.0)
+        lbl_prof.set_yalign(0.5)
         lbl_prof.set_selectable(True)
-        lbl_prof.set_text(prof_text)
+        lbl_prof.set_markup(f"<span font_family='monospace'>{html.escape(prof_text)}</span>")
         
         scroll_prof = Gtk.ScrolledWindow()
         scroll_prof.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
