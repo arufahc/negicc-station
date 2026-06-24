@@ -1289,10 +1289,10 @@ class ScanningAppWindow(Gtk.Window):
             box_w = extents.width + 16
             box_h = extents.height + 10
             cr.set_source_rgba(0.08, 0.08, 0.08, 0.75)
-            cr.rectangle(10, 10, box_w, box_h)
+            cr.rectangle(off_x + 10, off_y + 10, box_w, box_h)
             cr.fill()
             cr.set_source_rgb(0.9, 0.9, 0.9)
-            cr.move_to(18, 10 + 5 + extents.height)
+            cr.move_to(off_x + 18, off_y + 10 + 5 + extents.height)
             cr.show_text(status_text)
             cr.restore()
 
@@ -1306,12 +1306,12 @@ class ScanningAppWindow(Gtk.Window):
                 extents_m = cr.text_extents(meta_text)
                 box_w_m = extents_m.width + 16
                 box_h_m = extents_m.height + 10
-                x_pos = w_alloc - box_w_m - 10
+                x_pos = off_x + w_img - box_w_m - 10
                 cr.set_source_rgba(0.08, 0.08, 0.08, 0.75)
-                cr.rectangle(x_pos, 10, box_w_m, box_h_m)
+                cr.rectangle(x_pos, off_y + 10, box_w_m, box_h_m)
                 cr.fill()
                 cr.set_source_rgb(0.9, 0.9, 0.9)
-                cr.move_to(x_pos + 8, 10 + 5 + extents_m.height)
+                cr.move_to(x_pos + 8, off_y + 10 + 5 + extents_m.height)
                 cr.show_text(meta_text)
                 cr.restore()
 
@@ -1368,10 +1368,10 @@ class ScanningAppWindow(Gtk.Window):
             box_w = extents.width + 16
             box_h = extents.height + 10
             cr.set_source_rgba(0.08, 0.08, 0.08, 0.75)
-            cr.rectangle(10, 10, box_w, box_h)
+            cr.rectangle(off_x + 10, off_y + 10, box_w, box_h)
             cr.fill()
             cr.set_source_rgb(0.9, 0.9, 0.9)
-            cr.move_to(18, 10 + 5 + extents.height)
+            cr.move_to(off_x + 18, off_y + 10 + 5 + extents.height)
             cr.show_text(status_text)
             cr.restore()
 
@@ -1385,46 +1385,78 @@ class ScanningAppWindow(Gtk.Window):
                 extents_m = cr.text_extents(meta_text)
                 box_w_m = extents_m.width + 16
                 box_h_m = extents_m.height + 10
-                x_pos = w_alloc - box_w_m - 10
+                x_pos = off_x + w_img - box_w_m - 10
                 cr.set_source_rgba(0.08, 0.08, 0.08, 0.75)
-                cr.rectangle(x_pos, 10, box_w_m, box_h_m)
+                cr.rectangle(x_pos, off_y + 10, box_w_m, box_h_m)
                 cr.fill()
                 cr.set_source_rgb(0.9, 0.9, 0.9)
-                cr.move_to(x_pos + 8, 10 + 5 + extents_m.height)
+                cr.move_to(x_pos + 8, off_y + 10 + 5 + extents_m.height)
                 cr.show_text(meta_text)
                 cr.restore()
 
     # Mouse events
     def on_base_press(self, w, e):
+        if not hasattr(self, 'scaled_base_pixbuf') or self.scaled_base_pixbuf is None:
+            return
+        w_alloc = self.base_image_area.get_allocated_width()
+        h_alloc = self.base_image_area.get_allocated_height()
+        w_img = self.scaled_base_pixbuf.get_width()
+        h_img = self.scaled_base_pixbuf.get_height()
+        off_x = (w_alloc - w_img) / 2
+        off_y = (h_alloc - h_img) / 2
+        
+        x_clamped = max(off_x, min(off_x + w_img, e.x))
+        y_clamped = max(off_y, min(off_y + h_img, e.y))
+        
         self.is_dragging_base = True
-        self.base_rect_start = (e.x, e.y)
-        self.base_rect_end = (e.x, e.y)
+        self.base_rect_start = (x_clamped, y_clamped)
+        self.base_rect_end = (x_clamped, y_clamped)
         self.base_rect_raw = None
         self.base_image_area.queue_draw()
 
     def on_base_motion(self, w, e):
-        if self.is_dragging_base:
-            self.base_rect_end = (e.x, e.y)
+        if self.is_dragging_base and hasattr(self, 'scaled_base_pixbuf') and self.scaled_base_pixbuf is not None:
+            w_alloc = self.base_image_area.get_allocated_width()
+            h_alloc = self.base_image_area.get_allocated_height()
+            w_img = self.scaled_base_pixbuf.get_width()
+            h_img = self.scaled_base_pixbuf.get_height()
+            off_x = (w_alloc - w_img) / 2
+            off_y = (h_alloc - h_img) / 2
+            
+            x_clamped = max(off_x, min(off_x + w_img, e.x))
+            y_clamped = max(off_y, min(off_y + h_img, e.y))
+            
+            self.base_rect_end = (x_clamped, y_clamped)
             self.base_image_area.queue_draw()
 
     def on_base_release(self, w, e):
         if self.is_dragging_base:
             self.is_dragging_base = False
-            self.base_rect_end = (e.x, e.y)
-            
-            if self.base_preview_pixbuf:
+            if hasattr(self, 'scaled_base_pixbuf') and self.scaled_base_pixbuf is not None:
                 w_alloc = self.base_image_area.get_allocated_width()
                 h_alloc = self.base_image_area.get_allocated_height()
-                w_img = self.base_preview_pixbuf.get_width()
-                h_img = self.base_preview_pixbuf.get_height()
-                scale = min(w_alloc / w_img, h_alloc / h_img)
-                off_x = (w_alloc - w_img * scale) / 2
-                off_y = (h_alloc - h_img * scale) / 2
+                w_img = self.scaled_base_pixbuf.get_width()
+                h_img = self.scaled_base_pixbuf.get_height()
+                off_x = (w_alloc - w_img) / 2
+                off_y = (h_alloc - h_img) / 2
+                
+                x_clamped = max(off_x, min(off_x + w_img, e.x))
+                y_clamped = max(off_y, min(off_y + h_img, e.y))
+                self.base_rect_end = (x_clamped, y_clamped)
+                
+                w_orig = self.base_preview_pixbuf.get_width()
+                h_orig = self.base_preview_pixbuf.get_height()
+                scale = min(w_alloc / w_orig, h_alloc / h_orig)
                 
                 x1 = int((min(self.base_rect_start[0], self.base_rect_end[0]) - off_x) / scale)
                 x2 = int((max(self.base_rect_start[0], self.base_rect_end[0]) - off_x) / scale)
                 y1 = int((min(self.base_rect_start[1], self.base_rect_end[1]) - off_y) / scale)
                 y2 = int((max(self.base_rect_start[1], self.base_rect_end[1]) - off_y) / scale)
+                
+                x1 = max(0, min(w_orig, x1))
+                x2 = max(0, min(w_orig, x2))
+                y1 = max(0, min(h_orig, y1))
+                y2 = max(0, min(h_orig, y2))
                 
                 if x2 > x1 and y2 > y1:
                     self.base_rect_raw = (x1, y1, x2, y2)
@@ -1438,38 +1470,73 @@ class ScanningAppWindow(Gtk.Window):
                 self.update_base_histograms()
 
     def on_capture_press(self, w, e):
+        if not hasattr(self, 'scaled_capture_pixbuf') or self.scaled_capture_pixbuf is None:
+            return
+        w_alloc = self.capture_image_area.get_allocated_width()
+        h_alloc = self.capture_image_area.get_allocated_height()
+        w_img = self.scaled_capture_pixbuf.get_width()
+        h_img = self.scaled_capture_pixbuf.get_height()
+        off_x = (w_alloc - w_img) / 2
+        off_y = (h_alloc - h_img) / 2
+        
+        x_clamped = max(off_x, min(off_x + w_img, e.x))
+        y_clamped = max(off_y, min(off_y + h_img, e.y))
+        
         self.is_dragging_capture = True
-        self.capture_rect_start = (e.x, e.y)
-        self.capture_rect_end = (e.x, e.y)
+        self.capture_rect_start = (x_clamped, y_clamped)
+        self.capture_rect_end = (x_clamped, y_clamped)
         self.capture_rect_raw = None
         self.capture_image_area.queue_draw()
 
     def on_capture_motion(self, w, e):
-        if self.is_dragging_capture:
-            self.capture_rect_end = (e.x, e.y)
+        if self.is_dragging_capture and hasattr(self, 'scaled_capture_pixbuf') and self.scaled_capture_pixbuf is not None:
+            w_alloc = self.capture_image_area.get_allocated_width()
+            h_alloc = self.capture_image_area.get_allocated_height()
+            w_img = self.scaled_capture_pixbuf.get_width()
+            h_img = self.scaled_capture_pixbuf.get_height()
+            off_x = (w_alloc - w_img) / 2
+            off_y = (h_alloc - h_img) / 2
+            
+            x_clamped = max(off_x, min(off_x + w_img, e.x))
+            y_clamped = max(off_y, min(off_y + h_img, e.y))
+            
+            self.capture_rect_end = (x_clamped, y_clamped)
             self.capture_image_area.queue_draw()
 
     def on_capture_release(self, w, e):
         if self.is_dragging_capture:
             self.is_dragging_capture = False
-            self.capture_rect_end = (e.x, e.y)
-            
-            if self.capture_preview_pixbuf:
+            if hasattr(self, 'scaled_capture_pixbuf') and self.scaled_capture_pixbuf is not None:
                 w_alloc = self.capture_image_area.get_allocated_width()
                 h_alloc = self.capture_image_area.get_allocated_height()
-                w_img = self.capture_preview_pixbuf.get_width()
-                h_img = self.capture_preview_pixbuf.get_height()
-                scale = min(w_alloc / w_img, h_alloc / h_img)
-                off_x = (w_alloc - w_img * scale) / 2
-                off_y = (h_alloc - h_img * scale) / 2
+                w_img = self.scaled_capture_pixbuf.get_width()
+                h_img = self.scaled_capture_pixbuf.get_height()
+                off_x = (w_alloc - w_img) / 2
+                off_y = (h_alloc - h_img) / 2
                 
-                x1 = int((min(self.capture_rect_start[0], self.capture_rect_end[0]) - off_x) / scale)
-                x2 = int((max(self.capture_rect_start[0], self.capture_rect_end[0]) - off_x) / scale)
-                y1 = int((min(self.capture_rect_start[1], self.capture_rect_end[1]) - off_y) / scale)
-                y2 = int((max(self.capture_rect_start[1], self.capture_rect_end[1]) - off_y) / scale)
+                x_clamped = max(off_x, min(off_x + w_img, e.x))
+                y_clamped = max(off_y, min(off_y + h_img, e.y))
+                self.capture_rect_end = (x_clamped, y_clamped)
                 
-                if x2 > x1 and y2 > y1:
-                    self.capture_rect_raw = (x1, y1, x2, y2)
+                if self.capture_preview_pixbuf:
+                    w_orig = self.capture_preview_pixbuf.get_width()
+                    h_orig = self.capture_preview_pixbuf.get_height()
+                    scale = min(w_alloc / w_orig, h_alloc / h_orig)
+                    
+                    x1 = int((min(self.capture_rect_start[0], self.capture_rect_end[0]) - off_x) / scale)
+                    x2 = int((max(self.capture_rect_start[0], self.capture_rect_end[0]) - off_x) / scale)
+                    y1 = int((min(self.capture_rect_start[1], self.capture_rect_end[1]) - off_y) / scale)
+                    y2 = int((max(self.capture_rect_start[1], self.capture_rect_end[1]) - off_y) / scale)
+                    
+                    x1 = max(0, min(w_orig, x1))
+                    x2 = max(0, min(w_orig, x2))
+                    y1 = max(0, min(h_orig, y1))
+                    y2 = max(0, min(h_orig, y2))
+                    
+                    if x2 > x1 and y2 > y1:
+                        self.capture_rect_raw = (x1, y1, x2, y2)
+                    else:
+                        self.capture_rect_raw = None
                 else:
                     self.capture_rect_raw = None
             else:
