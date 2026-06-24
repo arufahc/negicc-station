@@ -9,7 +9,7 @@ from gi.repository import Gtk, Gdk, GLib
 class LauncherWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title="NEGICC Station Launcher")
-        self.set_default_size(700, 360)
+        self.set_default_size(700, 260)
         self.set_resizable(False)
         self.set_position(Gtk.WindowPosition.CENTER)
 
@@ -22,7 +22,7 @@ class LauncherWindow(Gtk.Window):
         css_provider.load_from_data(b"""
             .main-window {
                 background-color: #121212;
-                padding: 30px;
+                padding: 20px 24px;
             }
             .header-title {
                 font-family: 'Inter', 'Outfit', 'sans-serif';
@@ -34,13 +34,13 @@ class LauncherWindow(Gtk.Window):
                 font-family: 'Inter', 'Outfit', 'sans-serif';
                 font-size: 13px;
                 color: #888888;
-                margin-bottom: 25px;
+                margin-bottom: 12px;
             }
             .card-box {
                 background-color: #1a1a1a;
                 border: 1px solid #2e2e2e;
                 border-radius: 8px;
-                padding: 20px;
+                padding: 15px;
             }
             .card-title {
                 font-family: 'Inter', 'sans-serif';
@@ -59,7 +59,7 @@ class LauncherWindow(Gtk.Window):
                 font-weight: bold;
                 color: white;
                 border-radius: 6px;
-                padding: 10px 16px;
+                padding: 12px 16px;
                 border: none;
             }
             .btn-blue {
@@ -88,6 +88,7 @@ class LauncherWindow(Gtk.Window):
         )
 
         self.init_ui()
+
 
     def init_ui(self):
         # Main layout container
@@ -149,7 +150,7 @@ class LauncherWindow(Gtk.Window):
 
     def create_launcher_card(self, title, desc, btn_label, btn_class, target_script):
         # Card container
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         card.get_style_context().add_class("card-box")
 
         # Card Title
