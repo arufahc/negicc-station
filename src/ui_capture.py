@@ -18,6 +18,7 @@ import ctypes
 # Require GTK3
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
+import cairo
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_gtk3agg import FigureCanvasGTK3Agg as FigureCanvas
@@ -319,6 +320,7 @@ class ScanningAppWindow(Gtk.Window):
 
         # Build UI layout
         self.init_ui()
+        self.update_profile_dependencies()
 
         # Connect window keypress listener
         self.connect("key-press-event", self.on_key_press)
@@ -748,14 +750,17 @@ class ScanningAppWindow(Gtk.Window):
     def on_set_rot(self, btn, rot):
         self.orientation = rot
         self.update_capture_preview()
+        self.update_base_preview()
 
     def on_hflip(self, btn):
         self.hflip = btn.get_active()
         self.update_capture_preview()
+        self.update_base_preview()
 
     def on_vflip(self, btn):
         self.vflip = btn.get_active()
         self.update_capture_preview()
+        self.update_base_preview()
 
     def on_load_profile(self, widget):
         dialog = Gtk.FileChooserDialog(
@@ -793,11 +798,17 @@ class ScanningAppWindow(Gtk.Window):
                         name = tgt.get('name', f"Target {idx}")
                         self.target_liststore.append([idx, name, "--"])
                         
+                self.update_profile_dependencies()
                 self.update_capture_preview()
+                self.update_base_preview()
             except Exception as e:
                 self.lbl_profile_info.set_text(f"Error: {e}")
                 self.lbl_status.set_text("Status: Failed to load profile.")
                 self.profile = None
+                self.has_icc = False
+                self.has_crosstalk = False
+                self.update_profile_dependencies()
+                self.update_base_preview()
                 
         dialog.destroy()
 
@@ -809,7 +820,9 @@ class ScanningAppWindow(Gtk.Window):
         self.lbl_profile_info.set_text("No profile loaded.")
         self.lbl_status.set_text("Status: Profile cleared.")
         self.target_liststore.clear()
+        self.update_profile_dependencies()
         self.update_capture_preview()
+        self.update_base_preview()
 
     def on_target_selection_changed(self, selection):
         model, treeiter = selection.get_selected()
@@ -865,12 +878,13 @@ class ScanningAppWindow(Gtk.Window):
                         num, den = auto_exposure.parse_shutter_speed(ss)
                         ae_img = self.camera_session.capture(type=0, shutter_num=num, shutter_den=den) # Single shot for AE search
                         arr = ae_img.to_numpy(half=True)
+                        arr.iso = ae_img.iso  # Attach ISO to array!
                         ae_img.discard()
                         return arr
                     
-                    def ae_progress(step_idx, ss, ch_dr, avg_dr):
+                    def ae_progress(step_idx, ss, iso, ch_dr, avg_dr):
                         dr_r, dr_g, dr_b = ch_dr
-                        GLib.idle_add(self.add_ae_step, ss, dr_r, dr_g, dr_b, avg_dr)
+                        GLib.idle_add(self.add_ae_step, ss, iso, dr_r, dr_g, dr_b, avg_dr)
                     
                     opt_shutter, steps = auto_exposure.run_auto_exposure(
                         start_shutter_str=shutter_str,
@@ -914,15 +928,12 @@ class ScanningAppWindow(Gtk.Window):
         for child in self.ae_steps_listbox.get_children():
             self.ae_steps_listbox.remove(child)
 
-    def add_ae_step(self, ss, dr_r, dr_g, dr_b, avg_dr):
-        def fmt_dr(v):
-            return "<span foreground='#ff6666'>OVR</span>" if v < 0 else f"{v:.0f}"
-            
+    def add_ae_step(self, ss, iso, dr_r, dr_g, dr_b, avg_dr):
         row_label = Gtk.Label()
         row_label.set_markup(
             f"<span size='small' font_family='monospace'>"
-            f"Speed: <b>{ss}</b>\n"
-            f"DR: R:{fmt_dr(dr_r)} G:{fmt_dr(dr_g)} B:{fmt_dr(dr_b)} | <b>Avg:{fmt_dr(avg_dr)}</b>"
+            f"Speed: <b>{ss}</b> (ISO {iso})\n"
+            f"DR: R:{dr_r:.0f} G:{dr_g:.0f} B:{dr_b:.0f} | <b>Avg:{avg_dr:.0f}</b>"
             f"</span>"
         )
         row_label.set_xalign(0.0)
@@ -946,15 +957,7 @@ class ScanningAppWindow(Gtk.Window):
             self.base_rect_end = None
             self.base_rect_raw = None
             
-            raw = np.clip(raw_linear, 0, 16384)
-            img_array = (raw / 16384.0 * 255).astype(np.uint8)
-            img_array = np.ascontiguousarray(img_array)
-            h, w, c = img_array.shape
-            self.base_preview_pixbuf = GdkPixbuf.Pixbuf.new_from_data(
-                img_array.tobytes(), GdkPixbuf.Colorspace.RGB, False, 8, w, h, w * 3
-            )
-            
-            self.refresh_base_preview()
+            self.update_base_preview()
             self.update_base_histograms()
             self.notebook.set_current_page(1)
             
@@ -1012,17 +1015,24 @@ class ScanningAppWindow(Gtk.Window):
             self.hist_corr.clear()
             return
             
-        data = self.film_base_raw_linear
+        raw_d = self.film_base_raw_linear
         if hasattr(self, 'base_rect_raw') and self.base_rect_raw is not None:
             x1, y1, x2, y2 = self.base_rect_raw
-            dh, dw = data.shape[:2]
+            dh, dw = raw_d.shape[:2]
             x1, x2 = max(0, x1), min(dw, x2)
             y1, y2 = max(0, y1), min(dh, y2)
             if x2 > x1 and y2 > y1:
-                data = data[y1:y2, x1:x2]
+                raw_d = raw_d[y1:y2, x1:x2]
                 
-        self.hist_raw.plot_histogram(data, is_corrected=False, has_icc=False, show_overexposure=True)
-        self.hist_corr.clear()
+        self.hist_raw.plot_histogram(raw_d, is_corrected=False, has_icc=False, show_overexposure=True)
+        
+        if self.profile and self.has_crosstalk:
+            corr_d = raw_d.astype(np.float32)
+            corr_d = np.dot(corr_d, self.profile.crosstalk_matrix.T)
+            corr_d = np.clip(corr_d, 0, 16384)
+            self.hist_corr.plot_histogram(corr_d, is_corrected=True, has_icc=False, show_overexposure=False)
+        else:
+            self.hist_corr.clear()
 
     def on_read_film_base(self, btn):
         if self.film_base_raw_linear is None:
@@ -1040,8 +1050,7 @@ class ScanningAppWindow(Gtk.Window):
         rgb = np.mean(data, axis=(0, 1))
         self.film_base_rgb = (rgb[0], rgb[1], rgb[2])
         
-        self.base_tab_label.set_markup("<span foreground='green'>Film Base</span>")
-        self.capture_tab_label.set_markup("<span>Capture</span>")
+        self.update_profile_dependencies()
         
         corr_rgb = rgb
         if self.has_crosstalk:
@@ -1158,6 +1167,50 @@ class ScanningAppWindow(Gtk.Window):
         if self.notebook.get_current_page() == 0:
             self.update_capture_histograms()
 
+    def update_base_preview(self):
+        if self.film_base_raw_linear is None:
+            return
+            
+        if self.profile and self.has_crosstalk:
+            raw = self.film_base_raw_linear.astype(np.float32)
+            raw = np.dot(raw, self.profile.crosstalk_matrix.T)
+            raw = np.clip(raw, 0, 16384)
+            img_array = (raw / 16384.0 * 255).astype(np.uint8)
+        else:
+            raw = np.clip(self.film_base_raw_linear, 0, 16384)
+            img_array = (raw / 16384.0 * 255).astype(np.uint8)
+            
+        img_array = apply_transforms_numpy(img_array, self.hflip, self.vflip, self.orientation)
+        img_array = np.ascontiguousarray(img_array)
+        h, w, c = img_array.shape
+        self.base_preview_pixbuf = GdkPixbuf.Pixbuf.new_from_data(
+            img_array.tobytes(), GdkPixbuf.Colorspace.RGB, False, 8, w, h, w * 3
+        )
+        self.refresh_base_preview()
+
+    def update_profile_dependencies(self):
+        has_full_profile = self.profile is not None and self.has_crosstalk and self.has_icc
+        
+        # Update tab sensitivity
+        base_page = self.notebook.get_nth_page(1)
+        if base_page:
+            base_page.set_sensitive(has_full_profile)
+            
+        # Update Capture Film Base button sensitivity
+        self.btn_cap_base.set_sensitive(self.is_connected and has_full_profile)
+        
+        # Update tab labels warnings/statuses
+        if has_full_profile:
+            if self.film_base_rgb is not None:
+                self.base_tab_label.set_markup("<span foreground='#44ff44'>● Film Base (Calibrated)</span>")
+                self.capture_tab_label.set_markup("<span>Capture</span>")
+            else:
+                self.base_tab_label.set_markup("<span foreground='#e6a23c'>● Film Base (Needed)</span>")
+                self.capture_tab_label.set_markup("<span foreground='#e6a23c'>Capture (Base Needed)</span>")
+        else:
+            self.base_tab_label.set_markup("<span>Film Base</span>")
+            self.capture_tab_label.set_markup("<span>Capture</span>")
+
     def update_capture_histograms(self):
         if not hasattr(self, 'hist_raw') or self.hist_raw is None:
             return
@@ -1200,15 +1253,24 @@ class ScanningAppWindow(Gtk.Window):
         else:
             raw_data_sampled = raw_data
             
-        avg_dr, (dr_r, dr_g, dr_b) = auto_exposure.calculate_dynamic_range(raw_data_sampled)
+        # Calculate raw uncompensated dynamic range (p95 - p5)
+        H_c, W_c = raw_data_sampled.shape[:2]
+        hb_c = int(H_c * 0.05)
+        wb_c = int(W_c * 0.05)
+        cropped_c = raw_data_sampled[hb_c:H_c-hb_c, wb_c:W_c-wb_c, :]
         
-        def fmt(v):
-            return "<span foreground='#ff6666'><b>Overexposed</b></span>" if v < 0 else f"{v:.0f}"
+        dr_ch = []
+        for c in range(3):
+            ch_data = cropped_c[:, :, c]
+            p95 = np.percentile(ch_data, 95)
+            p5 = np.percentile(ch_data, 5)
+            dr_ch.append(p95 - p5)
+        avg_dr = sum(dr_ch) / 3.0
         
         self.lbl_dr.set_markup(
             f"<b>Dynamic Range</b> (p5-p95)\n"
-            f"  R: {fmt(dr_r)}  G: {fmt(dr_g)}  B: {fmt(dr_b)}\n"
-            f"  Avg: {fmt(avg_dr)}"
+            f"  R: {dr_ch[0]:.0f}  G: {dr_ch[1]:.0f}  B: {dr_ch[2]:.0f}\n"
+            f"  Avg: {avg_dr:.0f}"
         )
 
     def on_draw_capture(self, widget, cr):
@@ -1252,6 +1314,50 @@ class ScanningAppWindow(Gtk.Window):
                 cr.rectangle(x, y, w, h)
                 cr.stroke()
 
+            # Draw processing version overlay (top-left)
+            if self.profile:
+                if self.has_icc and self.film_base_rgb:
+                    status_text = "Crosstalk & ICC Corrected (Positive)"
+                elif self.has_icc:
+                    status_text = "Crosstalk Corrected Linear (No Film Base)"
+                else:
+                    status_text = "Crosstalk Corrected Linear (No ICC)"
+            else:
+                status_text = "Linear Raw (No Profile)"
+
+            cr.save()
+            cr.select_font_face("Inter", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+            cr.set_font_size(10)
+            extents = cr.text_extents(status_text)
+            box_w = extents.width + 16
+            box_h = extents.height + 10
+            cr.set_source_rgba(0.08, 0.08, 0.08, 0.75)
+            cr.rectangle(10, 10, box_w, box_h)
+            cr.fill()
+            cr.set_source_rgb(0.9, 0.9, 0.9)
+            cr.move_to(18, 10 + 5 + extents.height)
+            cr.show_text(status_text)
+            cr.restore()
+
+            # Draw captured metadata overlay (top-right)
+            if self.raw_image and self.raw_linear_pixels is not None:
+                h_p, w_p = self.raw_linear_pixels.shape[:2]
+                meta_text = f"ISO: {self.raw_image.iso} | Shutter: {self.raw_image.shutter_speed:.4f}s | {w_p}x{h_p}"
+                cr.save()
+                cr.select_font_face("Inter", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+                cr.set_font_size(10)
+                extents_m = cr.text_extents(meta_text)
+                box_w_m = extents_m.width + 16
+                box_h_m = extents_m.height + 10
+                x_pos = w_alloc - box_w_m - 10
+                cr.set_source_rgba(0.08, 0.08, 0.08, 0.75)
+                cr.rectangle(x_pos, 10, box_w_m, box_h_m)
+                cr.fill()
+                cr.set_source_rgb(0.9, 0.9, 0.9)
+                cr.move_to(x_pos + 8, 10 + 5 + extents_m.height)
+                cr.show_text(meta_text)
+                cr.restore()
+
     def on_draw_base(self, widget, cr):
         if hasattr(self, 'scaled_base_pixbuf') and self.scaled_base_pixbuf is not None:
             w_alloc = widget.get_allocated_width()
@@ -1291,6 +1397,45 @@ class ScanningAppWindow(Gtk.Window):
                 h = (y2_raw - y1_raw) * scale
                 cr.rectangle(x, y, w, h)
                 cr.stroke()
+
+            # Draw processing version overlay (top-left)
+            if self.profile and self.has_crosstalk:
+                status_text = "Crosstalk Corrected Linear (Film Base)"
+            else:
+                status_text = "Linear Raw (Film Base)"
+
+            cr.save()
+            cr.select_font_face("Inter", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+            cr.set_font_size(10)
+            extents = cr.text_extents(status_text)
+            box_w = extents.width + 16
+            box_h = extents.height + 10
+            cr.set_source_rgba(0.08, 0.08, 0.08, 0.75)
+            cr.rectangle(10, 10, box_w, box_h)
+            cr.fill()
+            cr.set_source_rgb(0.9, 0.9, 0.9)
+            cr.move_to(18, 10 + 5 + extents.height)
+            cr.show_text(status_text)
+            cr.restore()
+
+            # Draw captured metadata overlay (top-right)
+            if self.film_base_img and self.film_base_raw_linear is not None:
+                h_p, w_p = self.film_base_raw_linear.shape[:2]
+                meta_text = f"ISO: {self.film_base_img.iso} | Shutter: {self.film_base_img.shutter_speed:.4f}s | {w_p}x{h_p}"
+                cr.save()
+                cr.select_font_face("Inter", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+                cr.set_font_size(10)
+                extents_m = cr.text_extents(meta_text)
+                box_w_m = extents_m.width + 16
+                box_h_m = extents_m.height + 10
+                x_pos = w_alloc - box_w_m - 10
+                cr.set_source_rgba(0.08, 0.08, 0.08, 0.75)
+                cr.rectangle(x_pos, 10, box_w_m, box_h_m)
+                cr.fill()
+                cr.set_source_rgb(0.9, 0.9, 0.9)
+                cr.move_to(x_pos + 8, 10 + 5 + extents_m.height)
+                cr.show_text(meta_text)
+                cr.restore()
 
     # Mouse events
     def on_base_press(self, w, e):

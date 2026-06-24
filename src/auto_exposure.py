@@ -116,13 +116,27 @@ def run_auto_exposure(start_shutter_str, capture_func, progress_callback=None, c
     def evaluate_step(idx):
         shutter_str = SHUTTER_SPEEDS[idx]
         arr = capture_func(idx)
+        iso = getattr(arr, 'iso', 100)
+        
+        # Calculate raw uncompensated dynamic range (p95 - p5)
+        H, W = arr.shape[:2]
+        hb, wb = int(H*0.05), int(W*0.05)
+        cropped = arr[hb:H-hb, wb:W-wb, :]
+        raw_drs = []
+        for c in range(3):
+            ch_data = cropped[:, :, c]
+            raw_drs.append(np.percentile(ch_data, 95) - np.percentile(ch_data, 5))
+        raw_avg = sum(raw_drs) / 3.0
+        
+        # Calculate penalized DR for search logic
         avg_dr, (dr_r, dr_g, dr_b) = calculate_dynamic_range(arr)
         
-        # Format metrics and print to stdout
-        print(f"Auto-Exposure Step [Index {idx}] Shutter: {shutter_str} -> R: {dr_r:.1f}, G: {dr_g:.1f}, B: {dr_b:.1f} | Avg DR: {avg_dr:.1f}")
+        # Format metrics and print to stdout (showing uncompensated values)
+        print(f"Auto-Exposure Step [Index {idx}] Shutter: {shutter_str} (ISO {iso}) -> R: {raw_drs[0]:.1f}, G: {raw_drs[1]:.1f}, B: {raw_drs[2]:.1f} | Avg DR: {raw_avg:.1f}")
+        sys.stdout.flush()
         
         if progress_callback:
-            progress_callback(idx, shutter_str, (dr_r, dr_g, dr_b), avg_dr)
+            progress_callback(idx, shutter_str, iso, raw_drs, raw_avg)
             
         return avg_dr, (dr_r, dr_g, dr_b)
         
