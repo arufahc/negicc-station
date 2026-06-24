@@ -46,16 +46,16 @@ def capture_exposure_frame(shutter_str, half=True, session=None):
     return arr
 
 def calculate_dynamic_range(arr):
-    """Calculates the dynamic range for each channel and the average, excluding 5% boundaries.
+    """Calculates the dynamic range for each channel and the average, on the center square
+    (size equal to 2/3 of the shorter side of the image) to guide the auto-exposure search.
     Enforces that the 95th percentile of each channel must be below 13107.2 (80% of 16384).
     If p95 exceeds this limit, the channel is penalized to guide the auto-exposure search.
     """
     H, W, C = arr.shape
-    h_border = int(H * 0.05)
-    w_border = int(W * 0.05)
-    
-    # Exclude 5% borders
-    cropped = arr[h_border:H-h_border, w_border:W-w_border, :]
+    square_size = int(min(H, W) * 2 // 3)
+    y_start = (H - square_size) // 2
+    x_start = (W - square_size) // 2
+    cropped = arr[y_start:y_start+square_size, x_start:x_start+square_size, :]
     
     # Decimate if cropped array is large to make percentile calculations lightning fast
     cH, cW = cropped.shape[:2]
@@ -118,10 +118,12 @@ def run_auto_exposure(start_shutter_str, capture_func, progress_callback=None, c
         arr = capture_func(idx)
         iso = getattr(arr, 'iso', 100)
         
-        # Calculate raw uncompensated dynamic range (p95 - p5)
+        # Calculate raw uncompensated dynamic range (p95 - p5) on center 2/3 square region
         H, W = arr.shape[:2]
-        hb, wb = int(H*0.05), int(W*0.05)
-        cropped = arr[hb:H-hb, wb:W-wb, :]
+        square_size = int(min(H, W) * 2 // 3)
+        y_start = (H - square_size) // 2
+        x_start = (W - square_size) // 2
+        cropped = arr[y_start:y_start+square_size, x_start:x_start+square_size, :]
         raw_drs = []
         for c in range(3):
             ch_data = cropped[:, :, c]
