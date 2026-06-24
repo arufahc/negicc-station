@@ -26,6 +26,7 @@ python_lib:
 
 test_parity: all
 	./venv/bin/python3 tests/test_cpython.py
+	./venv/bin/python3 tests/test_crosstalk_parity.py
 
 test_live: all
 	./venv/bin/python3 tests/test_live_parity.py
