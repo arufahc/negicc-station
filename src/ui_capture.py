@@ -332,9 +332,46 @@ class ScanningAppWindow(Gtk.Window):
         css_provider.load_from_data(b"""
             .sidebar { background-color: #1e1e1e; padding: 15px; }
             .preview-container { background-color: #121212; padding: 10px; }
-            .btn-action { font-weight: bold; padding: 8px 12px; border-radius: 6px; }
-            .btn-green { background-image: linear-gradient(to bottom, #2ea44f, #2c974b); color: white; }
-            .btn-yellow { background-image: linear-gradient(to bottom, #b8860b, #996515); color: white; }
+            
+            button {
+                transition: background-image 0.1s ease-in-out, background-color 0.1s ease-in-out, box-shadow 0.1s ease-in-out;
+            }
+            
+            .btn-action { 
+                font-weight: bold; 
+                padding: 8px 12px; 
+                border-radius: 6px; 
+                border: none;
+            }
+            
+            .btn-green { 
+                background-image: linear-gradient(to bottom, #2ea44f, #2c974b); 
+                color: white; 
+                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            }
+            .btn-green:hover {
+                background-image: linear-gradient(to bottom, #3bc262, #2ea44f);
+                box-shadow: 0 4px 8px rgba(0,0,0,0.4);
+            }
+            .btn-green:active {
+                background-image: linear-gradient(to bottom, #2c974b, #206a35);
+                box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+            }
+            
+            .btn-yellow { 
+                background-image: linear-gradient(to bottom, #b8860b, #996515); 
+                color: white; 
+                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            }
+            .btn-yellow:hover {
+                background-image: linear-gradient(to bottom, #d49b13, #b8860b);
+                box-shadow: 0 4px 8px rgba(0,0,0,0.4);
+            }
+            .btn-yellow:active {
+                background-image: linear-gradient(to bottom, #996515, #734b0f);
+                box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+            }
+            
             .meta-label { font-family: monospace; font-size: 11px; color: #b3b3b3; }
             .warning-label { color: #ffaa00; font-weight: bold; }
             .status-indicator { font-weight: bold; font-size: 14px; padding: 10px; background-color: #2b2b2b; border-radius: 5px; }

@@ -53,6 +53,9 @@ class LauncherWindow(Gtk.Window):
                 font-size: 11px;
                 color: #aaaaaa;
             }
+            button {
+                transition: background-image 0.1s ease-in-out, background-color 0.1s ease-in-out, box-shadow 0.1s ease-in-out;
+            }
             .btn-action {
                 font-family: 'Inter', 'sans-serif';
                 font-size: 12px;
@@ -64,21 +67,39 @@ class LauncherWindow(Gtk.Window):
             }
             .btn-blue {
                 background-image: linear-gradient(to bottom, #1e70e0, #1555b3);
+                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
             }
             .btn-blue:hover {
                 background-image: linear-gradient(to bottom, #3b88f5, #1e70e0);
+                box-shadow: 0 4px 8px rgba(0,0,0,0.4);
+            }
+            .btn-blue:active {
+                background-image: linear-gradient(to bottom, #1555b3, #0f3d82);
+                box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
             }
             .btn-purple {
                 background-image: linear-gradient(to bottom, #8a2be2, #5f00b3);
+                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
             }
             .btn-purple:hover {
                 background-image: linear-gradient(to bottom, #a34df2, #8a2be2);
+                box-shadow: 0 4px 8px rgba(0,0,0,0.4);
+            }
+            .btn-purple:active {
+                background-image: linear-gradient(to bottom, #5f00b3, #430080);
+                box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
             }
             .btn-green {
                 background-image: linear-gradient(to bottom, #2ea44f, #2c974b);
+                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
             }
             .btn-green:hover {
                 background-image: linear-gradient(to bottom, #3bc262, #2ea44f);
+                box-shadow: 0 4px 8px rgba(0,0,0,0.4);
+            }
+            .btn-green:active {
+                background-image: linear-gradient(to bottom, #2c974b, #206a35);
+                box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
             }
         """)
         Gtk.StyleContext.add_provider_for_screen(
