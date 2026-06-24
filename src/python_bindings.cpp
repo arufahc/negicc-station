@@ -99,7 +99,7 @@ static PyObject* PyCapturedImage_to_numpy(PyCapturedImage* self, PyObject* args,
 
     static const char* kwlist[] = {
         "half", "crosstalk_matrix", "it8_profile_path", "output_profile_path",
-        "profile_film_base", "film_base", "exposure_comp", "post_correction_gamma",
+        "profile_film_base", "film_base", "exposure_comp", "pipeline",
         "it8_profile_bytes", nullptr
     };
     int half = 0;
@@ -109,13 +109,13 @@ static PyObject* PyCapturedImage_to_numpy(PyCapturedImage* self, PyObject* args,
     PyObject* py_profile_film_base = nullptr;
     PyObject* py_film_base = nullptr;
     float exposure_comp = 1.0f;
-    float post_correction_gamma = 1.0f;
+    const char* pipeline = "cpp";
     PyObject* py_icc_bytes = nullptr;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|pOzzOOffO", const_cast<char**>(kwlist),
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|pOzzOOfzO", const_cast<char**>(kwlist),
                                      &half, &py_matrix, &it8_profile_path, &output_profile_path,
                                      &py_profile_film_base, &py_film_base, &exposure_comp,
-                                     &post_correction_gamma, &py_icc_bytes)) {
+                                     &pipeline, &py_icc_bytes)) {
         return nullptr;
     }
 
@@ -197,9 +197,10 @@ static PyObject* PyCapturedImage_to_numpy(PyCapturedImage* self, PyObject* args,
 
     int w = 0, h = 0;
     std::vector<uint16_t> buf;
+    std::string pipe_str = pipeline ? pipeline : "cpp";
     if (!self->cpp_img->get_linear_rgb(half != 0, w, h, buf, cc_matrix, it8_path, out_path,
                                        profile_film_base, film_base, exposure_comp,
-                                       post_correction_gamma, icc_data, (size_t)icc_data_size)) {
+                                       pipe_str, icc_data, (size_t)icc_data_size)) {
         PyErr_SetString(PyExc_RuntimeError, "Failed to load/process RAW image buffer.");
         return nullptr;
     }
@@ -222,7 +223,7 @@ static PyObject* PyCapturedImage_write_tiff(PyCapturedImage* self, PyObject* arg
 
     static const char* kwlist[] = {
         "output_path", "half", "crosstalk_matrix", "it8_profile_path", "output_profile_path",
-        "profile_film_base", "film_base", "exposure_comp", "post_correction_gamma",
+        "profile_film_base", "film_base", "exposure_comp", "pipeline",
         "it8_profile_bytes", nullptr
     };
     const char* output_path = nullptr;
@@ -233,13 +234,13 @@ static PyObject* PyCapturedImage_write_tiff(PyCapturedImage* self, PyObject* arg
     PyObject* py_profile_film_base = nullptr;
     PyObject* py_film_base = nullptr;
     float exposure_comp = 1.0f;
-    float post_correction_gamma = 1.0f;
+    const char* pipeline = "cpp";
     PyObject* py_icc_bytes = nullptr;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|pOzzOOffO", const_cast<char**>(kwlist),
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|pOzzOOfzO", const_cast<char**>(kwlist),
                                      &output_path, &half, &py_matrix, &it8_profile_path, &output_profile_path,
                                      &py_profile_film_base, &py_film_base, &exposure_comp,
-                                     &post_correction_gamma, &py_icc_bytes)) {
+                                     &pipeline, &py_icc_bytes)) {
         return nullptr;
     }
 
@@ -318,9 +319,10 @@ static PyObject* PyCapturedImage_write_tiff(PyCapturedImage* self, PyObject* arg
     std::string it8_path = (it8_profile_path && !icc_data) ? it8_profile_path : "";
     std::string out_path = output_profile_path ? output_profile_path : "srgb";
 
+    std::string pipe_str = pipeline ? pipeline : "cpp";
     bool success = write_linear_tiff(*self->cpp_img, output_path, half != 0, cc_matrix,
                                      it8_path, out_path, profile_film_base, film_base,
-                                     exposure_comp, post_correction_gamma,
+                                     exposure_comp, pipe_str,
                                      icc_data, (size_t)icc_data_size);
     return PyBool_FromLong(success ? 1 : 0);
 }

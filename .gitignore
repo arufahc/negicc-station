@@ -12,3 +12,7 @@ negicc_station.egg-info/
 __pycache__/
 *.pyc
 *.ARW
+
+# Compiled objects and libraries
+*.o
+*.so

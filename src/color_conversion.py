@@ -164,7 +164,7 @@ def adjust_correction_matrix(cc_matrix, exposure_comp, profile_film_base=None, f
 # Core Pipeline Conversion Function
 # =============================================================================
 
-def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=None, shutter_str=None, exposure_comp=1.0, post_correction_gamma=1.0, half=True, film_base_rgb=None, film_base_img=None):
+def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=None, shutter_str=None, exposure_comp=1.0, half=True, film_base_rgb=None, film_base_img=None):
     """
     Decodes and converts RAW image entirely in Python using Little CMS ctypes metadata extraction
     and NumPy-vectorized transformations. Saves output as 16-bit linear/sRGB TIFF with embedded ICC profile.
@@ -260,9 +260,7 @@ def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=
         img_float = np.stack([r_c, g_c, b_c], axis=-1)
         np.clip(img_float, 0.0, 1.0, out=img_float)
 
-    # 7. Apply post-correction gamma in float32 directly using power calculation
-    if abs(post_correction_gamma - 1.0) > 1e-5:
-        img_float = np.power(img_float, 1.0 / post_correction_gamma)
+    # 7. Post-correction gamma removed (no-op)
 
     # 8. Parse Film ICC Profile Stages using Little CMS via ctypes
     lcms = LittleCMS()

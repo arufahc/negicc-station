@@ -444,7 +444,6 @@ class ProfileReportWindow(Gtk.Window):
                     clut_path=None,
                     shutter_str=shutter_speed_str,
                     exposure_comp=1.0,
-                    post_correction_gamma=1.0,
                     half=True
                 )
                 

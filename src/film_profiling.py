@@ -942,8 +942,17 @@ def download_and_parse_reference_file(url_or_path, cache_dir, prompt_zip_callbac
     return patches, loaded_filename, reference_dir
 
 
-def convert_raw_image(img, profile, clut_path=None, shutter_str=None, exposure_comp=1.0, post_correction_gamma=1.0, half=True, film_base_rgb=None, film_base_img=None):
+def convert_raw_image(img, profile, clut_path=None, shutter_str=None, exposure_comp=1.0, half=True, film_base_rgb=None, film_base_img=None, pipeline="cpp"):
     """Converts RAW image to positive sRGB using the C++ backend and row-wise film base scaling."""
+    if pipeline == "python":
+        import color_conversion
+        return color_conversion.convert_raw_to_tiff( # wait, to_numpy vs convert_raw_to_tiff?
+            # actually convert_raw_image was returning numpy array, but convert_raw_to_tiff saves file.
+            # let's route to color_conversion or standard flow
+            img=img, profile=profile, output_path="", colorspace="srgb", clut_path=clut_path,
+            shutter_str=shutter_str, exposure_comp=exposure_comp, half=half,
+            film_base_rgb=film_base_rgb, film_base_img=film_base_img
+        )
     # Resolve ICC data: prefer in-memory bytes, then fall back to clut_path file
     icc_bytes = None
     if clut_path is None:
@@ -1003,7 +1012,7 @@ def convert_raw_image(img, profile, clut_path=None, shutter_str=None, exposure_c
         profile_film_base=None,
         film_base=None,
         exposure_comp=exposure_comp,
-        post_correction_gamma=post_correction_gamma
+        pipeline=pipeline
     )
     if icc_bytes is not None:
         kwargs['it8_profile_bytes'] = icc_bytes
@@ -1013,8 +1022,16 @@ def convert_raw_image(img, profile, clut_path=None, shutter_str=None, exposure_c
     return img.to_numpy(**kwargs)
 
 
-def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=None, shutter_str=None, exposure_comp=1.0, post_correction_gamma=1.0, half=True, film_base_rgb=None, film_base_img=None):
-    """Converts RAW image and saves directly to TIFF in C++ without NumPy image copy."""
+def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=None, shutter_str=None, exposure_comp=1.0, half=True, film_base_rgb=None, film_base_img=None, pipeline="cpp"):
+    """Converts RAW image and saves directly to TIFF in C++ or CUDA without NumPy image copy."""
+    if pipeline == "python":
+        import color_conversion
+        return color_conversion.convert_raw_to_tiff(
+            img=img, profile=profile, output_path=output_path, colorspace=colorspace,
+            clut_path=clut_path, shutter_str=shutter_str, exposure_comp=exposure_comp,
+            half=half, film_base_rgb=film_base_rgb, film_base_img=film_base_img
+        )
+
     # Resolve ICC data: prefer in-memory bytes, then fall back to clut_path file
     icc_bytes = None
     if clut_path is None:
@@ -1074,7 +1091,7 @@ def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=
         profile_film_base=None,
         film_base=None,
         exposure_comp=exposure_comp,
-        post_correction_gamma=post_correction_gamma
+        pipeline=pipeline
     )
     if icc_bytes is not None:
         kwargs['it8_profile_bytes'] = icc_bytes

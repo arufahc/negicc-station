@@ -30,7 +30,7 @@ def parse_shutter_speed(shutter_str):
 
 def main():
     parser = argparse.ArgumentParser(description="Build profile and convert raw ARW image to TIFF.")
-    parser.add_argument("--profile", default="profiles/profile_Portra 400_20260623_000121.json",
+    parser.add_argument("--profile", default="profiles/profile_Portra400_20260623_170610.json",
                         help="Path to the input film profile JSON.")
     parser.add_argument("--reference", default="http://www.colorreference.de/targets/R190808.zip",
                         help="URL or local path of the IT8 reference file.")
@@ -42,14 +42,12 @@ def main():
                         help="Use full size rendering instead of half size.")
     parser.add_argument("--exposure-comp", type=float, default=1.0,
                         help="Exposure compensation factor.")
-    parser.add_argument("--gamma", type=float, default=1.0,
-                        help="Post correction gamma.")
     parser.add_argument("--colorspace", choices=["srgb", "srgb-g10"], default="srgb",
                         help="Working space profile (default: srgb)")
-    parser.add_argument("--python", action="store_true",
-                        help="Use pure Python color pipeline conversion.")
+    parser.add_argument("--pipeline", choices=["cpp", "cuda", "python"], default="cpp",
+                        help="Select conversion pipeline (default: cpp)")
     parser.add_argument("--compare", action="store_true",
-                        help="Run both C++ and Python pipelines and compare results.")
+                        help="Run Python, C++ CPU and CUDA pipelines and compare results.")
     
     args = parser.parse_args()
 
@@ -151,26 +149,13 @@ def main():
     )
     
     if args.compare:
+        import time
         import color_conversion
         
-        # Run C++ conversion
-        cpp_output_path = output_path.replace(".tiff", "_cpp.tiff").replace(".tif", "_cpp.tif")
-        print(f"Converting and saving TIFF (C++ pipeline) to: {cpp_output_path}...")
-        cpp_success = film_profiling.convert_raw_to_tiff(
-            img=img,
-            profile=sc_profile,
-            output_path=cpp_output_path,
-            colorspace=args.colorspace,
-            clut_path=None,
-            shutter_str="1/8s",
-            exposure_comp=args.exposure_comp,
-            post_correction_gamma=args.gamma,
-            half=half_size
-        )
-        
-        # Run Python conversion
+        # 1. Run Python conversion
         py_output_path = output_path.replace(".tiff", "_py.tiff").replace(".tif", "_py.tif")
         print(f"Converting and saving TIFF (Python pipeline) to: {py_output_path}...")
+        t0 = time.perf_counter()
         py_success = color_conversion.convert_raw_to_tiff(
             img=img,
             profile=sc_profile,
@@ -179,11 +164,45 @@ def main():
             clut_path=None,
             shutter_str="1/8s",
             exposure_comp=args.exposure_comp,
-            post_correction_gamma=args.gamma,
             half=half_size
         )
+        t_py = time.perf_counter() - t0
         
-        if not (cpp_success and py_success):
+        # 2. Run C++ CPU conversion
+        cpp_output_path = output_path.replace(".tiff", "_cpp.tiff").replace(".tif", "_cpp.tif")
+        print(f"Converting and saving TIFF (C++ CPU pipeline) to: {cpp_output_path}...")
+        t0 = time.perf_counter()
+        cpp_success = film_profiling.convert_raw_to_tiff(
+            img=img,
+            profile=sc_profile,
+            output_path=cpp_output_path,
+            colorspace=args.colorspace,
+            clut_path=None,
+            shutter_str="1/8s",
+            exposure_comp=args.exposure_comp,
+            half=half_size,
+            pipeline="cpp"
+        )
+        t_cpp = time.perf_counter() - t0
+
+        # 3. Run CUDA conversion
+        cuda_output_path = output_path.replace(".tiff", "_cuda.tiff").replace(".tif", "_cuda.tif")
+        print(f"Converting and saving TIFF (CUDA pipeline) to: {cuda_output_path}...")
+        t0 = time.perf_counter()
+        cuda_success = film_profiling.convert_raw_to_tiff(
+            img=img,
+            profile=sc_profile,
+            output_path=cuda_output_path,
+            colorspace=args.colorspace,
+            clut_path=None,
+            shutter_str="1/8s",
+            exposure_comp=args.exposure_comp,
+            half=half_size,
+            pipeline="cuda"
+        )
+        t_cuda = time.perf_counter() - t0
+        
+        if not (cpp_success and py_success and cuda_success):
             print("Error: Conversion failed on one or both pipelines.")
             sys.exit(1)
             
@@ -191,73 +210,92 @@ def main():
         print("Loading output images for comparison...")
         arr_cpp = imageio.imread(cpp_output_path)
         arr_py = imageio.imread(py_output_path)
+        arr_cuda = imageio.imread(cuda_output_path)
         
-        # Compute absolute difference
-        diff = np.abs(arr_cpp.astype(np.int32) - arr_py.astype(np.int32))
-        max_diff = np.max(diff)
-        mean_diff = np.mean(diff)
+        # Compute absolute differences
+        diff_cpp_py = np.abs(arr_cpp.astype(np.int32) - arr_py.astype(np.int32))
+        max_diff_cpp_py = np.max(diff_cpp_py)
+        mean_diff_cpp_py = np.mean(diff_cpp_py)
+
+        diff_cuda_py = np.abs(arr_cuda.astype(np.int32) - arr_py.astype(np.int32))
+        max_diff_cuda_py = np.max(diff_cuda_py)
+        mean_diff_cuda_py = np.mean(diff_cuda_py)
+
+        diff_cuda_cpp = np.abs(arr_cuda.astype(np.int32) - arr_cpp.astype(np.int32))
+        max_diff_cuda_cpp = np.max(diff_cuda_cpp)
+        mean_diff_cuda_cpp = np.mean(diff_cuda_cpp)
         
+        print("\n=== PROCESSING TIMES ===")
+        print(f"Python pipeline:  {t_py:.4f} seconds")
+        print(f"C++ CPU pipeline: {t_cpp:.4f} seconds (Speedup vs Python: {t_py/t_cpp:.1f}x)")
+        print(f"CUDA pipeline:    {t_cuda:.4f} seconds (Speedup vs Python: {t_py/t_cuda:.1f}x, vs CPU: {t_cpp/t_cuda:.1f}x)")
+
         print("\n=== PARITY COMPARISON RESULTS ===")
-        print(f"Max Pixel-wise Difference: {max_diff} LSB (out of 65535)")
-        print(f"Mean Pixel-wise Difference: {mean_diff:.6f} LSB")
+        print(f"C++ CPU vs Python:")
+        print(f"  Max Pixel-wise Difference: {max_diff_cpp_py} LSB (out of 65535)")
+        print(f"  Mean Pixel-wise Difference: {mean_diff_cpp_py:.6f} LSB")
+        print(f"CUDA vs Python:")
+        print(f"  Max Pixel-wise Difference: {max_diff_cuda_py} LSB")
+        print(f"  Mean Pixel-wise Difference: {mean_diff_cuda_py:.6f} LSB")
+        print(f"CUDA vs C++ CPU:")
+        print(f"  Max Pixel-wise Difference: {max_diff_cuda_cpp} LSB")
+        print(f"  Mean Pixel-wise Difference: {mean_diff_cuda_cpp:.6f} LSB")
         
         # Verify ICC tag embedding
         from imageio.plugins.tifffile import _tifffile
         tif_cpp = _tifffile.TiffFile(cpp_output_path)
         tif_py = _tifffile.TiffFile(py_output_path)
+        tif_cuda = _tifffile.TiffFile(cuda_output_path)
         
         has_icc_cpp = 34675 in [t.code for t in tif_cpp.pages[0].tags.values()]
         has_icc_py = 34675 in [t.code for t in tif_py.pages[0].tags.values()]
+        has_icc_cuda = 34675 in [t.code for t in tif_cuda.pages[0].tags.values()]
         
-        print(f"C++ TIFF has ICC profile tag (34675): {has_icc_cpp}")
-        print(f"Python TIFF has ICC profile tag (34675): {has_icc_py}")
+        print(f"C++ CPU TIFF has ICC profile tag (34675): {has_icc_cpp}")
+        print(f"Python TIFF has ICC profile tag (34675):  {has_icc_py}")
+        print(f"CUDA TIFF has ICC profile tag (34675):    {has_icc_cuda}")
         print("==================================\n")
         
-        # C++ Little CMS uses 16-bit integer lookup tables and tetrahedral 3D interpolation
-        # with some fixed-point optimization, whereas our Python implementation runs in float32
-        # and uses trilinear 3D interpolation. Thus, small differences (within a few thousand LSBs
-        # peak, e.g. < 8192 LSB, and < 256 LSB average) are completely normal.
-        if mean_diff <= 256 and max_diff <= 8192:
-            print("PARITY CHECK PASSED: Results are close enough with small expected error.")
+        # CPU/CUDA tetrahedral matching comparison
+        if mean_diff_cuda_cpp <= 5.0 and max_diff_cuda_cpp <= 50:
+            print("PARITY CHECK PASSED: CUDA and C++ CPU match very closely.")
         else:
-            print("WARNING: Large difference between C++ and Python conversions.")
+            print("WARNING: Large difference between CUDA and C++ CPU conversions.")
             
-    elif args.python:
-        import color_conversion
-        print(f"Converting and saving TIFF (Python pipeline) to: {output_path}...")
-        success = color_conversion.convert_raw_to_tiff(
-            img=img,
-            profile=sc_profile,
-            output_path=output_path,
-            colorspace=args.colorspace,
-            clut_path=None,
-            shutter_str="1/8s",
-            exposure_comp=args.exposure_comp,
-            post_correction_gamma=args.gamma,
-            half=half_size
-        )
-        if success:
-            print("TIFF written successfully entirely in Python!")
-        else:
-            print("Error: Python TIFF conversion failed.")
-            sys.exit(1)
     else:
-        print(f"Converting and saving TIFF (C++ pipeline) to: {output_path}...")
-        success = film_profiling.convert_raw_to_tiff(
-            img=img,
-            profile=sc_profile,
-            output_path=output_path,
-            colorspace=args.colorspace,
-            clut_path=None,
-            shutter_str="1/8s",
-            exposure_comp=args.exposure_comp,
-            post_correction_gamma=args.gamma,
-            half=half_size
-        )
-        if success:
-            print("TIFF written successfully entirely in C++!")
+        import time
+        t0 = time.perf_counter()
+        if args.pipeline == "python":
+            import color_conversion
+            print(f"Converting and saving TIFF (Python pipeline) to: {output_path}...")
+            success = color_conversion.convert_raw_to_tiff(
+                img=img,
+                profile=sc_profile,
+                output_path=output_path,
+                colorspace=args.colorspace,
+                clut_path=None,
+                shutter_str="1/8s",
+                exposure_comp=args.exposure_comp,
+                half=half_size
+            )
         else:
-            print("Error: C++ TIFF conversion failed.")
+            print(f"Converting and saving TIFF ({args.pipeline.upper()} pipeline) to: {output_path}...")
+            success = film_profiling.convert_raw_to_tiff(
+                img=img,
+                profile=sc_profile,
+                output_path=output_path,
+                colorspace=args.colorspace,
+                clut_path=None,
+                shutter_str="1/8s",
+                exposure_comp=args.exposure_comp,
+                half=half_size,
+                pipeline=args.pipeline
+            )
+        elapsed = time.perf_counter() - t0
+        if success:
+            print(f"TIFF written successfully in {elapsed:.4f} seconds using {args.pipeline} pipeline!")
+        else:
+            print(f"Error: TIFF conversion failed using {args.pipeline} pipeline.")
             sys.exit(1)
 
 if __name__ == "__main__":

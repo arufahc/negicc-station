@@ -7,9 +7,18 @@
 #include <netinet/in.h>
 #include "libraw/tiff_head.h"
 #include <lcms2.h>
+#include "lcms2_plugin.h"
 #include "elle_icc_profiles/sRGB_elle_V2_g10.h"
 #include "elle_icc_profiles/sRGB_elle_V2_srgbtrc.h"
 #include "dcraw/gamma_curve.h"
+#include "color_conversion.h"
+
+static int read_profile_from_file(const std::string& prof_name, unsigned **prof_out, unsigned *size);
+static bool apply_lcms_profile(std::vector<uint16_t>& buf, int width, int height,
+                              const std::string& input_prof_path,
+                              const std::string& output_prof_path,
+                              const uint8_t* input_prof_data,
+                              size_t input_prof_data_size);
 
 static inline void apply_crosstalk_correction(uint16_t& r, uint16_t& g, uint16_t& b, const std::vector<float>& cc_matrix) {
     if (cc_matrix.empty()) return;
@@ -56,13 +65,165 @@ static void adjust_correction_matrix(std::vector<float>& r_coef,
     scale_vector(b_coef, b_scale * global_exposure_comp);
 }
 
-static void apply_gamma_to_buf(std::vector<uint16_t>& buf, double gamma) {
-    if (std::abs(gamma - 1.0) < 1e-5) return;
-    std::vector<uint16_t> curve(0x10000);
-    gamma_curve(curve.data(), gamma, 0.0);
-    for (size_t i = 0; i < buf.size(); ++i) {
-        buf[i] = curve[buf[i]];
+// Private cmsStage structs are now imported via lcms2_plugin.h
+
+static bool run_color_pipeline_host(
+    std::vector<uint16_t>& buf, int out_w, int out_h,
+    const std::vector<float>& cc_matrix, float exposure_comp,
+    const std::string& pipeline,
+    const std::string& it8_profile_path, const std::string& output_profile_path,
+    const uint8_t* it8_profile_data, size_t it8_profile_data_size
+) {
+    bool has_profile = !it8_profile_path.empty() || (it8_profile_data != nullptr && it8_profile_data_size > 0);
+    bool use_cuda = (pipeline == "cuda");
+
+    if (use_cuda && (output_profile_path == "srgb" || output_profile_path == "srgb-g10")) {
+        if (is_cuda_available()) {
+            int has_prof_flag = 0;
+            std::vector<float> in_trc0, in_trc1, in_trc2;
+            std::vector<float> out_trc0, out_trc1, out_trc2;
+            std::vector<float> matrix_3x3;
+            std::vector<float> offset_3;
+            std::vector<float> clut_grid;
+            int clut_dim_r = 0, clut_dim_g = 0, clut_dim_b = 0;
+
+            cmsHPROFILE h_profile = nullptr;
+            if (it8_profile_data && it8_profile_data_size > 0) {
+                h_profile = cmsOpenProfileFromMem(it8_profile_data, it8_profile_data_size);
+            } else if (!it8_profile_path.empty()) {
+                unsigned* prof = nullptr;
+                unsigned size = 0;
+                if (read_profile_from_file(it8_profile_path, &prof, &size) == 0) {
+                    h_profile = cmsOpenProfileFromMem(prof, size);
+                    free(prof);
+                }
+            }
+
+            if (h_profile) {
+                cmsPipeline* h_pipeline = (cmsPipeline*)cmsReadTag(h_profile, cmsSigAToB0Tag);
+                if (h_pipeline) {
+                    has_prof_flag = 1;
+                    int curve_set_count = 0;
+                    cmsStage* stage_ptr = cmsPipelineGetPtrToFirstStage(h_pipeline);
+                    while (stage_ptr) {
+                        cmsStageSignature stage_type = cmsStageType(stage_ptr);
+                        if (stage_type == cmsSigCurveSetElemType) {
+                            _cmsStageToneCurvesData* curve_data = (_cmsStageToneCurvesData*)cmsStageData(stage_ptr);
+                            if (curve_data->nCurves >= 3) {
+                                std::vector<float>* p_trc0 = nullptr;
+                                std::vector<float>* p_trc1 = nullptr;
+                                std::vector<float>* p_trc2 = nullptr;
+                                if (curve_set_count == 0) {
+                                    p_trc0 = &in_trc0;
+                                    p_trc1 = &in_trc1;
+                                    p_trc2 = &in_trc2;
+                                } else {
+                                    p_trc0 = &out_trc0;
+                                    p_trc1 = &out_trc1;
+                                    p_trc2 = &out_trc2;
+                                }
+
+                                cmsToneCurve* tc0 = curve_data->TheCurves[0];
+                                int entries0 = cmsGetToneCurveEstimatedTableEntries(tc0);
+                                cmsUInt16Number* table0 = (cmsUInt16Number*)cmsGetToneCurveEstimatedTable(tc0);
+                                p_trc0->resize(entries0);
+                                for (int i = 0; i < entries0; ++i) (*p_trc0)[i] = table0[i] / 65535.0f;
+
+                                cmsToneCurve* tc1 = curve_data->TheCurves[1];
+                                int entries1 = cmsGetToneCurveEstimatedTableEntries(tc1);
+                                cmsUInt16Number* table1 = (cmsUInt16Number*)cmsGetToneCurveEstimatedTable(tc1);
+                                p_trc1->resize(entries1);
+                                for (int i = 0; i < entries1; ++i) (*p_trc1)[i] = table1[i] / 65535.0f;
+
+                                cmsToneCurve* tc2 = curve_data->TheCurves[2];
+                                int entries2 = cmsGetToneCurveEstimatedTableEntries(tc2);
+                                cmsUInt16Number* table2 = (cmsUInt16Number*)cmsGetToneCurveEstimatedTable(tc2);
+                                p_trc2->resize(entries2);
+                                for (int i = 0; i < entries2; ++i) (*p_trc2)[i] = table2[i] / 65535.0f;
+                            }
+                            curve_set_count++;
+                        } else if (stage_type == cmsSigMatrixElemType) {
+                            _cmsStageMatrixData* matrix_data = (_cmsStageMatrixData*)cmsStageData(stage_ptr);
+                            matrix_3x3.resize(9);
+                            offset_3.resize(3);
+                            for (int i = 0; i < 9; ++i) matrix_3x3[i] = (float)matrix_data->Double[i];
+                            for (int i = 0; i < 3; ++i) offset_3[i] = (float)matrix_data->Offset[i];
+                        } else if (stage_type == cmsSigCLutElemType) {
+                            _cmsStageCLutData* clut_data = (_cmsStageCLutData*)cmsStageData(stage_ptr);
+                            clut_dim_r = clut_data->Params->nSamples[0];
+                            clut_dim_g = clut_data->Params->nSamples[1];
+                            clut_dim_b = clut_data->Params->nSamples[2];
+                            int total_elements = clut_dim_r * clut_dim_g * clut_dim_b * 3;
+                            clut_grid.resize(total_elements);
+                            if (clut_data->HasFloatValues) {
+                                float* table = clut_data->Tab.TFloat;
+                                for (int i = 0; i < total_elements; ++i) clut_grid[i] = table[i];
+                            } else {
+                                cmsUInt16Number* table = clut_data->Tab.T;
+                                for (int i = 0; i < total_elements; ++i) clut_grid[i] = table[i] / 65535.0f;
+                            }
+                        }
+                        stage_ptr = cmsStageNext(stage_ptr);
+                    }
+                }
+                cmsCloseProfile(h_profile);
+            }
+
+            float bradford_matrix[9] = {
+                 0.9555766f, -0.0230393f,  0.0631636f,
+                -0.0282895f,  1.0099416f,  0.0210077f,
+                 0.0122982f, -0.0204830f,  1.3299098f
+            };
+            float xyz_to_srgb_matrix[9] = {
+                 3.2406255f, -1.5372080f, -0.4986286f,
+                -0.9689307f,  1.8757561f,  0.0415175f,
+                 0.0557101f, -0.2040211f,  1.0569959f
+            };
+            int colorspace_type = (output_profile_path == "srgb") ? 0 : 1;
+            
+            std::vector<float> default_cc = {1,0,0,0,1,0,0,0,1};
+            const float* cc_ptr = cc_matrix.empty() ? default_cc.data() : cc_matrix.data();
+
+            bool cuda_ok = run_cuda_color_pipeline(
+                buf.data(), buf.data(), out_w, out_h,
+                cc_ptr, exposure_comp,
+                has_prof_flag,
+                in_trc0.empty() ? nullptr : in_trc0.data(), in_trc0.size(),
+                in_trc1.empty() ? nullptr : in_trc1.data(), in_trc1.size(),
+                in_trc2.empty() ? nullptr : in_trc2.data(), in_trc2.size(),
+                out_trc0.empty() ? nullptr : out_trc0.data(), out_trc0.size(),
+                out_trc1.empty() ? nullptr : out_trc1.data(), out_trc1.size(),
+                out_trc2.empty() ? nullptr : out_trc2.data(), out_trc2.size(),
+                matrix_3x3.empty() ? nullptr : matrix_3x3.data(),
+                offset_3.empty() ? nullptr : offset_3.data(),
+                clut_grid.empty() ? nullptr : clut_grid.data(),
+                clut_dim_r, clut_dim_g, clut_dim_b,
+                bradford_matrix,
+                xyz_to_srgb_matrix,
+                colorspace_type
+            );
+            if (cuda_ok) {
+                return true;
+            }
+            std::cerr << "WARNING: CUDA color pipeline failed. Falling back to CPU." << std::endl;
+            use_cuda = false;
+        } else {
+            std::cerr << "WARNING: CUDA requested but not available. Falling back to CPU." << std::endl;
+            use_cuda = false;
+        }
+    } else if (use_cuda) {
+        std::cerr << "WARNING: CUDA color pipeline only supports srgb/srgb-g10. Falling back to CPU." << std::endl;
+        use_cuda = false;
     }
+
+    if (has_profile) {
+        if (!apply_lcms_profile(buf, out_w, out_h, it8_profile_path, output_profile_path,
+                                it8_profile_data, it8_profile_data_size)) {
+            std::cerr << "WARNING: Failed to apply LCMS profile on CPU." << std::endl;
+            return false;
+        }
+    }
+    return true;
 }
 
 static int read_profile_from_file(const std::string& prof_name, unsigned **prof_out, unsigned *size) {
@@ -160,7 +321,7 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
                                    const std::vector<int>& profile_film_base,
                                    const std::vector<int>& film_base,
                                    float exposure_comp,
-                                   float post_correction_gamma,
+                                   const std::string& pipeline,
                                    const uint8_t* it8_profile_data,
                                    size_t it8_profile_data_size) const {
     if (m_filepaths.empty()) {
@@ -191,6 +352,11 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
         };
     }
 
+    std::vector<float> cpu_cc = adjusted_cc;
+    if (pipeline == "cuda") {
+        cpu_cc.clear(); // Bypassed on CPU, applied on GPU
+    }
+
     bool success = false;
     if (m_type == ImageCaptureType::SINGLE) {
         std::cout << "[CapturedImage] Loading single frame to linear buffer..." << std::endl;
@@ -208,7 +374,7 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
             uint16_t r = proc->imgdata.image[i][0];
             uint16_t g = proc->imgdata.image[i][1];
             uint16_t b = proc->imgdata.image[i][2];
-            apply_crosstalk_correction(r, g, b, adjusted_cc);
+            apply_crosstalk_correction(r, g, b, cpu_cc);
             out_buf[i * 3]     = r;
             out_buf[i * 3 + 1] = g;
             out_buf[i * 3 + 2] = b;
@@ -267,7 +433,7 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
                     uint16_t r = static_cast<uint16_t>(r_sum / 4);
                     uint16_t g = static_cast<uint16_t>(g_sum / 4);
                     uint16_t b = static_cast<uint16_t>(b_sum / 4);
-                    apply_crosstalk_correction(r, g, b, adjusted_cc);
+                    apply_crosstalk_correction(r, g, b, cpu_cc);
                     out_buf[dest_idx * 3]     = r;
                     out_buf[dest_idx * 3 + 1] = g;
                     out_buf[dest_idx * 3 + 2] = b;
@@ -281,7 +447,7 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
                 uint16_t r = proc->imgdata.image[i][0];
                 uint16_t g = proc->imgdata.image[i][1];
                 uint16_t b = proc->imgdata.image[i][2];
-                apply_crosstalk_correction(r, g, b, adjusted_cc);
+                apply_crosstalk_correction(r, g, b, cpu_cc);
                 out_buf[i * 3]     = r;
                 out_buf[i * 3 + 1] = g;
                 out_buf[i * 3 + 2] = b;
@@ -293,11 +459,10 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
         success = true;
     }
 
-    if (success && has_profile) {
-        apply_gamma_to_buf(out_buf, post_correction_gamma);
-        if (!apply_lcms_profile(out_buf, out_w, out_h, it8_profile_path, output_profile_path,
-                                it8_profile_data, it8_profile_data_size)) {
-            std::cerr << "WARNING: Failed to apply LCMS profile." << std::endl;
+    if (success) {
+        if (!run_color_pipeline_host(out_buf, out_w, out_h, adjusted_cc, exposure_comp,
+                                     pipeline, it8_profile_path, output_profile_path,
+                                     it8_profile_data, it8_profile_data_size)) {
             return false;
         }
     }
@@ -350,7 +515,7 @@ bool write_linear_tiff(const CapturedImage& img,
                        const std::vector<int>& profile_film_base,
                        const std::vector<int>& film_base,
                        float exposure_comp,
-                       float post_correction_gamma,
+                       const std::string& pipeline,
                        const uint8_t* it8_profile_data,
                        size_t it8_profile_data_size) {
     if (img.filepaths().empty()) return false;
@@ -411,6 +576,11 @@ bool write_linear_tiff(const CapturedImage& img,
         };
     }
 
+    std::vector<float> cpu_cc = adjusted_cc;
+    if (pipeline == "cuda") {
+        cpu_cc.clear(); // Bypassed on CPU, applied on GPU
+    }
+
     // 4. Fill buffer and apply crosstalk correction
     std::vector<uint16_t> buf(out_w * out_h * 3);
     if (img.capture_type() == ImageCaptureType::SINGLE) {
@@ -418,7 +588,7 @@ bool write_linear_tiff(const CapturedImage& img,
             uint16_t r = proc->imgdata.image[i][0];
             uint16_t g = proc->imgdata.image[i][1];
             uint16_t b = proc->imgdata.image[i][2];
-            apply_crosstalk_correction(r, g, b, adjusted_cc);
+            apply_crosstalk_correction(r, g, b, cpu_cc);
             buf[i * 3]     = r;
             buf[i * 3 + 1] = g;
             buf[i * 3 + 2] = b;
@@ -440,7 +610,7 @@ bool write_linear_tiff(const CapturedImage& img,
                     uint16_t r = static_cast<uint16_t>(r_sum / 4);
                     uint16_t g = static_cast<uint16_t>(g_sum / 4);
                     uint16_t b = static_cast<uint16_t>(b_sum / 4);
-                    apply_crosstalk_correction(r, g, b, adjusted_cc);
+                    apply_crosstalk_correction(r, g, b, cpu_cc);
                     buf[dest_idx * 3]     = r;
                     buf[dest_idx * 3 + 1] = g;
                     buf[dest_idx * 3 + 2] = b;
@@ -451,7 +621,7 @@ bool write_linear_tiff(const CapturedImage& img,
                 uint16_t r = proc->imgdata.image[i][0];
                 uint16_t g = proc->imgdata.image[i][1];
                 uint16_t b = proc->imgdata.image[i][2];
-                apply_crosstalk_correction(r, g, b, adjusted_cc);
+                apply_crosstalk_correction(r, g, b, cpu_cc);
                 buf[i * 3]     = r;
                 buf[i * 3 + 1] = g;
                 buf[i * 3 + 2] = b;
@@ -459,16 +629,14 @@ bool write_linear_tiff(const CapturedImage& img,
         }
     }
 
-    // 5. Apply gamma and LCMS colorspace transform on the buffer
-    if (has_profile) {
-        apply_gamma_to_buf(buf, post_correction_gamma);
-        if (!apply_lcms_profile(buf, out_w, out_h, it8_profile_path, output_profile_path,
-                                it8_profile_data, it8_profile_data_size)) {
-            std::cerr << "WARNING: Failed to apply LCMS profile." << std::endl;
-            proc->recycle();
-            delete proc;
-            return false;
-        }
+    // 5. Apply colorspace conversion using C++ CPU or CUDA
+    if (!run_color_pipeline_host(buf, out_w, out_h, adjusted_cc, exposure_comp,
+                                 pipeline, it8_profile_path, output_profile_path,
+                                 it8_profile_data, it8_profile_data_size)) {
+        std::cerr << "WARNING: Failed to run color pipeline." << std::endl;
+        proc->recycle();
+        delete proc;
+        return false;
     }
 
     // 6. Resolve output ICC profile data to attach to the TIFF file
