@@ -413,7 +413,7 @@ class ProfileReportWindow(Gtk.Window):
         expander = Gtk.Expander(label="Compilation Logs")
         scroll_logs = Gtk.ScrolledWindow()
         scroll_logs.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        scroll_logs.set_min_content_height(120)
+        scroll_logs.set_min_content_height(250)
         
         tv_logs = Gtk.TextView()
         tv_logs.set_editable(False)
@@ -421,7 +421,7 @@ class ProfileReportWindow(Gtk.Window):
         tv_logs.get_buffer().set_text("\n".join(target_data["log_messages"]))
         scroll_logs.add(tv_logs)
         expander.add(scroll_logs)
-        vbox_right.pack_start(expander, False, False, 0)
+        vbox_right.pack_start(expander, True, True, 0)
         
         # --- Run conversion in background thread once ---
         def conversion_thread():
