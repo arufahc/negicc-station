@@ -205,4 +205,55 @@ If the matrix is singular (i.e., columns are linearly dependent due to severe se
 > **Overexposure Constraint During Calibration:**
 > The calibration exposures must maximize the dynamic range of each channel to optimize the signal-to-noise ratio, but **must strictly avoid overexposure (clipping)**. If any pixel values in the calibration region saturate (reach the 14-bit sensor ceiling of 16384), the response becomes non-linear, distorting the calculated ratios and rendering the calibration matrix invalid.
 
+---
+
+### 9. Film Profiling, ICC Generation, and Linear Negative Conversion
+
+This section covers the mathematical steps utilized to compile negative film profiles containing custom 3D cLUT ICC profiles and Tone Reproduction Curves (TRCs), and apply them dynamically during raw image conversion.
+
+#### 1. Exposure Ratio Scaling
+Let the film base capture be acquired at exposure time $t_b$ and sensitivity $ISO_b$.
+Let the target capture (containing the IT8 reference target) be acquired at exposure time $t_t$ and sensitivity $ISO_t$.
+
+The raw exposure metrics are calculated as:
+$$\text{Exposure}_b = t_b \times \frac{ISO_b}{100.0}$$
+$$\text{Exposure}_t = t_t \times \frac{ISO_t}{100.0}$$
+
+The exposure ratio mapping target measurements to film base capture conditions is:
+$$\text{Ratio} = \frac{\text{Exposure}_b}{\text{Exposure}_t}$$
+
+#### 2. Film Base Normalization
+To map the measured crosstalk-corrected film base levels ($FB_R, FB_G, FB_B$) to a fixed target normalization level $N_{\text{target}}$ (defaulting to $55000.0$), channel-specific scaling factors $S_c$ are calculated:
+$$S_c = \frac{N_{\text{target}}}{FB_c} \times \text{Ratio} \quad \text{for } c \in \{R, G, B\}$$
+
+The raw patch measurements $P_{\text{raw}, c}$ are then scaled:
+$$P_{\text{scaled}, c} = P_{\text{raw}, c} \times S_c$$
+
+#### 3. Tone Reproduction Curve (TRC) Estimation
+We extract the grayscale patches $i \in \{0, \dots, 23\}$ from the target data. Let their scaled crosstalk-corrected averages be represented by $V_c(i)$ for $c \in \{R, G, B\}$. 
+
+Using the reference XYZ target data, we normalize the reference luminance $Y_{\text{ref}}(i)$ to the range $[0.0, \text{whitest\_patch\_scaling}]$:
+$$Y_{\text{norm}}(i) = Y_{\text{ref}}(i) \times \frac{\text{whitest\_patch\_scaling}}{\max(Y_{\text{ref}})}$$
+
+Monotonic cubic spline functions $\text{TRC}_c(V)$ are fitted to map from the linear sensor space to the normalized reference luminance space:
+$$\text{TRC}_c(V) \approx Y_{\text{norm}}$$
+
+These curves act as the independent red, green, and blue Tone Reproduction Curves (TRCs) serialized into the final profile.
+
+#### 4. Dynamic Scaling and Matrix Merging
+When converting a raw negative scan captured at shutter speed $t_s$ and sensitivity $ISO_s$, we calculate the scan-to-base exposure ratio:
+$$\text{Ratio}_{\text{scan}} = \frac{t_b \times (ISO_b / 100.0)}{t_s \times (ISO_s / 100.0)}$$
+
+The dynamic normalization scale factors are:
+$$S_c = \frac{N_{\text{target}}}{FB_c} \times \text{Ratio}_{\text{scan}} \quad \text{for } c \in \{R, G, B\}$$
+
+The $3\times3$ crosstalk correction matrix $C$ is merged with these scale factors row-wise:
+$$M_{\text{merged}} = \begin{bmatrix} S_R & 0 & 0 \\ 0 & S_G & 0 \\ 0 & 0 & S_B \end{bmatrix} \cdot C$$
+
+This single combined matrix performs both crosstalk correction and film base normalization in a single step:
+$$V_{\text{scaled}} = M_{\text{merged}} \cdot V_{\text{raw}}$$
+
+Finally, the scaled camera RGB values are passed through the independent TRC curves and color-managed through the 3D cLUT ICC profile to produce the final sRGB output:
+$$V_{\text{sRGB}} = \text{ICC}_{\text{LUT}}\left(\begin{bmatrix} \text{TRC}_R(R_{\text{scaled}}) \\ \text{TRC}_G(G_{\text{scaled}}) \\ \text{TRC}_B(B_{\text{scaled}}) \end{bmatrix}\right)$$
+
 

@@ -136,3 +136,74 @@ The Sony SDK represents shutter speed values as a fraction pack where the upper 
 * **Fractional Speeds**: Set numerator to `1` and denominator to the fraction value (e.g., `1/125s` is `0x0001007D`).
 * **Whole-Second Speeds**: Represented with a **fixed denominator of 10** (`0x000A`) and the numerator scaled accordingly (e.g., `1s` is `10/10` which is `0x000A000A`; `2s` is `20/10` which is `0x0014000A`).
 * **Behavior**: If you send a value that is not in the camera's supported list of shutter speeds, the camera will silently reject it and keep its current setting.
+
+---
+
+## 7. Step-by-Step Film Profiling Guide
+
+This guide details the complete protocol to calibrate a digital camera sensor's spectral crosstalk, capture film base characteristics, and profile target data at different exposures using the scanning software.
+
+### Phase 1: Spectral Crosstalk Calibration
+Before scanning negative film, you must capture the camera sensor's specific channel overlap characteristics under single-color narrow-band illuminations (or filter bands):
+
+1. Launch the crosstalk calibration script:
+   ```bash
+   ./venv/bin/python3 src/crosstalk_calibration.py
+   ```
+2. Place a white diffusion target in the scanning gate.
+3. Capture three individual flat-field calibration frames:
+   * **Red Frame**: Exposed under narrow-band Red LED illumination.
+   * **Green Frame**: Exposed under narrow-band Green LED illumination.
+   * **Blue Frame**: Exposed under narrow-band Blue LED illumination.
+   * *Note: Run the auto-exposure checker on each to ensure the peak ADU stays below 16384 (no clipping).*
+4. Compute the matrix inside the interface and click **Save Crosstalk Profile** to write the calibration details to a JSON file (e.g., `sony_a7r4_crosstalk.json`).
+
+---
+
+### Phase 2: Negative Film Profiling (Multi-Exposure)
+With the crosstalk profile ready, you can now scan your film base and IT8 target files to generate a custom self-contained film profile:
+
+1. Launch the main film profiling application:
+   ```bash
+   ./venv/bin/python3 src/ui_film_profiling.py
+   ```
+2. Click **LOAD CROSSTALK PROFILE** in the left sidebar and select your `sony_a7r4_crosstalk.json`.
+3. In the reference field, input the IT8 target reference URL or local path (e.g. `http://www.colorreference.de/targets/R190808.zip`) and click **DOWNLOAD REFERENCE**.
+
+#### Step A: Capture the Film Base (Orange Mask)
+1. Go to the **Film Base** tab.
+2. Place a clear, unexposed but developed frame of your negative film (e.g., the orange leader area) in the scanner gate.
+3. Use the **Auto-Exposure** button to automatically find the optimal shutter speed (where G/B channels are bright but unclipped).
+4. Click **CAPTURE BASE**.
+5. Draw a selection box over the orange area in the image preview panel, then click **READ FILM BASE VALUES**.
+
+#### Step B: Capture IT8 Targets at Different Exposures
+You can scan multiple targets captured at different exposure offsets (e.g., bracketed scans or exposure sweeps) to map the film's density characteristics accurately:
+
+1. Go to the **Target 1** tab.
+2. Place the physical IT8 target film in the scanner gate.
+3. Adjust the exposure settings for Target 1 (e.g., shutter speed set to normal $+0$ EV).
+4. Click **CAPTURE TARGET**.
+5. Align the patch grid:
+   * Click **LAYER IT8 MASK** to show the patch mapping boxes.
+   * Use the arrow keys (`Up`, `Down`, `Left`, `Right`) to nudge, and `+`/`-` keys to scale the layout until the overlay boxes align precisely with the 288 physical film patches.
+6. Click **READ PATCH VALUES**.
+7. If you want to profile other exposures (e.g., a $-1$ EV underexposure or a $+1$ EV overexposure):
+   * Click the **`+` (Add Tab)** button to create **Target 2**.
+   * Adjust the camera shutter speed to the target exposure.
+   * Click **CAPTURE TARGET**, align the grid, and click **READ PATCH VALUES**.
+   * Repeat this for as many exposure steps as desired.
+
+#### Step C: Generate and Inspect the Profile
+1. Click **SAVE PROFILE** in the left sidebar.
+2. Enter the name of the film stock (e.g., `Portra400`).
+3. Select the file location to save the compiled JSON film profile.
+4. A progress dialog modal will appear, displaying active compilation steps:
+   * It adapts target values, fits monotonic red/green/blue spline curves to the grayscale patches (the TRC curves), and runs Argyll's `colprof` to generate a custom 3D color lookup table (cLUT) ICC profile.
+   * All target coordinates, custom TRC splines, and base64-encoded ICC files are written into a single self-contained JSON profile.
+5. Upon completion, the **Report Window** opens automatically, displaying:
+   * Vertical tabs for each processed target and a film base summary tab.
+   * Subplots showing the generated TRC curves and characteristic D-log H curves.
+   * The final profile verification error metrics (max/average CIEDE2000 errors).
+   * A static **Target Converted** positive image showing the crosstalk-corrected and color-managed positive result.
+   * Collapsible compilation step logs.
