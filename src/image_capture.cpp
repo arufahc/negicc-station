@@ -432,6 +432,22 @@ static bool run_color_pipeline_host(
         use_cuda = false;
     }
 
+    // Fallback: If pipeline was cuda but we ended up on CPU, the host-side crosstalk/base scaling matrix
+    // was bypassed. We must apply it here on the CPU before evaluating the profile transform.
+    if (pipeline == "cuda" && !use_cuda) {
+        if (!cc_matrix.empty()) {
+            for (int i = 0; i < out_w * out_h; ++i) {
+                uint16_t r = buf[i * 3];
+                uint16_t g = buf[i * 3 + 1];
+                uint16_t b = buf[i * 3 + 2];
+                apply_crosstalk_correction(r, g, b, cc_matrix);
+                buf[i * 3]     = r;
+                buf[i * 3 + 1] = g;
+                buf[i * 3 + 2] = b;
+            }
+        }
+    }
+
     if (has_profile) {
         if (!apply_lcms_profile(buf, out_w, out_h, it8_profile_path, output_profile_path,
                                 it8_profile_data, it8_profile_data_size)) {

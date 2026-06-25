@@ -115,18 +115,9 @@ def find_best_target_index(profile, raw_image, film_base_rgb, scan_shutter=None,
             else:
                 gs_transmittances.append(1.0 - (j / 23.0)) 
                 
-        # Find enclosing patches for t_98 and t_2
-        idx_98 = 0
-        for j in range(24):
-            if gs_transmittances[j] <= t_98:
-                idx_98 = j
-                break
-        
-        idx_2 = 23
-        for j in range(23, -1, -1):
-            if gs_transmittances[j] >= t_2:
-                idx_2 = j
-                break
+        # Find closest patch indices for t_98 and t_2
+        idx_98 = min(range(24), key=lambda j: abs(gs_transmittances[j] - t_98))
+        idx_2 = min(range(24), key=lambda j: abs(gs_transmittances[j] - t_2))
                 
         # Mid-grey is between gs11 and gs12 (index 11.5)
         center_idx = (idx_98 + idx_2) / 2.0
@@ -134,9 +125,11 @@ def find_best_target_index(profile, raw_image, film_base_rgb, scan_shutter=None,
         
         min_t = min(gs_transmittances)
         max_t = max(gs_transmittances)
+        min_idx = gs_transmittances.index(min_t)
+        max_idx = gs_transmittances.index(max_t)
         target_name = target.get('name', f"Target {i}")
         print(f"  Target {i}: '{target_name}'", file=sys.stdout)
-        print(f"    Green Transmittance Range: min={min_t:.6f} (gs23), max={max_t:.6f} (gs0)", file=sys.stdout)
+        print(f"    Green Transmittance Range: min={min_t:.6f} (gs{min_idx}), max={max_t:.6f} (gs{max_idx})", file=sys.stdout)
         print(f"    Matched indices for RAW range: gs{idx_98} (98% t) to gs{idx_2} (2% t)", file=sys.stdout)
         print(f"    Center index: {center_idx:.2f} (Target Mid-Grey is 11.5) | Distance: {dist:.2f}", file=sys.stdout)
         sys.stdout.flush()
