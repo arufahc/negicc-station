@@ -362,11 +362,11 @@ $$
 7. **Luminance Matching**: Calculates the mid-grey distance metric:
 
 $$
-\text{center\_idx} = \frac{\text{idx}_{98} + \text{idx}_2}{2.0}
+\text{center-index} = \frac{\text{idx}_{98} + \text{idx}_2}{2.0}
 $$
 
 $$
-\text{dist} = |\text{center\_idx} - 11.5|
+\text{dist} = |\text{center-index} - 11.5|
 $$
    The target profile with the minimum distance metric (closest mid-grey patch alignment to target index 11.5) is selected as the optimal conversion profile.
 8. **Identity-Based Range Caching**: To prevent redundant re-evaluations during UI redraws or target selection changes, the computed transmittance range is cached using a composite key representing the identities of the raw image object and the active profile: `(id(raw_image), id(profile))`.
@@ -396,7 +396,7 @@ $$
 9. **XYZ to Linear sRGB Matrix Projection**: Converts the D65 XYZ vector to linear sRGB space:
 
 $$
-M_{\text{xyz\_to\_srgb}} = \begin{bmatrix} 3.2406255 & -1.5372080 & -0.4986286 \\ -0.9689307 & 1.8757561 & 0.0415175 \\ 0.0557101 & -0.2040211 & 1.0569959 \end{bmatrix}
+M_{\text{xyz-to-srgb}} = \begin{bmatrix} 3.2406255 & -1.5372080 & -0.4986286 \\ -0.9689307 & 1.8757561 & 0.0415175 \\ 0.0557101 & -0.2040211 & 1.0569959 \end{bmatrix}
 $$
    and clips coordinates to $[0.0, 1.0]$.
 10. **EOTF Mapping & Quantization**: Applies target colorspace EOTF (the piecewise non-linear sRGB mapping curve for `"srgb"`, or identity mapping for `"srgb-g10"`), multiplies by $65535.0$, and rounds to `uint16_t` values.
