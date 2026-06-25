@@ -697,7 +697,7 @@ bool CapturedImage::get_preview_rgb8(int& out_w, int& out_h, std::vector<uint8_t
         int colorspace_type = (output_profile_path == "srgb") ? 0 : 1;
 
         std::vector<float> default_cc = {1,0,0,0,1,0,0,0,1};
-        const float* cc_ptr = cc_matrix.empty() ? default_cc.data() : cc_matrix.data();
+        const float* cc_ptr = adjusted_cc.empty() ? default_cc.data() : adjusted_cc.data();
 
         out_buf.resize(out_w * out_h * 3);
 
