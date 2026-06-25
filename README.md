@@ -6,19 +6,30 @@ This repository contains the software for a negative film scanning station desig
 
 ### Directory Structure
 
-* **[src/](src/)**: Main C++ and CPython extension source code, as well as Python example scripts.
-  * [camera_session.h](src/camera_session.h) / [sony_camera_session.cpp](src/sony_camera_session.cpp): Sony Camera Remote SDK wrapper.
-  * [raw_processor.cpp](src/raw_processor.cpp): Linear conversion and 4-shot pixel-shift merging.
-  * [image_capture.cpp](src/image_capture.cpp): CapturedImage definition and linear TIFF writer.
-  * [python_bindings.cpp](src/python_bindings.cpp): CPython bindings exposing tethered capture and raw conversion to Python.
-  * [sample_capture_tiff.py](src/sample_capture_tiff.py): Simple command-line capture example.
-  * [ui_capture.py](src/ui_capture.py): PyGObject/GTK3 desktop UI application for scanner control and preview.
-* **[tests/](tests/)**: Integration tests ([test_cpython.py](tests/test_cpython.py) and [test_live_parity.py](tests/test_live_parity.py)).
-* **[test_imgs/](test_imgs/)**: reference RAW images stored using LZMA compression ([test_capture_ref.ARW.xz](test_imgs/test_capture_ref.ARW.xz)).
-* **[3rd_party/](3rd_party/)**: Local third-party dependencies, minimal headers, and SDK configuration.
-* **[build/](build/)**: Unified folder containing compiled binaries, shared libraries, and build artifacts.
-* **[setup.py](setup.py)**: Packaging setup configuration for the C extension.
-* **[Makefile](Makefile)**: Target compilation and test harness configurations.
+* **[src/](src/)**: Main C++, CUDA, and CPython extension source code, Python backend modules, and GTK UI modules.
+  * *CPython Extension & Standalone C++/CUDA*:
+    * [camera_session.h](src/camera_session.h) / [sony_camera_session.cpp](src/sony_camera_session.cpp): Sony Camera Remote SDK wrapper interface.
+    * [raw_processor.cpp](src/raw_processor.cpp) / [raw_processor.h](src/raw_processor.h): LibRaw parameter configuration, linear decoding, and Sony 4-shot pixel-shift merging.
+    * [image_capture.cpp](src/image_capture.cpp) / [image_capture.h](src/image_capture.h): `CapturedImage` class exposing linear RGB extraction and C++ CPU (Little CMS) conversions.
+    * [color_conversion.cu](src/color_conversion.cu) / [color_conversion.h](src/color_conversion.h): CUDA float32 kernel for GPU-accelerated color space conversions.
+    * [python_bindings.cpp](src/python_bindings.cpp): CPython glue code exposing tethered capture, conversion, and NumPy arrays to Python.
+  * *Python Backend & Calibration*:
+    * [crosstalk_calibration.py](src/crosstalk_calibration.py): Decoupling sensor crosstalk (calibration matrix creation and inversion).
+    * [auto_exposure.py](src/auto_exposure.py): Shutter speed hill-climbing search and highlight overexposure penalty constraint.
+    * [film_profiling.py](src/film_profiling.py): ArgyllCMS TI3 generation, profile building, and conversion wrapper.
+    * [target_selection.py](src/target_selection.py): Mid-grey distance selection algorithm for multi-exposure target calibration.
+    * [color_conversion.py](src/color_conversion.py): Python-based vectorized tetrahedral interpolation pipeline prototype.
+  * *GTK UI Modules*:
+    * [ui_main.py](src/ui_main.py): Central launcher window for scanning, crosstalk, and film profiling modules.
+    * [ui_capture.py](src/ui_capture.py): Scanner capture, live-preview, and focus utility UI module.
+    * [ui_crosstalk_correction.py](src/ui_crosstalk_correction.py): Camera/light source crosstalk calibration UI module.
+    * [ui_film_profiling.py](src/ui_film_profiling.py): IT8 target detection, patch parsing, and profiling UI module.
+* **[profiles/](profiles/)**: Pre-compiled and captured calibration profiles (e.g. camera crosstalk correction matrices, film stock target JSON files).
+* **[tests/](tests/)**: Directory containing integration tests, offline parity tests, and live capture verifications.
+* **[test_imgs/](test_imgs/)**: Folder with compressed reference raw images (e.g. `test_capture_ref.ARW.xz`) and scan workflow visuals.
+* **[3rd_party/](3rd_party/)**: Local third-party dependency setups (Sony SDK, LibRaw, LCMS2, and licenses).
+* **[setup.py](setup.py)**: Python package compilation and C-extension compilation settings.
+* **[Makefile](Makefile)**: System building, testing, and helper configuration targets.
 
 ---
 
