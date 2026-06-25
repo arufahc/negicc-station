@@ -3087,6 +3087,14 @@ class ScanningAppWindow(Gtk.Window):
             self.refresh_base_preview()
 
     def on_destroy(self, widget):
+        # Start a watchdog thread to force exit in 1.5 seconds if the camera close hangs
+        def watchdog():
+            import time
+            time.sleep(1.5)
+            print("[Watchdog] Cleanup timeout reached. Forcing exit.", file=sys.stderr, flush=True)
+            os._exit(0)
+        threading.Thread(target=watchdog, daemon=True).start()
+
         if self.raw_image:
             try:
                 self.raw_image.discard()
@@ -3103,6 +3111,7 @@ class ScanningAppWindow(Gtk.Window):
             except Exception:
                 pass
         Gtk.main_quit()
+        os._exit(0)
 
 def main():
     # Preload the Sony CrSDK shared library from the virtual environment

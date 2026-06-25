@@ -464,6 +464,14 @@ class SimpleScanningAppWindow(Gtk.Window):
             self.refresh_preview_image()
 
     def on_destroy(self, widget):
+        # Start a watchdog thread to force exit in 1.5 seconds if the camera close hangs
+        def watchdog():
+            import time
+            time.sleep(1.5)
+            print("[Watchdog] Cleanup timeout reached. Forcing exit.", file=sys.stderr, flush=True)
+            os._exit(0)
+        threading.Thread(target=watchdog, daemon=True).start()
+
         if self.last_captured_image:
             try:
                 self.last_captured_image.discard()
@@ -475,6 +483,7 @@ class SimpleScanningAppWindow(Gtk.Window):
             except Exception:
                 pass
         Gtk.main_quit()
+        os._exit(0)
 
 if __name__ == "__main__":
     win = SimpleScanningAppWindow()

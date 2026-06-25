@@ -2988,6 +2988,14 @@ class FilmProfilingAppWindow(Gtk.Window):
         return True
 
     def on_destroy(self, widget):
+        # Start a watchdog thread to force exit in 1.5 seconds if the camera close hangs
+        def watchdog():
+            import time
+            time.sleep(1.5)
+            print("[Watchdog] Cleanup timeout reached. Forcing exit.", file=sys.stderr, flush=True)
+            os._exit(0)
+        threading.Thread(target=watchdog, daemon=True).start()
+
         for tab in self.target_tabs:
             if getattr(tab, 'img_obj', None) is not None:
                 try:
@@ -3005,6 +3013,7 @@ class FilmProfilingAppWindow(Gtk.Window):
             except Exception:
                 pass
         Gtk.main_quit()
+        os._exit(0)
 
 
 if __name__ == "__main__":

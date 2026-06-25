@@ -372,12 +372,21 @@ class CrosstalkAppWindow(Gtk.Window):
         GLib.timeout_add_seconds(2, self.poll_camera_connection)
 
     def on_destroy(self, widget):
+        # Start a watchdog thread to force exit in 1.5 seconds if the camera close hangs
+        def watchdog():
+            import time
+            time.sleep(1.5)
+            print("[Watchdog] Cleanup timeout reached. Forcing exit.", file=sys.stderr, flush=True)
+            os._exit(0)
+        threading.Thread(target=watchdog, daemon=True).start()
+
         if self.camera_session:
             try:
                 self.camera_session.close()
             except Exception:
                 pass
         Gtk.main_quit()
+        os._exit(0)
 
     def poll_camera_connection(self):
         if self.is_connected:
