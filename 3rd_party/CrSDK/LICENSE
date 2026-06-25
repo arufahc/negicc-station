@@ -1,0 +1,11 @@
+Sony Camera Remote SDK (CrSDK) License Notice
+=============================================
+
+The files in this directory (3rd_party/CrSDK) are part of the Sony Camera Remote SDK.
+
+This SDK is proprietary software owned by Sony Corporation. Its use, reproduction, and distribution are strictly subject to the terms and conditions of the Sony Camera Remote SDK License Agreement (EULA).
+
+Since the SDK is proprietary and subject to Sony's licensing terms, the binary library files and proprietary headers are not directly distributed as part of this repository. Instead, users must download the SDK directly from Sony's developer site and populate this folder.
+
+To download the SDK and read the full agreement, please visit:
+https://support.d-imaging.sony.co.jp/app/sdk/licenseagreement_d/en.html

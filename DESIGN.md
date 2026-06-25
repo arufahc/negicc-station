@@ -122,7 +122,11 @@ To automate the selection of the optimal shutter speed, the system integrates a 
 
 #### Objective Function
 The algorithm evaluates exposure frames to maximize either:
-- **`ALL` channels (default)**: Maximizes the average dynamic range across R, G, and B: $\text{Objective} = \frac{\text{DR}_R + \text{DR}_G + \text{DR}_B}{3}$
+- **`ALL` channels (default)**: Maximizes the average dynamic range across R, G, and B:
+
+$$
+\text{Objective} = \frac{\text{DR}_R + \text{DR}_G + \text{DR}_B}{3}
+$$
 - **Individual channels (`R`, `G`, or `B`)**: Maximizes the dynamic range for the selected channel specifically.
 
 Dynamic range ($\text{DR}_c$) is defined as the difference between the 95th and 5th percentile values in color channel $c$ within the active film area:
@@ -137,7 +141,15 @@ To prevent clear light source bleeds or black film holder edges from throwing of
 For accurate film negative color inversion, no channel is allowed to reach or exceed sensor highlight saturation.
 - High-end digital cameras typically utilize a 14-bit analog-to-digital converter (ADC), yielding a maximum raw capacity of 16384 levels.
 - To prevent clipping and guarantee highlight headroom, the 95th percentile ($P_{95}$) of each channel is monitored and constrained to be below **80% of 16384 (13107.2)**.
-- If $P_{95}$ for any channel exceeds 13107.2, that channel's dynamic range metric is heavily penalized: $\text{Penalty} = 100000.0 + 10000.0 \times (P_{95} - 13107.2)$ and $\text{DR}_c = (P_{95} - P_5) - \text{Penalty}$.
+- If $P_{95}$ for any channel exceeds 13107.2, that channel's dynamic range metric is heavily penalized:
+
+$$
+\text{Penalty} = 100000.0 + 10000.0 \times (P_{95} - 13107.2)
+$$
+
+$$
+\text{DR}_c = (P_{95} - P_5) - \text{Penalty}
+$$
 
 This penalty function guarantees that any exposure where the 95th percentile exceeds the safety threshold is rejected in favor of a safe, unclipped exposure. Checking the 95th percentile instead of the absolute peak pixel value also makes the overexposure constraint robust against hot pixels and sensor noise.
 
@@ -257,7 +269,7 @@ $$
 $$
 
 ### 5.2 Film Base Normalization
-To map the measured crosstalk-corrected film base levels ($FB_R$, $FB_G$, $FB_B$) to a fixed target normalization level $N_{\text{target}}$ (defaulting to $55000.0$), channel-specific scaling factors $S_c$ are calculated:
+To map the measured crosstalk-corrected film base levels (Red, Green, and Blue) to a fixed target normalization level (defaulting to 55000.0), channel-specific scaling factors are calculated:
 
 $$
 S_c = \frac{N_{\text{target}}}{FB_c} \times \text{Ratio} \quad \text{for } c \in \{R, G, B\}
@@ -272,10 +284,10 @@ $$
 ### 5.3 Tone Reproduction Curve (TRC) Estimation
 We extract the grayscale patches $i \in \{0, \dots, 23\}$ from the target data. Let their scaled crosstalk-corrected averages be represented by $V_c(i)$ for $c \in \{R, G, B\}$. 
 
-Using the reference XYZ target data, we normalize the reference luminance $Y_{\text{ref}}(i)$ to the range $[0.0, \text{whitest\_patch\_scaling}]$:
+Using the reference XYZ target data, we normalize the reference luminance $Y_{\text{ref}}(i)$ to the range $[0.0, \text{whitest-patch-scaling}]$:
 
 $$
-Y_{\text{norm}}(i) = Y_{\text{ref}}(i) \times \frac{\text{whitest\_patch\_scaling}}{\max(Y_{\text{ref}})}
+Y_{\text{norm}}(i) = Y_{\text{ref}}(i) \times \frac{\text{whitest-patch-scaling}}{\max(Y_{\text{ref}})}
 $$
 
 Monotonic cubic spline functions $\text{TRC}_c(V)$ are fitted to map from the linear sensor space to the normalized reference luminance space:
@@ -323,9 +335,22 @@ To support multi-target calibration profiles (profiles containing calibration ta
 2. **Subsampling Optimization**: To avoid performance bottlenecks on high-resolution 61MP sensor captures, the region of interest is subsampled by taking every 10th pixel in both dimensions. This reduces the pixels under analysis by a factor of 100 (from 17.8 million down to ~178k elements), reducing execution time from ~10 seconds to under 20ms while preserving the statistical distribution of the dynamic range.
 3. **Crosstalk Correction**: Corrects the subsampled raw image patch using the profile's crosstalk matrix.
 4. **Percentile Calculation**: Computes the 2% and 98% intensity percentiles on the green channel to represent the density range of the scanned target.
-5. **Transmittance Mapping**: Normalizes the percentiles by the captured film base green channel and scales them by the exposure ratio between the base capture and the current scan: $t_{c} = \frac{P_c}{FB_G} \times \text{Ratio}_{\text{scan}}$
+5. **Transmittance Mapping**: Normalizes the percentiles by the captured film base green channel and scales them by the exposure ratio between the base capture and the current scan:
+
+$$
+t_{c} = \frac{P_c}{FB_G} \times \text{Ratio}_{\text{scan}}
+$$
+
 6. **Grayscale Alignment**: Maps the measured 2% and 98% transmittances against the 24 gray scale patches ($gs0 \dots gs23$) of each candidate target profile.
-7. **Luminance Matching**: Calculates the mid-grey distance metric: $\text{center\_idx} = \frac{\text{idx}_{98} + \text{idx}_2}{2.0}$ and $\text{dist} = |\text{center\_idx} - 11.5|$
+7. **Luminance Matching**: Calculates the mid-grey distance metric:
+
+$$
+\text{center\_idx} = \frac{\text{idx}_{98} + \text{idx}_2}{2.0}
+$$
+
+$$
+\text{dist} = |\text{center\_idx} - 11.5|
+$$
    The target profile with the minimum distance metric (closest mid-grey patch alignment to target index 11.5) is selected as the optimal conversion profile.
 8. **Identity-Based Range Caching**: To prevent redundant re-evaluations during UI redraws or target selection changes, the computed transmittance range is cached using a composite key representing the identities of the raw image object and the active profile: `(id(raw_image), id(profile))`.
 
