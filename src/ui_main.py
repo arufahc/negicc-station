@@ -14,6 +14,7 @@ class LauncherWindow(Gtk.Window):
         self.set_position(Gtk.WindowPosition.CENTER)
 
         self.is_launching = False
+        self.processes = {}
 
         # Force GTK dark theme for premium aesthetics
         settings = Gtk.Settings.get_default()
@@ -212,6 +213,14 @@ class LauncherWindow(Gtk.Window):
             return
         self.is_launching = True
 
+        # Check if this script window is already running
+        running_proc = self.processes.get(target_script)
+        if running_proc is not None:
+            if running_proc.poll() is None:
+                self.show_info_dialog("Already Running", f"An instance of '{target_script}' is already running.")
+                self.is_launching = False
+                return
+
         script_path = os.path.join(self.script_dir, target_script)
         if not os.path.exists(script_path):
             self.show_error_dialog(f"Target script not found:\n{script_path}")
@@ -220,15 +229,26 @@ class LauncherWindow(Gtk.Window):
 
         try:
             # Launch via subprocess using the same python interpreter (venv)
-            subprocess.Popen([sys.executable, script_path])
-            if target_script == "ui_capture.py":
-                self.close()
-            else:
-                # Throttles double-clicks on calibration/profiling launch buttons
-                GLib.timeout_add(1000, lambda: setattr(self, 'is_launching', False) or False)
+            proc = subprocess.Popen([sys.executable, script_path])
+            self.processes[target_script] = proc
+            
+            # Throttles double-clicks on launch buttons
+            GLib.timeout_add(1000, lambda: setattr(self, 'is_launching', False) or False)
         except Exception as e:
             self.show_error_dialog(f"Failed to launch script:\n{str(e)}")
             self.is_launching = False
+
+    def show_info_dialog(self, title, message):
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=0,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text=title
+        )
+        dialog.format_secondary_text(message)
+        dialog.run()
+        dialog.destroy()
 
     def show_error_dialog(self, message):
         dialog = Gtk.MessageDialog(
