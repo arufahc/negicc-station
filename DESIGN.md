@@ -108,19 +108,7 @@ This allows us to assemble a complete RGB triplet for every pixel **without inte
 
 ---
 
-## 2. CPython C-Extension Interface
-
-To allow high-performance integration with Python-based negative inversion and processing pipelines, the core capture and LibRaw decoding routines are exposed as a Python C-extension module named `negicc_station`.
-
-Refer to the following source files for implementation details:
-- [image_capture.h](src/image_capture.h): C++ CapturedImage interface representing camera parameters, captured raw file locations, and linear RGB/TIFF conversion routines.
-- [image_capture.cpp](src/image_capture.cpp): Core implementation of single and pixel-shift linear conversions, including 2x2 downsampling.
-- [python_bindings.cpp](src/python_bindings.cpp): CPython glue code exposing `negicc_station.capture()`, `negicc_station.CapturedImage`, and C-API NumPy array generation.
-- [ui_capture.py](src/ui_capture.py): PyGObject/GTK3 desktop graphical interface demonstrating real-time camera controls, preview rendering, and timing diagnostics.
-
----
-
-## 3. Auto-Exposure Search Algorithm & Overexposure Constraint
+## 2. Auto-Exposure Search Algorithm & Overexposure Constraint
 
 To automate the selection of the optimal shutter speed, the system integrates a hill-climbing search algorithm based on dynamic range maximization.
 
@@ -161,7 +149,7 @@ This penalty function guarantees that any exposure where the 95th percentile exc
 
 ---
 
-## 4. Crosstalk Correction Mathematics & Principles
+## 3. Crosstalk Correction Mathematics & Principles
 
 In film negative scanning systems, obtaining independent readings for each color channel (Red, Green, and Blue) is critical. However, even when utilizing narrow-band LED light sources or high-quality optical filters, digital camera sensors suffer from **spectral crosstalk**. Spectral crosstalk occurs because the transmission curves of the sensor's Color Filter Array (CFA) overlap (for example, the green filter has non-zero transmission in the red and blue bands). Consequently, a pure red illumination source will register non-zero responses in the green and blue channels of the raw linear image.
 
@@ -252,7 +240,7 @@ If the matrix is singular (i.e., columns are linearly dependent due to severe se
 
 ---
 
-## 5. Film Profiling, ICC Generation, and Linear Negative Conversion
+## 4. Film Profiling, ICC Generation, and Linear Negative Conversion
 
 This section covers the mathematical steps utilized to compile negative film profiles containing custom 3D cLUT ICC profiles and Tone Reproduction Curves (TRCs), and apply them dynamically during raw image conversion.
 
@@ -385,7 +373,7 @@ $$
 
 ---
 
-## 6. Color Space Conversion Pipeline & Multi-Backend Architecture
+## 5. Color Space Conversion Pipeline & Multi-Backend Architecture
 
 Following crosstalk correction and film base scaling, the normalized linear RGB sensor pixels must be color-managed. This section describes the standard ICC conversion sequence, details the differences between the three available pipeline backends, and presents benchmark and parity data obtained on the target Jetson Nano platform.
 
@@ -468,3 +456,15 @@ We measured processing times on a sample 16-bit linear RAW image ($4784 \times 3
 1. **Parallel Execution**: The CUDA backend achieves a $33.5\times$ speedup over Python and $1.8\times$ speedup over C++ CPU by processing pixel transformations in parallel threads on the GPU, avoiding CPU cache bottlenecking and serial loops.
 2. **NumPy Vectorization Overhead**: While NumPy is vectorized, executing multiple non-contiguous memory writes, float operations, and interpolation masks sequentially in Python incurs significant interpreter and memory allocation overhead.
 3. **Fixed-Point C++ Efficiency**: The C++ CPU backend is highly optimized but is bounded by single-core throughput constraints when traversing large image grids sequentially.
+
+---
+
+## 6. CPython C-Extension Interface
+
+To allow high-performance integration with Python-based negative inversion and processing pipelines, the core capture and LibRaw decoding routines are exposed as a Python C-extension module named `negicc_station`.
+
+Refer to the following source files for implementation details:
+- [image_capture.h](src/image_capture.h): C++ CapturedImage interface representing camera parameters, captured raw file locations, and linear RGB/TIFF conversion routines.
+- [image_capture.cpp](src/image_capture.cpp): Core implementation of single and pixel-shift linear conversions, including 2x2 downsampling.
+- [python_bindings.cpp](src/python_bindings.cpp): CPython glue code exposing `negicc_station.capture()`, `negicc_station.CapturedImage`, and C-API NumPy array generation.
+- [ui_capture.py](src/ui_capture.py): PyGObject/GTK3 desktop graphical interface demonstrating real-time camera controls, preview rendering, and timing diagnostics.
