@@ -2,6 +2,7 @@
 #include "sony_camera_session.h"
 #include <iostream>
 #include <cstdio>
+#include <cstdlib>
 #include <algorithm>
 #include <cmath>
 #include <netinet/in.h>
@@ -400,24 +401,29 @@ static bool run_color_pipeline_host(
             std::vector<float> default_cc = {1,0,0,0,1,0,0,0,1};
             const float* cc_ptr = cc_matrix.empty() ? default_cc.data() : cc_matrix.data();
 
-            bool cuda_ok = run_cuda_color_pipeline(
-                buf.data(), buf.data(), out_w, out_h,
-                cc_ptr, exposure_comp,
-                has_prof_flag,
-                in_trc0.empty() ? nullptr : in_trc0.data(), in_trc0.size(),
-                in_trc1.empty() ? nullptr : in_trc1.data(), in_trc1.size(),
-                in_trc2.empty() ? nullptr : in_trc2.data(), in_trc2.size(),
-                out_trc0.empty() ? nullptr : out_trc0.data(), out_trc0.size(),
-                out_trc1.empty() ? nullptr : out_trc1.data(), out_trc1.size(),
-                out_trc2.empty() ? nullptr : out_trc2.data(), out_trc2.size(),
-                matrix_3x3.empty() ? nullptr : matrix_3x3.data(),
-                offset_3.empty() ? nullptr : offset_3.data(),
-                clut_grid.empty() ? nullptr : clut_grid.data(),
-                clut_dim_r, clut_dim_g, clut_dim_b,
-                bradford_matrix,
-                xyz_to_srgb_matrix,
-                colorspace_type
-            );
+            bool cuda_ok = false;
+            if (std::getenv("FORCE_CUDA_FALLBACK") != nullptr) {
+                std::cerr << "FORCE_CUDA_FALLBACK environment variable detected. Bypassing CUDA pipeline run to simulate fallback." << std::endl;
+            } else {
+                cuda_ok = run_cuda_color_pipeline(
+                    buf.data(), buf.data(), out_w, out_h,
+                    cc_ptr, exposure_comp,
+                    has_prof_flag,
+                    in_trc0.empty() ? nullptr : in_trc0.data(), in_trc0.size(),
+                    in_trc1.empty() ? nullptr : in_trc1.data(), in_trc1.size(),
+                    in_trc2.empty() ? nullptr : in_trc2.data(), in_trc2.size(),
+                    out_trc0.empty() ? nullptr : out_trc0.data(), out_trc0.size(),
+                    out_trc1.empty() ? nullptr : out_trc1.data(), out_trc1.size(),
+                    out_trc2.empty() ? nullptr : out_trc2.data(), out_trc2.size(),
+                    matrix_3x3.empty() ? nullptr : matrix_3x3.data(),
+                    offset_3.empty() ? nullptr : offset_3.data(),
+                    clut_grid.empty() ? nullptr : clut_grid.data(),
+                    clut_dim_r, clut_dim_g, clut_dim_b,
+                    bradford_matrix,
+                    xyz_to_srgb_matrix,
+                    colorspace_type
+                );
+            }
             if (cuda_ok) {
                 return true;
             }
