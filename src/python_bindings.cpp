@@ -100,7 +100,7 @@ static PyObject* PyCapturedImage_to_numpy(PyCapturedImage* self, PyObject* args,
     static const char* kwlist[] = {
         "half", "crosstalk_matrix", "it8_profile_path", "output_profile_path",
         "profile_film_base", "film_base", "exposure_comp", "pipeline",
-        "it8_profile_bytes", nullptr
+        "it8_profile_bytes", "to_uint8", nullptr
     };
     int half = 0;
     PyObject* py_matrix = nullptr;
@@ -111,11 +111,12 @@ static PyObject* PyCapturedImage_to_numpy(PyCapturedImage* self, PyObject* args,
     float exposure_comp = 1.0f;
     const char* pipeline = "cuda";
     PyObject* py_icc_bytes = nullptr;
+    int to_uint8 = 0;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|pOzzOOfzO", const_cast<char**>(kwlist),
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|pOzzOOfzOp", const_cast<char**>(kwlist),
                                      &half, &py_matrix, &it8_profile_path, &output_profile_path,
                                      &py_profile_film_base, &py_film_base, &exposure_comp,
-                                     &pipeline, &py_icc_bytes)) {
+                                     &pipeline, &py_icc_bytes, &to_uint8)) {
         return nullptr;
     }
 
@@ -196,23 +197,47 @@ static PyObject* PyCapturedImage_to_numpy(PyCapturedImage* self, PyObject* args,
     std::string out_path = output_profile_path ? output_profile_path : "srgb";
 
     int w = 0, h = 0;
-    std::vector<uint16_t> buf;
     std::string pipe_str = pipeline ? pipeline : "cuda";
-    if (!self->cpp_img->get_linear_rgb(half != 0, w, h, buf, cc_matrix, it8_path, out_path,
-                                       profile_film_base, film_base, exposure_comp,
-                                       pipe_str, icc_data, (size_t)icc_data_size)) {
-        PyErr_SetString(PyExc_RuntimeError, "Failed to load/process RAW image buffer.");
-        return nullptr;
+
+    if (to_uint8) {
+        if (half == 0) {
+            PyErr_SetString(PyExc_ValueError, "uint8 preview pipeline only supports half_size=True (half=True).");
+            return nullptr;
+        }
+        std::vector<uint8_t> buf;
+        if (!self->cpp_img->get_preview_rgb8(w, h, buf, cc_matrix, it8_path, out_path,
+                                             profile_film_base, film_base, exposure_comp,
+                                             pipe_str, icc_data, (size_t)icc_data_size)) {
+            PyErr_SetString(PyExc_RuntimeError, "Failed to load/process RAW image buffer to preview rgb8.");
+            return nullptr;
+        }
+
+        npy_intp dims[3] = { h, w, 3 };
+        PyObject* arr = PyArray_SimpleNew(3, dims, NPY_UINT8);
+        if (!arr) return nullptr;
+
+        uint8_t* arr_data = static_cast<uint8_t*>(PyArray_DATA(reinterpret_cast<PyArrayObject*>(arr)));
+        std::copy(buf.begin(), buf.end(), arr_data);
+
+        return arr;
+    } else {
+        std::vector<uint16_t> buf;
+        if (!self->cpp_img->get_linear_rgb(half != 0, w, h, buf, cc_matrix, it8_path, out_path,
+                                           profile_film_base, film_base, exposure_comp,
+                                           pipe_str, icc_data, (size_t)icc_data_size)) {
+            PyErr_SetString(PyExc_RuntimeError, "Failed to load/process RAW image buffer.");
+            return nullptr;
+        }
+
+        npy_intp dims[3] = { h, w, 3 };
+        PyObject* arr = PyArray_SimpleNew(3, dims, NPY_UINT16);
+        if (!arr) return nullptr;
+
+        uint16_t* arr_data = static_cast<uint16_t*>(PyArray_DATA(reinterpret_cast<PyArrayObject*>(arr)));
+        std::copy(buf.begin(), buf.end(), arr_data);
+
+        return arr;
     }
-
-    npy_intp dims[3] = { h, w, 3 };
-    PyObject* arr = PyArray_SimpleNew(3, dims, NPY_UINT16);
-    if (!arr) return nullptr;
-
-    uint16_t* arr_data = static_cast<uint16_t*>(PyArray_DATA(reinterpret_cast<PyArrayObject*>(arr)));
-    std::copy(buf.begin(), buf.end(), arr_data);
-
-    return arr;
 }
 
 static PyObject* PyCapturedImage_write_tiff(PyCapturedImage* self, PyObject* args, PyObject* kwargs) {

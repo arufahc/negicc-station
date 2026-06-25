@@ -642,6 +642,105 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
     return true;
 }
 
+bool CapturedImage::get_preview_rgb8(int& out_w, int& out_h, std::vector<uint8_t>& out_buf,
+                                     const std::vector<float>& cc_matrix,
+                                     const std::string& it8_profile_path,
+                                     const std::string& output_profile_path,
+                                     const std::vector<int>& profile_film_base,
+                                     const std::vector<int>& film_base,
+                                     float exposure_comp,
+                                     const std::string& pipeline,
+                                     const uint8_t* it8_profile_data,
+                                     size_t it8_profile_data_size) const {
+    if (m_filepaths.empty()) {
+        std::cerr << "ERROR: No filepaths available in CapturedImage." << std::endl;
+        return false;
+    }
+
+    bool has_profile = !it8_profile_path.empty() || (it8_profile_data != nullptr && it8_profile_data_size > 0);
+    bool use_cuda = (pipeline == "cuda" && has_profile && is_cuda_available() &&
+                     (output_profile_path == "srgb" || output_profile_path == "srgb-g10") &&
+                     std::getenv("FORCE_CUDA_FALLBACK") == nullptr);
+
+    if (use_cuda) {
+        // Run GPU pipeline
+        std::vector<float> adjusted_cc = prepare_adjusted_crosstalk(cc_matrix, exposure_comp, profile_film_base, film_base);
+
+        std::vector<uint16_t> temp_in;
+        if (!ensure_decoded_raw(*this, true, out_w, out_h, temp_in)) {
+            return false;
+        }
+
+        // Parse profile stages
+        int has_prof_flag = 0;
+        std::vector<float> in_trc0, in_trc1, in_trc2;
+        std::vector<float> out_trc0, out_trc1, out_trc2;
+        std::vector<float> matrix_3x3;
+        std::vector<float> offset_3;
+        std::vector<float> clut_grid;
+        int clut_dim_r = 0, clut_dim_g = 0, clut_dim_b = 0;
+
+        parse_icc_profile(it8_profile_path, it8_profile_data, it8_profile_data_size,
+                          has_prof_flag, in_trc0, in_trc1, in_trc2, out_trc0, out_trc1, out_trc2,
+                          matrix_3x3, offset_3, clut_grid, clut_dim_r, clut_dim_g, clut_dim_b);
+
+        float bradford_matrix[9] = {
+             0.9555766f, -0.0230393f,  0.0631636f,
+            -0.0282895f,  1.0099416f,  0.0210077f,
+             0.0122982f, -0.0204830f,  1.3299098f
+        };
+        float xyz_to_srgb_matrix[9] = {
+             3.2406255f, -1.5372080f, -0.4986286f,
+            -0.9689307f,  1.8757561f,  0.0415175f,
+             0.0557101f, -0.2040211f,  1.0569959f
+        };
+        int colorspace_type = (output_profile_path == "srgb") ? 0 : 1;
+
+        std::vector<float> default_cc = {1,0,0,0,1,0,0,0,1};
+        const float* cc_ptr = cc_matrix.empty() ? default_cc.data() : cc_matrix.data();
+
+        out_buf.resize(out_w * out_h * 3);
+
+        bool cuda_ok = run_cuda_color_pipeline_uint8(
+            temp_in.data(), out_buf.data(), out_w, out_h,
+            cc_ptr, exposure_comp,
+            has_prof_flag,
+            in_trc0.empty() ? nullptr : in_trc0.data(), in_trc0.size(),
+            in_trc1.empty() ? nullptr : in_trc1.data(), in_trc1.size(),
+            in_trc2.empty() ? nullptr : in_trc2.data(), in_trc2.size(),
+            out_trc0.empty() ? nullptr : out_trc0.data(), out_trc0.size(),
+            out_trc1.empty() ? nullptr : out_trc1.data(), out_trc1.size(),
+            out_trc2.empty() ? nullptr : out_trc2.data(), out_trc2.size(),
+            matrix_3x3.empty() ? nullptr : matrix_3x3.data(),
+            offset_3.empty() ? nullptr : offset_3.data(),
+            clut_grid.empty() ? nullptr : clut_grid.data(),
+            clut_dim_r, clut_dim_g, clut_dim_b,
+            bradford_matrix,
+            xyz_to_srgb_matrix,
+            colorspace_type
+        );
+        if (cuda_ok) {
+            return true;
+        }
+        std::cerr << "WARNING: CUDA preview uint8 pipeline failed. Falling back to CPU." << std::endl;
+    }
+
+    // CPU Fallback: Run standard 16-bit conversion first, then downscale to uint8
+    std::vector<uint16_t> temp_out;
+    if (!get_linear_rgb(true, out_w, out_h, temp_out, cc_matrix, it8_profile_path,
+                         output_profile_path, profile_film_base, film_base, exposure_comp,
+                         "cpp", it8_profile_data, it8_profile_data_size)) {
+        return false;
+    }
+
+    out_buf.resize(temp_out.size());
+    for (size_t i = 0; i < temp_out.size(); ++i) {
+        out_buf[i] = (uint8_t)(temp_out[i] >> 8);
+    }
+
+    return true;
+}
+
 std::unique_ptr<CapturedImage> capture_image(ImageCaptureType type, uint32_t shutterSpeedVal) {
     std::unique_ptr<CameraSession> session = std::make_unique<SonyCameraSession>();
     if (!session->initialize()) {

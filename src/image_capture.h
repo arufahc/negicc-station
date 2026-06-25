@@ -42,6 +42,17 @@ public:
                         const uint8_t* it8_profile_data = nullptr,
                         size_t it8_profile_data_size = 0) const;
 
+    bool get_preview_rgb8(int& out_w, int& out_h, std::vector<uint8_t>& out_buf,
+                          const std::vector<float>& cc_matrix = {},
+                          const std::string& it8_profile_path = "",
+                          const std::string& output_profile_path = "srgb",
+                          const std::vector<int>& profile_film_base = {},
+                          const std::vector<int>& film_base = {},
+                          float exposure_comp = 1.0f,
+                          const std::string& pipeline = "cuda",
+                          const uint8_t* it8_profile_data = nullptr,
+                          size_t it8_profile_data_size = 0) const;
+
 private:
     ImageCaptureType m_type;
     double m_shutter_speed;
