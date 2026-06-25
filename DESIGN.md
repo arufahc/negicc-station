@@ -151,7 +151,7 @@ This penalty function guarantees that any exposure where the 95th percentile exc
 
 ## 3. Crosstalk Correction Mathematics & Principles
 
-In film negative scanning systems, obtaining independent readings for each color channel (Red, Green, and Blue) is critical. However, even when utilizing narrow-band LED light sources or high-quality optical filters, digital camera sensors suffer from **spectral crosstalk**. Spectral crosstalk occurs because the transmission curves of the sensor's Color Filter Array (CFA) overlap (for example, the green filter has non-zero transmission in the red and blue bands). Consequently, a pure red illumination source will register non-zero responses in the green and blue channels of the raw linear image.
+In film negative scanning systems, obtaining independent readings for each color channel (Red, Green, and Blue) is critical. However, even when utilizing narrow-band LED light sources (without any optical bandpass filters), digital camera sensors suffer from **spectral crosstalk**. Spectral crosstalk occurs because the transmission curves of the sensor's Color Filter Array (CFA) overlap (for example, the green filter has non-zero transmission in the red and blue bands). Consequently, a pure red illumination source will register non-zero responses in the green and blue channels of the raw linear image.
 
 To mathematically decouple these overlapping signals, a crosstalk correction matrix is applied to the raw linear RGB response.
 
@@ -195,10 +195,10 @@ Calibration is performed to generate the correction matrix $C$ by measuring the 
 
 #### Calibration Capture Protocol
 
-The calibration process requires capturing three separate exposures, each under a single narrow-band light source or bandpass filter:
-1. **Red Calibration Capture**: Image exposed only with Red light.
-2. **Green Calibration Capture**: Image exposed only with Green light.
-3. **Blue Calibration Capture**: Image exposed only with Blue light.
+The calibration process requires capturing three separate exposures, each under a single channel (Red, Green, or Blue) of the tricolor LED light source without any optical filters:
+1. **Red Calibration Capture**: Image exposed only with the Red LED channel.
+2. **Green Calibration Capture**: Image exposed only with the Green LED channel.
+3. **Blue Calibration Capture**: Image exposed only with the Blue LED channel.
 
 For each of the three calibration images, the spatial average (mean) of the linear $R, G, B$ channels is calculated over a central region of interest. To avoid edge effects and lens vignetting, this central region is defined as a circle in the center of the image with a diameter equal to $1/3$ of the shorter side of the image.
 

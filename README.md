@@ -80,9 +80,7 @@ To set up the negative film scanning station, you will need the following hardwa
 
 ### 2. Light Source & Filters
 * **Light Source**: Use a high-quality RGB LED light box with individually adjustable Red, Green, and Blue channels. The system is designed to use the LED light box with adjustable R, G, and B lights provided by [Shoebox Photos BCS](https://www.shoeboxphotosbcs.com). Alternatively, an RGB flood light with a white diffuser glass and a milk carton mixing chamber can be used.
-* **Filters**:
-  - **Tri-band Filter**: A tri-band filter (such as Edmund Optics #87-246, 50mm Dia.) is mounted to the camera lens during normal scanning to restrict light transmission to three narrow bands corresponding to the film dyes.
-  - **Bandpass Calibration Filters**: During the one-time crosstalk calibration phase, three additional filters are temporarily used to isolate each channel (Edmund Optics 464, 542, & 639nm, or MidOpt BP470 blue, BP525 green, and LP610 red bandpass filters).
+* **Optical Filters**: **No optical filters are required**. The system does not require a tri-band filter during scanning, nor does it require any narrowband bandpass filters during calibration. It relies entirely on the camera's sensor and the individually switched Red, Green, and Blue channels of the tricolor LED light source to isolate the spectral bands.
 
 ### 3. IT8 Calibration Target & Film Exposures
 Because there are no pre-made "Negative IT8 targets" on the market, you must prepare custom target exposures:
@@ -337,7 +335,7 @@ The Sony SDK represents shutter speed values as a fraction pack where the upper 
 This guide details the complete protocol to calibrate a digital camera sensor's spectral crosstalk, capture film base characteristics, and profile target data at different exposures using the scanning software.
 
 ### Phase 1: Spectral Crosstalk Calibration
-Before scanning negative film, you must capture the camera sensor's specific channel overlap characteristics under single-color narrow-band illuminations (or filter bands):
+Before scanning negative film, you must capture the camera sensor's specific channel overlap characteristics under the individual Red, Green, and Blue illumination channels of the tricolor LED light source:
 
 1. Launch the crosstalk calibration script:
    ```bash
