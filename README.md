@@ -2,6 +2,8 @@
 
 This repository contains the software for a negative film scanning station designed to run on the **Nvidia Jetson Nano** (ARMv8 64-bit architecture) and interface with a connected **Sony A7R4** camera.
 
+![Sample Scan Overview (Portra 400)](test_imgs/sample_corrected_portra400.jpg)
+
 ### Directory Structure
 
 * **[src/](src/)**: Main C++ and CPython extension source code, as well as Python example scripts.
