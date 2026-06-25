@@ -12,15 +12,15 @@ bool is_cuda_available() {
     return false;
 }
 
-// GPU float32 raw image cache singleton
-static float* g_cached_device_raw_float_buf = nullptr;
+// GPU uint16_t raw image cache singleton
+static uint16_t* g_cached_device_raw_uint16_buf = nullptr;
 static int g_cached_device_w = 0;
 static int g_cached_device_h = 0;
 
 void clear_cuda_device_cache() {
-    if (g_cached_device_raw_float_buf) {
-        cudaFree(g_cached_device_raw_float_buf);
-        g_cached_device_raw_float_buf = nullptr;
+    if (g_cached_device_raw_uint16_buf) {
+        cudaFree(g_cached_device_raw_uint16_buf);
+        g_cached_device_raw_uint16_buf = nullptr;
     }
     g_cached_device_w = 0;
     g_cached_device_h = 0;
@@ -35,13 +35,6 @@ __device__ inline float3 operator*(float3 a, float b) {
     return make_float3(a.x * b, a.y * b, a.z * b);
 }
 
-__global__ void convert_uint16_to_float_kernel(const uint16_t* input, float* output, int num_elements) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < num_elements) {
-        output[idx] = input[idx] / 65535.0f;
-    }
-}
-
 /*
  * CUDA Color Conversion Kernel Design:
  * - Manually processes raw/crosstalk corrected sensor values.
@@ -52,7 +45,7 @@ __global__ void convert_uint16_to_float_kernel(const uint16_t* input, float* out
  * - Custom output profiles are NOT used or supported here; they must fallback to CPU LCMS.
  */
 __global__ void color_conversion_kernel(
-    const float* input_pixels,
+    const uint16_t* input_pixels,
     uint16_t* output_pixels,
     int w, int h,
     // Crosstalk matrix
@@ -91,10 +84,10 @@ __global__ void color_conversion_kernel(
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= w * h) return;
  
-    // 1. Load float32 raw pixels [0.0, 1.0]
-    float r = input_pixels[idx * 3];
-    float g = input_pixels[idx * 3 + 1];
-    float b = input_pixels[idx * 3 + 2];
+    // 1. Load and normalize raw pixels [0.0, 1.0]
+    float r = input_pixels[idx * 3] / 65535.0f;
+    float g = input_pixels[idx * 3 + 1] / 65535.0f;
+    float b = input_pixels[idx * 3 + 2] / 65535.0f;
 
     // 2. Crosstalk matrix correction
     float cr = r * cc0 + g * cc1 + b * cc2;
@@ -251,7 +244,7 @@ bool run_cuda_color_pipeline(
     const float* xyz_to_srgb_matrix,
     int colorspace_type
 ) {
-    float* d_input_float = nullptr;
+    uint16_t* d_input_uint16 = nullptr;
     uint16_t* d_output = nullptr;
     float* d_in_trc0 = nullptr;
     float* d_in_trc1 = nullptr;
@@ -268,45 +261,27 @@ bool run_cuda_color_pipeline(
     }
 
     // Check device cache singleton
-    if (g_cached_device_raw_float_buf && g_cached_device_w == w && g_cached_device_h == h) {
-        d_input_float = g_cached_device_raw_float_buf;
+    if (g_cached_device_raw_uint16_buf && g_cached_device_w == w && g_cached_device_h == h) {
+        d_input_uint16 = g_cached_device_raw_uint16_buf;
     } else {
         clear_cuda_device_cache();
 
-        size_t float_img_size = w * h * 3 * sizeof(float);
-        if (cudaMalloc(&g_cached_device_raw_float_buf, float_img_size) != cudaSuccess) {
-            std::cerr << "ERROR: Failed to allocate device memory for float32 raw image cache." << std::endl;
+        if (cudaMalloc(&g_cached_device_raw_uint16_buf, img_size) != cudaSuccess) {
+            std::cerr << "ERROR: Failed to allocate device memory for uint16 raw image cache." << std::endl;
             cudaFree(d_output);
             return false;
         }
 
-        uint16_t* d_temp_in = nullptr;
-        if (cudaMalloc(&d_temp_in, img_size) != cudaSuccess) {
-            std::cerr << "ERROR: Failed to allocate temporary device memory for uint16 raw image." << std::endl;
-            cudaFree(d_output);
-            cudaFree(g_cached_device_raw_float_buf);
-            g_cached_device_raw_float_buf = nullptr;
-            return false;
-        }
-
-        if (cudaMemcpy(d_temp_in, host_input_pixels, img_size, cudaMemcpyHostToDevice) != cudaSuccess) {
+        if (cudaMemcpy(g_cached_device_raw_uint16_buf, host_input_pixels, img_size, cudaMemcpyHostToDevice) != cudaSuccess) {
             std::cerr << "ERROR: Failed to copy host raw image to device." << std::endl;
-            cudaFree(d_temp_in);
             cudaFree(d_output);
-            cudaFree(g_cached_device_raw_float_buf);
-            g_cached_device_raw_float_buf = nullptr;
+            clear_cuda_device_cache();
             return false;
         }
-
-        int threads_per_block = 256;
-        int blocks = (w * h * 3 + threads_per_block - 1) / threads_per_block;
-        convert_uint16_to_float_kernel<<<blocks, threads_per_block>>>(d_temp_in, g_cached_device_raw_float_buf, w * h * 3);
-
-        cudaFree(d_temp_in);
 
         g_cached_device_w = w;
         g_cached_device_h = h;
-        d_input_float = g_cached_device_raw_float_buf;
+        d_input_uint16 = g_cached_device_raw_uint16_buf;
     }
 
     if (has_profile) {
@@ -345,7 +320,7 @@ bool run_cuda_color_pipeline(
     int blocks = (w * h + threads_per_block - 1) / threads_per_block;
 
     color_conversion_kernel<<<blocks, threads_per_block>>>(
-        d_input_float, d_output, w, h,
+        d_input_uint16, d_output, w, h,
         crosstalk_matrix[0], crosstalk_matrix[1], crosstalk_matrix[2],
         crosstalk_matrix[3], crosstalk_matrix[4], crosstalk_matrix[5],
         crosstalk_matrix[6], crosstalk_matrix[7], crosstalk_matrix[8],
