@@ -248,6 +248,23 @@ If the matrix is singular (i.e., columns are linearly dependent due to severe se
 
 This section covers the mathematical steps utilized to compile negative film profiles containing custom 3D cLUT ICC profiles and Tone Reproduction Curves (TRCs), and apply them dynamically during raw image conversion.
 
+### 5.0 Why a Profile is Needed (Even with a Tricolor/Narrow-band Light Source)
+
+While some setups attempt to bypass color profiling by utilizing narrow-band tricolor light sources or optical bandpass filters to isolate color channels physically, a profiled software approach remains strictly necessary for accurate, high-fidelity film reproduction.
+
+#### 1. Hardware Availability & Sensor Ubiquity
+A tricolor light source or true monochrome camera setup is not strictly needed. True monochrome sensors are extremely rare and costly, whereas digital cameras with color filter arrays (CFAs) are ubiquitous. Using a standard CFA sensor with mathematical crosstalk correction is the most common approach and is already standard in modern digital image processing. Combining **pixel-shift technology** (e.g., on the Sony A7R4) with a crosstalk correction matrix achieves the same channel purity as physical tricolor separation, but uses readily available commercial hardware.
+
+#### 2. Avoiding Arbitrary Color Spaces
+Once crosstalk correction is applied and film base levels are normalized, the resulting linear RGB values are simply arbitrary sensor response metrics. They do not reside in any standard, meaningful color space. While one could arbitrarily assign a standard color space (like sRGB or AdobeRGB), the colors will not look realistic. A profiled approach is required to mathematically map these arbitrary camera sensor RGB response values to known, absolute colorimetric **XYZ values** (derived from the IT8 target's certified colorimeter measurements).
+
+#### 3. Handling Exposure Variations (Dense vs. Thin Negatives)
+A color profile maps the film's response over a wide range. This allows the conversion software to dynamically handle varying exposures—such as when a negative is too dense (overexposed) or too thin (underexposed), or when the scan is captured using a different ISO sensitivity than the standard baseline used during the initial profiling target exposure.
+
+#### 4. Non-Linearity of Film Dyes (Differing Gamma Curves)
+Crucially, the cyan, magenta, and yellow color dyes in negative film emulsions do not react linearly to light and do not possess the same gamma curve. Because their density-to-exposure curves differ, a simple linear or single-gamma scaling will produce severe color shifts in the shadows and highlights. A profiled approach using independent Tone Reproduction Curves (TRCs) for each channel and a 3D color lookup table (cLUT) models these non-linearities exactly. This produces accurate, natural-looking results automatically, completely eliminating the need for tedious manual post-processing and color-fiddling.
+
+
 ### 5.1 Exposure Ratio Scaling
 Let the film base capture be acquired at exposure time $t_b$ and sensitivity $ISO_b$.
 Let the target capture (containing the IT8 reference target) be acquired at exposure time $t_t$ and sensitivity $ISO_t$.
