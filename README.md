@@ -86,7 +86,7 @@ To set up the negative film scanning station, you will need the following hardwa
 Because there are no pre-made "Negative IT8 targets" on the market, you must prepare custom target exposures:
 1. **Source Target**: Obtain a standard reflective or transmissive IT8.7/2 calibration target (e.g., C1 target in A4 size or CF target on Fuji paper from coloraid.de), supplied with manufacturer-calibrated XYZ/Yxy reference data.
 2. **Expose the Film**: Expose the film stock you wish to profile (e.g., Kodak Portra 400, Fuji Gold 200) under controlled, natural 5500K sunlight (typically on a clear spring/fall day, 3–4 hours before sunset).
-3. **Bracketing (Multi-Exposure)**: Capture multiple bracketed exposures of the IT8 target on the negative film (e.g., a sweep of -2, -1, +0, +1, and +2 EV).
+3. **Bracketing (Multi-Exposure)**: Capture multiple bracketed exposures of the IT8 target on the negative film. For best profiling results, capture **7 targets** at **1/2 stop exposure intervals** (e.g., -1.5, -1.0, -0.5, +0.0, +0.5, +1.0, and +1.5 EV). This provides a dense multi-exposure profile on disk, and at conversion time the software will automatically pick the target closest to the density of the scanned film.
 4. **Development**: Develop the film normally at the laboratory you plan to use for scanning in the future.
 5. **Reference Readings (Optional)**: If available, you can use a Konica Minolta CS-100A spot colorimeter to take custom reference readings of the physical target patches under the same exposure lighting.
 

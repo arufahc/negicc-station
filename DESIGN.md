@@ -246,7 +246,7 @@ This section covers the mathematical steps utilized to compile negative film pro
 
 *Implementation Reference:* The overall film profiling library, ArgyllCMS TI3 generation, and ICC generation process are managed by the `FilmProfile` class and helper functions in [src/film_profiling.py](src/film_profiling.py).
 
-### 5.0 Why a Profile is Needed (Even with a Tricolor/Narrow-band Light Source)
+### 4.0 Why a Profile is Needed (Even with a Tricolor/Narrow-band Light Source)
 
 While some setups attempt to bypass color profiling by utilizing narrow-band tricolor light sources or optical bandpass filters to isolate color channels physically, a profiled software approach remains strictly necessary for accurate, high-fidelity film reproduction.
 
@@ -263,7 +263,7 @@ A color profile maps the film's response over a wide range. This allows the conv
 Crucially, the cyan, magenta, and yellow color dyes in negative film emulsions do not react linearly to light and do not possess the same gamma curve. Because their density-to-exposure curves differ, a simple linear or single-gamma scaling will produce severe color shifts in the shadows and highlights. A profiled approach using independent Tone Reproduction Curves (TRCs) for each channel and a 3D color lookup table (cLUT) models these non-linearities exactly. This produces accurate, natural-looking results automatically, completely eliminating the need for tedious manual post-processing and color-fiddling.
 
 
-### 5.1 Exposure Ratio Scaling
+### 4.1 Exposure Ratio Scaling
 Let the film base capture be acquired at exposure time $t_b$ and sensitivity $ISO_b$.
 Let the target capture (containing the IT8 reference target) be acquired at exposure time $t_t$ and sensitivity $ISO_t$.
 
@@ -283,7 +283,7 @@ $$
 \text{Ratio} = \frac{\text{Exposure}_b}{\text{Exposure}_t}
 $$
 
-### 5.2 Film Base Normalization
+### 4.2 Film Base Normalization
 To map the measured crosstalk-corrected film base levels (Red, Green, and Blue) to a fixed target normalization level (defaulting to 55000.0), channel-specific scaling factors are calculated:
 
 $$
@@ -296,7 +296,7 @@ $$
 P_{\text{scaled}, c} = P_{\text{raw}, c} \times S_c
 $$
 
-### 5.3 Tone Reproduction Curve (TRC) Estimation
+### 4.3 Tone Reproduction Curve (TRC) Estimation
 We extract the grayscale patches $i \in \{0, \dots, 23\}$ from the target data. Let their scaled crosstalk-corrected averages be represented by $V_c(i)$ for $c \in \{R, G, B\}$. 
 
 Using the reference XYZ target data, we normalize the reference luminance $Y_{\text{ref}}(i)$ to the range $[0.0, \text{whitest-patch-scaling}]$:
@@ -313,7 +313,7 @@ $$
 
 These curves act as the independent red, green, and blue Tone Reproduction Curves (TRCs) serialized into the final profile.
 
-### 5.4 Dynamic Scaling and Matrix Merging
+### 4.4 Dynamic Scaling and Matrix Merging
 When converting a raw negative scan captured at shutter speed $t_s$ and sensitivity $ISO_s$, we calculate the scan-to-base exposure ratio:
 
 $$
@@ -344,8 +344,8 @@ $$
 V_{\text{sRGB}} = \text{ICC}_{\text{LUT}}\left(\begin{bmatrix} \text{TRC}_R(R_{\text{scaled}}) \\ \text{TRC}_G(G_{\text{scaled}}) \\ \text{TRC}_B(B_{\text{scaled}}) \end{bmatrix}\right)
 $$
 
-### 5.5 Dynamic Profile Target Selection & Performance Optimization
-To support multi-target calibration profiles (profiles containing calibration targets captured at different exposure levels), the system implements a dynamic profile matching algorithm:
+### 4.5 Dynamic Profile Target Selection & Performance Optimization
+To support multi-target calibration profiles (profiles containing calibration targets captured at different exposure levels), the system implements a dynamic profile matching algorithm. For optimal profiling results, the user should capture **7 target exposures at 1/2 stop intervals** on the film. At conversion time, the pipeline analyzes the scanned image's density and automatically selects the target closest to the scanned image:
 1. **Region of Interest Extraction**: Extracts the $2/3$ center square of the shorter side from the raw image to focus on the calibration target area.
 2. **Subsampling Optimization**: To avoid performance bottlenecks on high-resolution 61MP sensor captures, the region of interest is subsampled by taking every 10th pixel in both dimensions. This reduces the pixels under analysis by a factor of 100 (from 17.8 million down to ~178k elements), reducing execution time from ~10 seconds to under 20ms while preserving the statistical distribution of the dynamic range.
 3. **Crosstalk Correction**: Corrects the subsampled raw image patch using the profile's crosstalk matrix.
@@ -377,7 +377,7 @@ $$
 
 Following crosstalk correction and film base scaling, the normalized linear RGB sensor pixels must be color-managed. This section describes the standard ICC conversion sequence, details the differences between the three available pipeline backends, and presents benchmark and parity data obtained on the target Jetson Nano platform.
 
-### 6.1 The Color Space Conversion Steps
+### 5.1 The Color Space Conversion Steps
 To transform raw linear camera responses into standard sRGB space, the pipeline evaluates the film's custom IT8 profile stages and projects coordinates through the Profile Connection Space (PCS):
 
 1. **Pixel Normalization**: Converts raw 16-bit unsigned integers ($[0, 65535]$ LSB) to normalized `float32` values in the range $[0.0, 1.0]$.
@@ -405,7 +405,7 @@ $$
 
 ---
 
-### 6.2 Pipeline Backends Comparison
+### 5.2 Pipeline Backends Comparison
 
 The system supports three distinct modes to run these steps:
 
@@ -429,7 +429,7 @@ The system supports three distinct modes to run these steps:
 
 ---
 
-### 6.3 Parity and Discrepancy Analysis
+### 5.3 Parity and Discrepancy Analysis
 
 Outputs from the three backends were compared under identical inputs ($[0, 65535]$ LSB) to evaluate correctness and quantization behavior:
 
@@ -442,7 +442,7 @@ Outputs from the three backends were compared under identical inputs ($[0, 65535
 
 ---
 
-### 6.4 Performance Benchmarks on Nvidia Jetson Nano
+### 5.4 Performance Benchmarks on Nvidia Jetson Nano
 
 We measured processing times on a sample 16-bit linear RAW image ($4784 \times 3188$ pixels, ~15.2M pixels, half-resolution scan) executing on the Nvidia Jetson Nano (ARM Aarch64 CPU + Maxwell GPU):
 
