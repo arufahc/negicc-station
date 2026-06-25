@@ -864,6 +864,12 @@ class CalibrationTargetsDetailsWindow(Gtk.Window):
         if self.app.raw_image is None or self.app.raw_linear_pixels is None:
             return None
             
+        # Check cache (keyed on identity of raw image and active profile)
+        cache_key = (id(self.app.raw_image), id(self.app.profile))
+        if getattr(self, '_cached_range_key', None) == cache_key:
+            if getattr(self, '_cached_range', None) is not None:
+                return self._cached_range
+            
         raw_image = self.app.raw_linear_pixels
         profile = self.app.profile
         
@@ -873,7 +879,8 @@ class CalibrationTargetsDetailsWindow(Gtk.Window):
         y_start = (h - square_size) // 2
         x_start = (w - square_size) // 2
         
-        center_square = raw_image[y_start:y_start+square_size, x_start:x_start+square_size]
+        # Subsample every 10th pixel for 100x fewer elements while maintaining statistical percentile accuracy
+        center_square = raw_image[y_start:y_start+square_size:10, x_start:x_start+square_size:10]
         
         cc_img = center_square.astype(np.float32)
         if profile and hasattr(profile, 'crosstalk_matrix') and profile.crosstalk_matrix is not None:
@@ -926,11 +933,14 @@ class CalibrationTargetsDetailsWindow(Gtk.Window):
         t2_b = (p2_b / fb_b) * exposure_ratio
         t98_b = (p98_b / fb_b) * exposure_ratio
         
-        return {
+        res_dict = {
             'r': (t2_r, t98_r),
             'g': (t2_g, t98_g),
             'b': (t2_b, t98_b)
         }
+        self._cached_range_key = cache_key
+        self._cached_range = res_dict
+        return res_dict
 
     def update_text_info(self):
         profile = self.app.profile
