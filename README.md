@@ -57,7 +57,7 @@ Rather than using disconnected tools, this project uniquely integrates the entir
 * **Source-to-Camera Calibration**: Tailoring the camera sensor's color matrix directly to the spectral signature of the narrow-band LED light source.
 * **Film Stock Profiling**: Creating custom 3D cLUT profiles tailored to individual film stocks to map raw RGB values to standard color spaces.
 * **Tethered Automation**: Automating tethered Sony A7R4 USB capture sessions, including auto-exposure and sub-pixel shifted 4-shot captures.
-* **CUDA Hardware Acceleration**: Running a fully hardware-accelerated GPU pipeline optimized for NVIDIA platforms (such as the Jetson Orin Nano and Jetson Nano). By moving demosaicing, matrix conversions, and color lookups to the GPU cores, the system performs accurate, high-fidelity film conversions in a fraction of a second.
+* **CUDA Hardware Acceleration**: Running a hardware-accelerated GPU pipeline optimized for NVIDIA platforms (such as the Jetson Orin Nano and Jetson Nano). While RAW decoding and demosaicing are handled on the CPU, pixel-wise matrix multiplication, density mapping, and multi-stage 3D cLUT color transformations are offloaded to the GPU to achieve real-time conversion. Executing these calculations in floating-point precision on the GPU (or high-precision Python) is much more accurate than standard CPU-based C++ transformations using Little CMS, which suffer from 16-bit integer CMM quantization.
 
 ![End-to-End Scanning and Processing Pipeline Workflow](test_imgs/screenshot_workflow.jpg)
 
