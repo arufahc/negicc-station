@@ -36,6 +36,13 @@ Correcting for crosstalk alone is insufficient. Without profiling for the specif
 Negative film possesses an orange-tinted developed emulsion (the film base). Capturing and normalizing the film base is critical to isolate the actual image information.
 * **The Solution**: The system measures the film base to normalize all scanned transmittances. Since the film base represents the maximum possible light transmission (unexposed film), treating it as the $100\%$ transmittance reference ($1.0$ in linear space) allows us to compute all subsequent exposure transmittances relative to the base, effectively neutralizing the orange mask without discarding dynamic range.
 
+### 4. End-to-End System Integration & CUDA Acceleration
+Rather than using disconnected tools, this project uniquely integrates the entire digitization pipeline into a single automated environment:
+* **Source-to-Camera Calibration**: Tailoring the camera sensor's color matrix directly to the spectral signature of the narrow-band LED light source.
+* **Film Stock Profiling**: Creating custom 3D cLUT profiles tailored to individual film stocks to map raw RGB values to standard color spaces.
+* **Tethered Automation**: Automating tethered Sony A7R4 USB capture sessions, including auto-exposure and sub-pixel shifted 4-shot captures.
+* **CUDA Hardware Acceleration**: Running a fully hardware-accelerated GPU pipeline optimized for NVIDIA platforms (such as the Jetson Orin Nano and Jetson Nano). By moving demosaicing, matrix conversions, and color lookups to the GPU cores, the system performs accurate, high-fidelity film conversions in a fraction of a second.
+
 ---
 
 ## 1. Jetson Nano System Dependencies
