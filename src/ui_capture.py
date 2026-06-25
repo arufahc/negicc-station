@@ -1498,13 +1498,14 @@ class ScanningAppWindow(Gtk.Window):
             if not negicc_station.is_camera_connected():
                 self.is_connected = False
                 self.update_connection_ui(False, "Camera disconnected.")
-        elif not self.is_connecting:
-            if negicc_station.is_camera_connected():
-                self.connect_camera()
         return True
 
-    def connect_camera(self):
-        if self.is_connecting or self.is_connected:
+    def connect_camera(self, on_success=None):
+        if self.is_connecting:
+            return
+        if self.is_connected:
+            if on_success:
+                on_success()
             return
         self.is_connecting = True
         self.btn_capture.set_sensitive(False)
@@ -1517,7 +1518,11 @@ class ScanningAppWindow(Gtk.Window):
                 ok = self.camera_session.connect()
                 if ok:
                     self.is_connected = True
-                    GLib.idle_add(self.update_connection_ui, True, None)
+                    def success_cb():
+                        self.update_connection_ui(True, None)
+                        if on_success:
+                            on_success()
+                    GLib.idle_add(success_cb)
                 else:
                     self.is_connected = False
                     GLib.idle_add(self.update_connection_ui, False, "Connection failed.")
@@ -1537,7 +1542,8 @@ class ScanningAppWindow(Gtk.Window):
             self.lbl_status.set_text("Status: Camera connected, ready.")
         else:
             self.lbl_camera_status.set_markup("<span foreground='#ff4444'>●</span> <b>Camera: Disconnected</b>")
-            self.btn_capture.set_sensitive(False)
+            self.update_capture_button_sensitivity()
+            self.spinner.stop()
             if error_msg:
                 self.lbl_status.set_text(f"Status: Disconnected ({error_msg})")
             else:
@@ -1929,7 +1935,8 @@ class ScanningAppWindow(Gtk.Window):
 
     def on_capture(self, is_base=False):
         if not self.is_connected or not self.camera_session:
-            self.lbl_status.set_text("Error: Camera not connected.")
+            self.lbl_status.set_text("Camera not connected. Reconnecting...")
+            self.connect_camera(on_success=lambda: self.on_capture(is_base=is_base))
             return
             
         shutter_str = self.shutter_combo.get_active_text()
@@ -2374,7 +2381,7 @@ class ScanningAppWindow(Gtk.Window):
         has_full_profile = self.profile is not None and self.has_crosstalk and self.has_icc
         
         # Determine capture button sensitivity based on connection and capturing state
-        if not self.is_connected or getattr(self, 'is_capturing', False):
+        if getattr(self, 'is_capturing', False):
             self.btn_capture.set_sensitive(False)
         else:
             current_page = self.notebook.get_current_page()

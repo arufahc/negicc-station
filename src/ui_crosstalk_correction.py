@@ -391,14 +391,14 @@ class CrosstalkAppWindow(Gtk.Window):
                     except Exception:
                         pass
                     self.camera_session = None
-        elif not self.is_connecting:
-            # Check if camera was plugged in
-            if negicc_station.is_camera_connected():
-                self.connect_camera()
         return True
 
-    def connect_camera(self):
-        if self.is_connecting or self.is_connected:
+    def connect_camera(self, on_success=None):
+        if self.is_connecting:
+            return
+        if self.is_connected:
+            if on_success:
+                on_success()
             return
         self.is_connecting = True
         self.set_controls_sensitive(False)
@@ -411,7 +411,11 @@ class CrosstalkAppWindow(Gtk.Window):
                 ok = self.camera_session.connect()
                 if ok:
                     self.is_connected = True
-                    GLib.idle_add(self.update_connection_ui, True, None)
+                    def success_cb():
+                        self.update_connection_ui(True, None)
+                        if on_success:
+                            on_success()
+                    GLib.idle_add(success_cb)
                 else:
                     self.is_connected = False
                     GLib.idle_add(self.update_connection_ui, False, "Failed to connect to camera.")
@@ -431,7 +435,8 @@ class CrosstalkAppWindow(Gtk.Window):
             self.status_label.set_text("Status: Camera connected, ready.")
         else:
             self.camera_status_label.set_markup("<span foreground='#ff4444'>●</span> <b>Camera: Disconnected</b>")
-            self.set_controls_sensitive(False)
+            self.set_controls_sensitive(True)
+            self.spinner.stop()
             if error_msg:
                 self.status_label.set_text(f"Status: Connection failed ({error_msg})")
             else:
@@ -473,6 +478,13 @@ class CrosstalkAppWindow(Gtk.Window):
             self.ae_steps_listbox.remove(child)
 
     def on_capture_clicked(self, widget, channel_id):
+        if not self.is_connected or self.camera_session is None:
+            self.status_label.set_text("Camera not connected. Reconnecting...")
+            self.spinner.start()
+            self.set_controls_sensitive(False)
+            self.connect_camera(on_success=lambda: self.on_capture_clicked(widget, channel_id))
+            return
+
         self.start_speed = self.shutter_combo.get_active_text()
         self.set_controls_sensitive(False)
         self.clear_ae_steps()
@@ -558,7 +570,7 @@ class CrosstalkAppWindow(Gtk.Window):
         self.status_label.set_text(f"Status: Error in {channel_id} capture - {error_msg}")
 
     def set_controls_sensitive(self, sensitive):
-        is_active = sensitive and self.is_connected
+        is_active = sensitive
         self.shutter_combo.set_sensitive(is_active)
         self.btn_capture_r.set_sensitive(is_active)
         self.btn_capture_b.set_sensitive(is_active)

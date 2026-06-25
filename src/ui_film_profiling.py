@@ -1951,7 +1951,7 @@ class FilmProfilingAppWindow(Gtk.Window):
                     self.notebook.set_current_page(0)
                 
                 self.status_lbl.set_text(f"Status: Profile loaded from {os.path.basename(filepath)}")
-                self.set_controls_sensitive(self.is_connected)
+                self.set_controls_sensitive(True)
             except Exception as e:
                 self.status_lbl.set_text(f"Status: Load failed ({str(e)})")
         
@@ -2016,13 +2016,14 @@ class FilmProfilingAppWindow(Gtk.Window):
                     except Exception:
                         pass
                     self.camera_session = None
-        elif not self.is_connecting:
-            if negicc_station.is_camera_connected():
-                self.connect_camera()
         return True
 
-    def connect_camera(self):
-        if self.is_connecting or self.is_connected:
+    def connect_camera(self, on_success=None):
+        if self.is_connecting:
+            return
+        if self.is_connected:
+            if on_success:
+                on_success()
             return
         self.is_connecting = True
         self.set_controls_sensitive(False)
@@ -2035,7 +2036,11 @@ class FilmProfilingAppWindow(Gtk.Window):
                 ok = self.camera_session.connect()
                 if ok:
                     self.is_connected = True
-                    GLib.idle_add(self.update_connection_ui, True, None)
+                    def success_cb():
+                        self.update_connection_ui(True, None)
+                        if on_success:
+                            on_success()
+                    GLib.idle_add(success_cb)
                 else:
                     self.is_connected = False
                     GLib.idle_add(self.update_connection_ui, False, "Failed to connect to camera.")
@@ -2055,7 +2060,8 @@ class FilmProfilingAppWindow(Gtk.Window):
             self.status_lbl.set_text("Status: Camera connected.")
         else:
             self.camera_status_label.set_markup("<span foreground='#ff4444'>●</span> <b>Camera: Disconnected</b>")
-            self.set_controls_sensitive(False)
+            self.set_controls_sensitive(True)
+            self.spinner.stop()
             if error_msg:
                 self.status_lbl.set_text(f"Status: Connection failed ({error_msg})")
             else:
@@ -2104,7 +2110,7 @@ class FilmProfilingAppWindow(Gtk.Window):
                 )
                 self.status_lbl.set_text(f"Loaded: {os.path.basename(filepath)}")
                 # Re-check control sensitivities
-                self.set_controls_sensitive(self.is_connected)
+                self.set_controls_sensitive(True)
             except Exception as e:
                 self.status_lbl.set_text(f"Error loading profile: {str(e)}")
 
@@ -2459,7 +2465,10 @@ class FilmProfilingAppWindow(Gtk.Window):
 
     def on_capture_clicked(self, widget, is_target):
         if not self.is_connected or self.camera_session is None:
-            self.status_lbl.set_text("Status: Camera not connected.")
+            self.status_lbl.set_text("Status: Camera not connected. Reconnecting...")
+            self.spinner.start()
+            self.set_controls_sensitive(False)
+            self.connect_camera(on_success=lambda: self.on_capture_clicked(widget, is_target))
             return
 
         active_target = self.get_active_target_tab()
@@ -2598,13 +2607,13 @@ class FilmProfilingAppWindow(Gtk.Window):
             pageNum = self.notebook.page_num(self.base_box)
             self.notebook.set_current_page(pageNum)
 
-        self.set_controls_sensitive(self.is_connected)
+        self.set_controls_sensitive(True)
         self.status_lbl.set_text("Status: Capture successful.")
         self.update_histograms()
 
     def on_capture_failure(self, err_msg):
         self.spinner.stop()
-        self.set_controls_sensitive(self.is_connected)
+        self.set_controls_sensitive(True)
         if not err_msg:
             err_msg = "An unknown error occurred during image capture/download."
         self.status_lbl.set_text(f"Status: Capture failed ({err_msg})")
