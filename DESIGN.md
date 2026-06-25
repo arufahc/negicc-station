@@ -436,26 +436,33 @@ Outputs from the three backends were compared under identical inputs ($[0, 65535
 ##### Pixel-wise Difference Matrix
 | Backend Comparison | Max Difference | Mean Difference | Interpretation / Reason |
 | :--- | :---: | :---: | :--- |
-| **CUDA vs. Python** | `1 LSB` | `0.0031 LSB` | **Parity Verified.** Discrepancies are minor rounding variances between single-precision `float32` GPU math and `float64` CPU math. |
-| **CUDA vs. C++ CPU** | `5373 LSB` | `144.4 LSB` | **Normal Discretization.** Little CMS CPU uses 16-bit integer fixed-point discretization, producing rounding noise compared to high-precision float32 tetrahedral interpolation. |
-| **Python vs. C++ CPU** | `5373 LSB` | `144.4 LSB` | **Normal Discretization.** Matches the quantization noise observed between float32/float64 interpolation and fixed-point integer CMM. |
+| **CUDA vs. Python** | `1 LSB` | `0.0040 LSB` | **Parity Verified.** Discrepancies are minor rounding variances between single-precision `float32` GPU math and `float64` CPU math. |
+| **CUDA vs. C++ CPU** | `4638 LSB` | `108.0 LSB` | **Normal Discretization.** Little CMS CPU uses 16-bit integer fixed-point discretization, producing rounding noise compared to high-precision float32 tetrahedral interpolation. |
+| **Python vs. C++ CPU** | `4638 LSB` | `108.0 LSB` | **Normal Discretization.** Matches the quantization noise observed between float32/float64 interpolation and fixed-point integer CMM. |
 
 ---
 
-### 5.4 Performance Benchmarks on Nvidia Jetson Nano
+### 5.4 Performance Benchmarks on Nvidia Jetson Nano / Xavier
 
-We measured processing times on a sample 16-bit linear RAW image ($4784 \times 3188$ pixels, ~15.2M pixels, half-resolution scan) executing on the Nvidia Jetson Nano (ARM Aarch64 CPU + Maxwell GPU):
+We measured processing times on a sample 16-bit linear RAW image ($9568 \times 6376$ pixels, ~61MP full-resolution, and $4784 \times 3188$ pixels, ~15.2MP half-resolution preview) executing on the Nvidia Jetson board (Aarch64 CPU + integrated GPU):
 
-| Pipeline Backend | Processing Time (sec) | Speedup vs Python | Speedup vs CPU |
-| :--- | :---: | :---: | :--- |
-| **Python** (NumPy Vectorized) | `26.07`s | $1.0\times$ (Baseline) | — |
-| **C++ CPU** (Little CMS 2) | `1.43`s | $18.2\times$ | $1.0\times$ |
-| **CUDA** (float32 GPU kernel) | **`0.77`s** | **$33.5\times$** | **$1.8\times$** |
+##### Preview-size (Half-size, ~15.2M pixels)
+| Pipeline Backend | Cold Run (sec) | Warm Run / Cached (sec) | Speedup (Warm vs. Python) | Speedup (Warm vs. CPU Warm) |
+| :--- | :---: | :---: | :---: | :---: |
+| **Python** (NumPy Vectorized) | `27.74`s | — | $1.0\times$ (Baseline) | — |
+| **C++ CPU** (Little CMS 2) | `1.40`s | `0.99`s | $28.0\times$ | $1.0\times$ |
+| **CUDA** (float32 GPU kernel) | `0.66`s | **`0.13`s** | **`207.6x`** | **`7.4x`** |
+
+##### Full-size (61M pixels)
+| Pipeline Backend | Cold Run (sec) | Warm Run / Cached (sec) | Speedup (Warm vs. Python) | Speedup (Warm vs. CPU Warm) |
+| :--- | :---: | :---: | :---: | :---: |
+| **C++ CPU** (Little CMS 2) | `6.01`s | `3.68`s | — | $1.0\times$ |
+| **CUDA** (float32 GPU kernel) | `2.92`s | **`0.41`s** | — | **`8.9x`** |
 
 ##### Performance Rationale:
-1. **Parallel Execution**: The CUDA backend achieves a $33.5\times$ speedup over Python and $1.8\times$ speedup over C++ CPU by processing pixel transformations in parallel threads on the GPU, avoiding CPU cache bottlenecking and serial loops.
-2. **NumPy Vectorization Overhead**: While NumPy is vectorized, executing multiple non-contiguous memory writes, float operations, and interpolation masks sequentially in Python incurs significant interpreter and memory allocation overhead.
-3. **Fixed-Point C++ Efficiency**: The C++ CPU backend is highly optimized but is bounded by single-core throughput constraints when traversing large image grids sequentially.
+1. **Parallel Execution**: The CUDA backend achieves massive speedups by processing pixel transformations in parallel threads on the GPU, avoiding CPU cache bottlenecking and serial loops.
+2. **GPU Cache Optimization (`uint16_t` RAW Cache)**: Storing the device cache as `uint16_t` instead of `float32` cuts CUDA peak memory allocation by 50% (saving over 730MB for 61MP images), resolving Jetson OOM limits. In warm runs, the pre-loaded device RAW buffer is directly reused, bypassing the host-to-device upload step and reducing preview update latency to under `133ms`.
+3. **NumPy Vectorization Overhead**: While NumPy is vectorized, executing multiple non-contiguous memory writes, float operations, and interpolation masks sequentially in Python incurs significant interpreter and memory allocation overhead.
 
 ---
 

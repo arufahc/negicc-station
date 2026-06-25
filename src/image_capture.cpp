@@ -434,7 +434,7 @@ static bool run_color_pipeline_host(
 
     // Fallback: If pipeline was cuda but we ended up on CPU, the host-side crosstalk/base scaling matrix
     // was bypassed. We must apply it here on the CPU before evaluating the profile transform.
-    if (pipeline == "cuda" && !use_cuda) {
+    if (pipeline == "cuda" && has_profile && !use_cuda) {
         if (!cc_matrix.empty()) {
             for (int i = 0; i < out_w * out_h; ++i) {
                 uint16_t r = buf[i * 3];
