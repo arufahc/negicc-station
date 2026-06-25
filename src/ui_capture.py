@@ -649,6 +649,413 @@ class AEGraphCanvas(Gtk.Box):
                 if self.select_callback:
                     GLib.idle_add(self.select_callback, step['shutter'])
 
+def get_target_transmittances(profile, target_idx):
+    # returns list of (r, g, b) transmittance for gs0..gs23
+    targets = profile.raw_data.get('targets', [])
+    if target_idx >= len(targets):
+        return []
+    target = targets[target_idx]
+    
+    # film base exposure
+    from film_profiling import parse_shutter_speed
+    fb_shutter = getattr(profile, 'film_base_shutter', '1/8s')
+    fb_iso = getattr(profile, 'film_base_iso', 100)
+    fb_num, fb_den = parse_shutter_speed(fb_shutter)
+    t_base = (fb_num / fb_den) * (fb_iso / 100.0)
+    
+    # target exposure
+    tgt_shutter = target.get('shutter', '1/8s')
+    tgt_iso = target.get('iso', 100)
+    tgt_num, tgt_den = parse_shutter_speed(tgt_shutter)
+    t_exp = (tgt_num / tgt_den) * (tgt_iso / 100.0)
+    
+    exposure_ratio = t_base / t_exp if t_exp > 0 else 1.0
+    
+    fb_r = profile.film_base.get('r_avg', 1.0)
+    fb_g = profile.film_base.get('g_avg', 1.0)
+    fb_b = profile.film_base.get('b_avg', 1.0)
+    if fb_r <= 0: fb_r = 1.0
+    if fb_g <= 0: fb_g = 1.0
+    if fb_b <= 0: fb_b = 1.0
+    
+    patches = target.get('patches', {})
+    res = []
+    for i in range(24):
+        key = f"gs{i}"
+        if key in patches:
+            p_val = patches[key]
+            r_t = (p_val.get('r', 0.0) / fb_r) * exposure_ratio
+            g_t = (p_val.get('g', 0.0) / fb_g) * exposure_ratio
+            b_t = (p_val.get('b', 0.0) / fb_b) * exposure_ratio
+            res.append((r_t, g_t, b_t))
+        else:
+            res.append((0.0, 0.0, 0.0))
+    return res
+
+class CalibrationTargetsDetailsWindow(Gtk.Window):
+    def __init__(self, parent_app):
+        super().__init__(title="Calibration Target Details & Dynamic Range")
+        self.app = parent_app
+        self.set_transient_for(parent_app)
+        self.set_default_size(1150, 750)
+        self.set_modal(False)
+        self.set_destroy_with_parent(True)
+        
+        # Main layout: Horizontal split
+        hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
+        hbox.set_margin_top(10)
+        hbox.set_margin_bottom(10)
+        hbox.set_margin_start(10)
+        hbox.set_margin_end(10)
+        self.add(hbox)
+        
+        # Left pane: Table & Text info
+        left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        hbox.pack_start(left_box, False, False, 0)
+        left_box.set_size_request(450, -1)
+        
+        lbl_table_title = Gtk.Label()
+        lbl_table_title.set_markup("<b>Target List</b> (Click to select active target)")
+        lbl_table_title.set_xalign(0.0)
+        left_box.pack_start(lbl_table_title, False, False, 0)
+        
+        # TreeView ListStore
+        # Columns: Active (str), Index (int), Name (str), Shutter/ISO (str), gs0 (str), gs23 (str)
+        self.liststore = Gtk.ListStore(str, int, str, str, str, str)
+        self.treeview = Gtk.TreeView(model=self.liststore)
+        
+        # Add columns
+        r_indicator = Gtk.CellRendererText()
+        col_ind = Gtk.TreeViewColumn("Active", r_indicator, text=0)
+        col_ind.set_alignment(0.5)
+        self.treeview.append_column(col_ind)
+        
+        r_name = Gtk.CellRendererText()
+        col_name = Gtk.TreeViewColumn("Target Name", r_name, text=2)
+        self.treeview.append_column(col_name)
+        
+        r_exp = Gtk.CellRendererText()
+        col_exp = Gtk.TreeViewColumn("Exposure", r_exp, text=3)
+        self.treeview.append_column(col_exp)
+        
+        r_gs0 = Gtk.CellRendererText()
+        col_gs0 = Gtk.TreeViewColumn("gs0 (Densest) R/G/B T", r_gs0, text=4)
+        self.treeview.append_column(col_gs0)
+        
+        r_gs23 = Gtk.CellRendererText()
+        col_gs23 = Gtk.TreeViewColumn("gs23 (Lightest) R/G/B T", r_gs23, text=5)
+        self.treeview.append_column(col_gs23)
+        
+        # Selection
+        select = self.treeview.get_selection()
+        select.connect("changed", self.on_details_tree_selection_changed)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.add(self.treeview)
+        left_box.pack_start(scroll, True, True, 0)
+        
+        # Textual details frame
+        frame = Gtk.Frame(label="Transmittance Summary")
+        frame_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        frame_box.set_margin_top(8)
+        frame_box.set_margin_bottom(8)
+        frame_box.set_margin_start(8)
+        frame_box.set_margin_end(8)
+        frame.add(frame_box)
+        left_box.pack_start(frame, False, False, 0)
+        
+        self.lbl_info = Gtk.Label()
+        self.lbl_info.set_xalign(0.0)
+        self.lbl_info.set_line_wrap(True)
+        frame_box.pack_start(self.lbl_info, True, True, 0)
+        
+        # Right pane: Matplotlib Canvas
+        right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        hbox.pack_start(right_box, True, True, 0)
+        
+        self.figure = Figure(figsize=(7, 8), dpi=100)
+        self.figure.patch.set_facecolor('#181818')
+        self.canvas = FigureCanvas(self.figure)
+        right_box.pack_start(self.canvas, True, True, 0)
+        
+        # Populate & draw initially
+        self.populate_targets_table()
+        self.update_plot()
+        self.update_text_info()
+        
+        # Set selection in treeview to current active target
+        self.select_active_in_treeview()
+        
+    def select_active_in_treeview(self):
+        select = self.treeview.get_selection()
+        # Temporarily block changed signal to avoid redundant updates
+        select.handler_block_by_func(self.on_details_tree_selection_changed)
+        for i, row in enumerate(self.liststore):
+            if row[1] == self.app.selected_target_idx:
+                select.select_path(Gtk.TreePath.new_from_indices([i]))
+                break
+        select.handler_unblock_by_func(self.on_details_tree_selection_changed)
+
+    def populate_targets_table(self):
+        self.liststore.clear()
+        profile = self.app.profile
+        if not profile or not hasattr(profile, 'raw_data'):
+            return
+            
+        targets = profile.raw_data.get('targets', [])
+        for idx, target in enumerate(targets):
+            name = target.get('name', f"Target {idx}")
+            shutter = target.get('shutter', '1/8s')
+            iso = target.get('iso', 100)
+            shutter_iso = f"{shutter} @ ISO {iso}"
+            
+            # Get gs0 and gs23 transmittances
+            ts = get_target_transmittances(profile, idx)
+            if ts and len(ts) == 24:
+                gs0_r, gs0_g, gs0_b = ts[0]
+                gs23_r, gs23_g, gs23_b = ts[23]
+                
+                gs0_str = f"{gs0_r:.3f} / {gs0_g:.3f} / {gs0_b:.3f}"
+                gs23_str = f"{gs23_r:.3f} / {gs23_g:.3f} / {gs23_b:.3f}"
+            else:
+                gs0_str = "N/A"
+                gs23_str = "N/A"
+                
+            active = "➔" if idx == self.app.selected_target_idx else ""
+            self.liststore.append([active, idx, name, shutter_iso, gs0_str, gs23_str])
+
+    def update_indicators(self):
+        for row in self.liststore:
+            row_idx = row[1]
+            if row_idx == self.app.selected_target_idx:
+                row[0] = "➔"
+            else:
+                row[0] = ""
+                
+    def on_details_tree_selection_changed(self, selection):
+        model, treeiter = selection.get_selected()
+        if treeiter is not None:
+            idx = model[treeiter][1]
+            name = model[treeiter][2]
+            if idx != self.app.selected_target_idx:
+                self.app.selected_target_idx = idx
+                print(f"[Profile] Target selected via Details Window: Index {idx}, Name: {name}", file=sys.stdout)
+                sys.stdout.flush()
+                
+                # Invalidate cache and update main capture preview
+                self.app.capture_converted_rgb_cache = None
+                self.app.capture_corr_hist_cache = None
+                self.app.update_capture_preview()
+                
+                # Update main treeview selection to stay in sync
+                main_select = self.app.target_treeview.get_selection()
+                for i, row in enumerate(self.app.target_liststore):
+                    if row[0] == idx:
+                        main_select.select_path(Gtk.TreePath.new_from_indices([i]))
+                        break
+                
+                # Redraw ourselves
+                self.update_indicators()
+                self.update_plot()
+                self.update_text_info()
+
+    def get_captured_film_transmittance_range(self):
+        if self.app.raw_image is None or self.app.raw_linear_pixels is None:
+            return None
+            
+        raw_image = self.app.raw_linear_pixels
+        profile = self.app.profile
+        
+        h, w = raw_image.shape[:2]
+        shorter_side = min(h, w)
+        square_size = int(shorter_side * 2 / 3)
+        y_start = (h - square_size) // 2
+        x_start = (w - square_size) // 2
+        
+        center_square = raw_image[y_start:y_start+square_size, x_start:x_start+square_size]
+        
+        cc_img = center_square.astype(np.float32)
+        if profile and hasattr(profile, 'crosstalk_matrix') and profile.crosstalk_matrix is not None:
+            M = profile.crosstalk_matrix
+            cc_img = np.dot(cc_img, M.T)
+        cc_img = np.clip(cc_img, 0, 65535)
+        
+        p2_r = np.percentile(cc_img[..., 0], 2)
+        p98_r = np.percentile(cc_img[..., 0], 98)
+        p2_g = np.percentile(cc_img[..., 1], 2)
+        p98_g = np.percentile(cc_img[..., 1], 98)
+        p2_b = np.percentile(cc_img[..., 2], 2)
+        p98_b = np.percentile(cc_img[..., 2], 98)
+        
+        t_scan = self.app.raw_image.shutter_speed
+        iso_scan = self.app.raw_image.iso
+        exposure_scan = t_scan * (iso_scan / 100.0)
+        
+        if self.app.film_base_img:
+            t_base = self.app.film_base_img.shutter_speed
+            iso_base = self.app.film_base_img.iso
+        else:
+            from film_profiling import parse_shutter_speed
+            fb_shutter = getattr(profile, 'film_base_shutter', '1/8s')
+            fb_iso = getattr(profile, 'film_base_iso', 100)
+            fb_num, fb_den = parse_shutter_speed(fb_shutter)
+            t_base = fb_num / fb_den
+            iso_base = fb_iso
+            
+        exposure_base = t_base * (iso_base / 100.0)
+        exposure_ratio = exposure_base / exposure_scan if exposure_scan > 0 else 1.0
+        
+        if self.app.film_base_rgb is not None:
+            fb_r, fb_g, fb_b = self.app.film_base_rgb
+        elif profile:
+            fb_r = profile.film_base.get('r_avg', 1.0)
+            fb_g = profile.film_base.get('g_avg', 1.0)
+            fb_b = profile.film_base.get('b_avg', 1.0)
+        else:
+            fb_r = fb_g = fb_b = 1.0
+            
+        if fb_r <= 0: fb_r = 1.0
+        if fb_g <= 0: fb_g = 1.0
+        if fb_b <= 0: fb_b = 1.0
+        
+        t2_r = (p2_r / fb_r) * exposure_ratio
+        t98_r = (p98_r / fb_r) * exposure_ratio
+        t2_g = (p2_g / fb_g) * exposure_ratio
+        t98_g = (p98_g / fb_g) * exposure_ratio
+        t2_b = (p2_b / fb_b) * exposure_ratio
+        t98_b = (p98_b / fb_b) * exposure_ratio
+        
+        return {
+            'r': (t2_r, t98_r),
+            'g': (t2_g, t98_g),
+            'b': (t2_b, t98_b)
+        }
+
+    def update_text_info(self):
+        profile = self.app.profile
+        if not profile:
+            self.lbl_info.set_markup("<i>No calibration profile loaded</i>")
+            return
+            
+        targets = profile.raw_data.get('targets', [])
+        selected_idx = self.app.selected_target_idx
+        
+        info_text = f"<b>Active Profile:</b> {profile.film_name}\n"
+        if selected_idx < len(targets):
+            tgt = targets[selected_idx]
+            info_text += f"<b>Active Target:</b> {tgt.get('name', 'N/A')}\n"
+            
+        film_range = self.get_captured_film_transmittance_range()
+        if film_range:
+            t2_r, t98_r = film_range['r']
+            t2_g, t98_g = film_range['g']
+            t2_b, t98_b = film_range['b']
+            
+            info_text += (
+                f"\n<b>Captured Film Transmittance (2% - 98%):</b>\n"
+                f"  Red Channel:   {t2_r:.3f} to {t98_r:.3f}\n"
+                f"  Green Channel: {t2_g:.3f} to {t98_g:.3f}\n"
+                f"  Blue Channel:  {t2_b:.3f} to {t98_b:.3f}\n"
+            )
+        else:
+            info_text += "\n<i>No captured film image loaded to show percentiles.</i>"
+            
+        self.lbl_info.set_markup(info_text)
+
+    def update_plot(self):
+        self.figure.clear()
+        
+        profile = self.app.profile
+        if not profile or not hasattr(profile, 'raw_data'):
+            # Draw placeholder message
+            ax = self.figure.add_subplot(111)
+            ax.set_facecolor('#121212')
+            ax.text(0.5, 0.5, "No calibration profile loaded", color='#888888', ha='center', va='center')
+            ax.set_axis_off()
+            self.canvas.draw()
+            return
+            
+        # Create 3 subplots (Red, Green, Blue) sharing the x-axis
+        axes = self.figure.subplots(3, 1, sharex=True)
+        self.figure.patch.set_facecolor('#181818')
+        
+        for ax in axes:
+            ax.set_facecolor('#121212')
+            ax.grid(True, color='#2c2c2c', linestyle='--', linewidth=0.5)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['left'].set_color('#444444')
+            ax.spines['bottom'].set_color('#444444')
+            ax.tick_params(colors='#888888')
+            
+        channels = ['r', 'g', 'b']
+        channel_names = ['Red Channel Transmittance', 'Green Channel Transmittance', 'Blue Channel Transmittance']
+        channel_colors = ['#ff4444', '#44ff44', '#4444ff']
+        
+        targets = profile.raw_data.get('targets', [])
+        selected_idx = self.app.selected_target_idx
+        
+        # Precompute transmittances for all targets
+        target_ts = []
+        for idx in range(len(targets)):
+            target_ts.append(get_target_transmittances(profile, idx))
+            
+        # Draw target curves
+        for c_idx, channel in enumerate(channels):
+            ax = axes[c_idx]
+            
+            # 1. Draw non-selected targets as thin grey/translucent curves
+            for idx, target in enumerate(targets):
+                if idx == selected_idx:
+                    continue
+                ts = target_ts[idx]
+                if not ts:
+                    continue
+                y_vals = [t[c_idx] for t in ts]
+                ax.plot(range(24), y_vals, color='#555555', alpha=0.4, linewidth=1.0)
+                
+            # 2. Draw selected target as thick colorful curve
+            if selected_idx < len(targets):
+                ts = target_ts[selected_idx]
+                if ts:
+                    y_vals = [t[c_idx] for t in ts]
+                    target = targets[selected_idx]
+                    name = target.get('name', f"Target {selected_idx}")
+                    shutter = target.get('shutter', 'Unknown')
+                    iso = target.get('iso', 100)
+                    ax.plot(range(24), y_vals, marker='o', label=f"{name} ({shutter}, ISO {iso}) [Active]", 
+                            color=channel_colors[c_idx], linewidth=2.0, markersize=4)
+                    ax.legend(loc='upper right', frameon=True, facecolor='#1e1e1e', edgecolor='#444444', labelcolor='#ffffff', fontsize=8)
+            
+            # 3. Draw captured film range if available
+            film_range = self.get_captured_film_transmittance_range()
+            if film_range:
+                t2, t98 = film_range[channel]
+                # Shade the region between t2 and t98
+                ax.axhspan(t2, t98, color=channel_colors[c_idx], alpha=0.15)
+                # Draw lines
+                ax.axhline(t2, color=channel_colors[c_idx], linestyle='--', alpha=0.6, linewidth=1.0)
+                ax.axhline(t98, color=channel_colors[c_idx], linestyle='--', alpha=0.6, linewidth=1.0)
+                # Add text label at the edge of the line
+                ax.text(23.5, t2, "Film p2", color=channel_colors[c_idx], alpha=0.8, fontsize=8, ha='right', va='bottom')
+                ax.text(23.5, t98, "Film p98", color=channel_colors[c_idx], alpha=0.8, fontsize=8, ha='right', va='top')
+                
+            ax.set_title(channel_names[c_idx], color='#ffffff', fontsize=10, pad=5)
+            ax.set_ylabel("Transmittance", color='#ffffff', fontsize=8)
+            
+        axes[2].set_xlabel("Grayscale Patch (gs0 = White/Dense, gs23 = Black/Clear)", color='#ffffff', fontsize=9)
+        axes[2].set_xticks(range(24))
+        axes[2].set_xticklabels([f"gs{i}" for i in range(24)], rotation=45, fontsize=7)
+        self.figure.tight_layout()
+        self.canvas.draw()
+        
+    def refresh_all(self):
+        self.populate_targets_table()
+        self.select_active_in_treeview()
+        self.update_plot()
+        self.update_text_info()
+
 class ScanningAppWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title="Sony Film Scanning Station")
@@ -679,6 +1086,7 @@ class ScanningAppWindow(Gtk.Window):
         self.capture_corr_hist_cache = None
         self.base_converted_rgb_cache = None
         self.ae_graph = None
+        self.details_window = None
         
         self.camera_session = None
         self.is_connected = False
@@ -811,7 +1219,8 @@ class ScanningAppWindow(Gtk.Window):
         self.btn_load.connect("clicked", self.on_load_profile)
         left_sidebar.pack_start(self.btn_load, False, False, 0)
         
-        self.lbl_profile_info = Gtk.Label(label="")
+        self.lbl_profile_info = Gtk.Label()
+        self.lbl_profile_info.set_markup("<b>Profile:</b> None")
         self.lbl_profile_info.set_line_wrap(True)
         self.lbl_profile_info.set_width_chars(25)
         self.lbl_profile_info.set_max_width_chars(25)
@@ -967,6 +1376,10 @@ class ScanningAppWindow(Gtk.Window):
         btn_g_up.connect("clicked", lambda x: self.adj_gain(0.10))
         top_box.pack_start(btn_g_up, False, False, 0)
         
+        btn_g_reset = Gtk.Button(label="1.0")
+        btn_g_reset.connect("clicked", lambda x: self.reset_gain())
+        top_box.pack_start(btn_g_reset, False, False, 5)
+        
         top_box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL), False, False, 5)
         
         for rot in [0, 90, 180, 270]:
@@ -997,10 +1410,18 @@ class ScanningAppWindow(Gtk.Window):
         
         # BOTTOM: Target Table list
         target_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        
+        tgt_header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         lbl_tgt_title = Gtk.Label()
         lbl_tgt_title.set_markup("<b>Calibration Targets</b>")
         lbl_tgt_title.set_xalign(0.0)
-        target_box.pack_start(lbl_tgt_title, False, False, 5)
+        tgt_header_box.pack_start(lbl_tgt_title, True, True, 0)
+        
+        self.btn_target_details = Gtk.Button(label="Details...")
+        self.btn_target_details.connect("clicked", self.on_show_target_details)
+        tgt_header_box.pack_end(self.btn_target_details, False, False, 0)
+        
+        target_box.pack_start(tgt_header_box, False, False, 5)
         
         self.target_liststore = Gtk.ListStore(int, str, str) # Index, Target Name, Mid-grey Match Distance
         self.target_treeview = Gtk.TreeView(model=self.target_liststore)
@@ -1114,6 +1535,13 @@ class ScanningAppWindow(Gtk.Window):
         self.capture_corr_hist_cache = None
         self.update_capture_preview()
 
+    def reset_gain(self):
+        self.gain = 1.0
+        self.entry_gain.set_text("1.00")
+        self.capture_converted_rgb_cache = None
+        self.capture_corr_hist_cache = None
+        self.update_capture_preview()
+
     def on_gain_entry_activated(self, entry):
         text = entry.get_text()
         try:
@@ -1199,7 +1627,10 @@ class ScanningAppWindow(Gtk.Window):
                 tags_str = f" [{'+'.join(tags)}]" if tags else ""
                 
                 self.btn_load.set_label(f"Load: {name_clipped}{tags_str}")
-                self.lbl_profile_info.set_text("")
+                self.lbl_profile_info.set_markup(
+                    f"<b>Profile:</b> {film_name}\n"
+                    f"<b>File:</b> {os.path.basename(filepath)}"
+                )
                 self.lbl_status.set_text("Status: Profile loaded.")
                 
                 targets_count = 0
@@ -1233,12 +1664,35 @@ class ScanningAppWindow(Gtk.Window):
                         name = tgt.get('name', f"Target {idx}")
                         self.target_liststore.append([idx, name, "--"])
                         
+                if self.raw_linear_pixels is not None and self.film_base_rgb is not None and len(self.target_liststore) > 0:
+                    scan_shutter = self.raw_image.shutter_speed if self.raw_image else 0.125
+                    scan_iso = self.raw_image.iso if self.raw_image else 100
+                    base_shutter = self.film_base_img.shutter_speed if self.film_base_img else None
+                    base_iso = self.film_base_img.iso if self.film_base_img else 100
+                    best_idx, dist = find_best_target_index(
+                        self.profile, self.raw_linear_pixels, self.film_base_rgb,
+                        scan_shutter=scan_shutter, scan_iso=scan_iso,
+                        base_shutter=base_shutter, base_iso=base_iso
+                    )
+                    self.selected_target_idx = best_idx
+                    for row in self.target_liststore:
+                        row[2] = f"{dist:.2f}" if row[0] == best_idx else "--"
+                else:
+                    self.selected_target_idx = 0
+                    
+                if len(self.target_liststore) > 0:
+                    select = self.target_treeview.get_selection()
+                    select.select_path(Gtk.TreePath.new_from_indices([self.selected_target_idx]))
+                    
                 self.capture_converted_rgb_cache = None
                 self.capture_corr_hist_cache = None
                 self.base_converted_rgb_cache = None
                 self.update_profile_dependencies()
                 self.update_capture_preview()
                 self.update_base_preview()
+                
+                if hasattr(self, 'details_window') and self.details_window is not None:
+                    self.details_window.refresh_all()
             except Exception as e:
                 self.lbl_profile_info.set_text(f"Error: {e}")
                 self.lbl_status.set_text("Status: Failed to load profile.")
@@ -1256,7 +1710,7 @@ class ScanningAppWindow(Gtk.Window):
         self.has_icc = False
         self.has_crosstalk = False
         self.btn_load.set_label("Load Profile...")
-        self.lbl_profile_info.set_text("")
+        self.lbl_profile_info.set_markup("<b>Profile:</b> None")
         self.lbl_status.set_text("Status: Profile cleared.")
         self.target_liststore.clear()
         self.capture_converted_rgb_cache = None
@@ -1268,6 +1722,9 @@ class ScanningAppWindow(Gtk.Window):
         self.update_profile_dependencies()
         self.update_capture_preview()
         self.update_base_preview()
+        
+        if hasattr(self, 'details_window') and self.details_window is not None:
+            self.details_window.refresh_all()
 
     def on_load_image_clicked(self, widget):
         current_page = self.notebook.get_current_page()
@@ -1379,11 +1836,33 @@ class ScanningAppWindow(Gtk.Window):
         model, treeiter = selection.get_selected()
         if treeiter is not None:
             idx = model[treeiter][0]
+            name = model[treeiter][1]
             if idx != self.selected_target_idx:
                 self.selected_target_idx = idx
                 self.capture_converted_rgb_cache = None
                 self.capture_corr_hist_cache = None
                 self.update_capture_preview()
+                
+                print(f"[Profile] Target selected: Index {idx}, Name: {name}", file=sys.stdout)
+                sys.stdout.flush()
+                
+                if hasattr(self, 'details_window') and self.details_window is not None:
+                    self.details_window.update_indicators()
+                    self.details_window.select_active_in_treeview()
+                    self.details_window.update_plot()
+                    self.details_window.update_text_info()
+
+    def on_show_target_details(self, btn):
+        if hasattr(self, 'details_window') and self.details_window is not None:
+            self.details_window.present()
+            return
+            
+        self.details_window = CalibrationTargetsDetailsWindow(self)
+        self.details_window.connect("destroy", self.on_details_window_destroyed)
+        self.details_window.show_all()
+        
+    def on_details_window_destroyed(self, window):
+        self.details_window = None
 
     def on_tab_changed(self, notebook, page, page_num):
         if page_num == 0:
@@ -1620,6 +2099,9 @@ class ScanningAppWindow(Gtk.Window):
                     if row[0] == best_idx:
                         select.select_path(Gtk.TreePath.new_from_indices([i]))
                         break
+                        
+                if hasattr(self, 'details_window') and self.details_window is not None:
+                    self.details_window.refresh_all()
                         
             # Print captured metadata, capture duration, and preview conversion to stdout
             paths_str = ", ".join(img_obj.filepaths)
