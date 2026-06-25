@@ -98,14 +98,8 @@ This allows us to assemble a complete RGB triplet for every pixel **without inte
      - $dc = \text{movements}[mi][0]$
    - Retrieve the color channel index `col` active at `(r, c)` on the sensor using `proc[mi]->COLOR(r, c)`.
    - Copy the value from the shifted source to the target:
-     - For **Red** (`col == 0`) and **Blue** (`col == 2`), copy directly:
-       $$
-       \text{Target}(r+dr, c+dc)[\text{col}] = \text{Source}_{mi}(r, c)[\text{col}]
-       $$
-     - For **Green** (`col == 1` or `col == 3`), accumulate and average the two samples from the exposures to reduce noise:
-       $$
-       \text{Target}(r+dr, c+dc)[1] = \frac{\text{Source}_{mi1}(r, c)[\text{col}] + \text{Source}_{mi2}(r, c)[\text{col}]}{2}
-       $$
+     - For **Red** (`col == 0`) and **Blue** (`col == 2`), copy directly: $\text{Target}(r+dr, c+dc)[\text{col}] = \text{Source}_{mi}(r, c)[\text{col}]$
+     - For **Green** (`col == 1` or `col == 3`), accumulate and average the two samples from the exposures to reduce noise: $\text{Target}(r+dr, c+dc)[1] = \frac{\text{Source}_{mi1}(r, c)[\text{col}] + \text{Source}_{mi2}(r, c)[\text{col}]}{2}$
 4. Re-label the output color count to 3 (`proc[0]->imgdata.idata.colors = 3`) to mark it as a full RGB image.
 
 ---
@@ -128,13 +122,11 @@ To automate the selection of the optimal shutter speed, the system integrates a 
 
 #### Objective Function
 The algorithm evaluates exposure frames to maximize either:
-- **`ALL` channels (default)**: Maximizes the average dynamic range across R, G, and B.
-  $$
-  \text{Objective} = \frac{\text{DR}_R + \text{DR}_G + \text{DR}_B}{3}
-  $$
+- **`ALL` channels (default)**: Maximizes the average dynamic range across R, G, and B: $\text{Objective} = \frac{\text{DR}_R + \text{DR}_G + \text{DR}_B}{3}$
 - **Individual channels (`R`, `G`, or `B`)**: Maximizes the dynamic range for the selected channel specifically.
 
 Dynamic range ($\text{DR}_c$) is defined as the difference between the 95th and 5th percentile values in color channel $c$ within the active film area:
+
 $$
 \text{DR}_c = P_{95}(\text{PixelValues}_c) - P_{5}(\text{PixelValues}_c)
 $$
@@ -145,13 +137,7 @@ To prevent clear light source bleeds or black film holder edges from throwing of
 For accurate film negative color inversion, no channel is allowed to reach or exceed sensor highlight saturation.
 - High-end digital cameras typically utilize a 14-bit analog-to-digital converter (ADC), yielding a maximum raw capacity of 16384 levels.
 - To prevent clipping and guarantee highlight headroom, the 95th percentile ($P_{95}$) of each channel is monitored and constrained to be below **80% of 16384 (13107.2)**.
-- If $P_{95}$ for any channel exceeds 13107.2, that channel's dynamic range metric is heavily penalized:
-  $$
-  \text{Penalty} = 100000.0 + 10000.0 \times (P_{95} - 13107.2)
-  $$
-  $$
-  \text{DR}_c = (P_{95} - P_5) - \text{Penalty}
-  $$
+- If $P_{95}$ for any channel exceeds 13107.2, that channel's dynamic range metric is heavily penalized: $\text{Penalty} = 100000.0 + 10000.0 \times (P_{95} - 13107.2)$ and $\text{DR}_c = (P_{95} - P_5) - \text{Penalty}$.
 
 This penalty function guarantees that any exposure where the 95th percentile exceeds the safety threshold is rejected in favor of a safe, unclipped exposure. Checking the 95th percentile instead of the absolute peak pixel value also makes the overexposure constraint robust against hot pixels and sensor noise.
 
@@ -166,26 +152,31 @@ To mathematically decouple these overlapping signals, a crosstalk correction mat
 #### Mathematical Model
 
 Let the raw linear RGB response of a pixel be represented by the vector:
+
 $$
 V_{raw} = \begin{bmatrix} R_{raw} \\ G_{raw} \\ B_{raw} \end{bmatrix}
 $$
 
 We define the corrected linear RGB response vector as:
+
 $$
 V_{corr} = \begin{bmatrix} R_{corr} \\ G_{corr} \\ B_{corr} \end{bmatrix}
 $$
 
 The corrected values are calculated via a linear transformation using a $3\times3$ correction matrix $C$:
+
 $$
 V_{corr} = C \cdot V_{raw}
 $$
 
 In expanded matrix form:
+
 $$
 \begin{bmatrix} R_{corr} \\ G_{corr} \\ B_{corr} \end{bmatrix} = \begin{bmatrix} C_{00} & C_{01} & C_{02} \\ C_{10} & C_{11} & C_{12} \\ C_{20} & C_{21} & C_{22} \end{bmatrix} \begin{bmatrix} R_{raw} \\ G_{raw} \\ B_{raw} \end{bmatrix}
 $$
 
 After matrix multiplication, the corrected channels are clipped to the 16-bit linear buffer limits $[0, 65535]$ to prevent underflow and overflow:
+
 $$
 V_{corr, i} = \max\left(0, \min\left(65535, V_{corr, i}\right)\right) \quad \text{for } i \in \{0, 1, 2\}
 $$
@@ -206,6 +197,7 @@ The calibration process requires capturing three separate exposures, each under 
 For each of the three calibration images, the spatial average (mean) of the linear $R, G, B$ channels is calculated over a central region of interest. To avoid edge effects and lens vignetting, this central region is defined as a circle in the center of the image with a diameter equal to $1/3$ of the shorter side of the image.
 
 This yields three average response vectors:
+
 $$
 S_R = \begin{bmatrix} R_R \\ G_R \\ B_R \end{bmatrix}, \quad S_G = \begin{bmatrix} R_G \\ G_G \\ B_G \end{bmatrix}, \quad S_B = \begin{bmatrix} R_B \\ G_B \\ B_B \end{bmatrix}
 $$
@@ -213,11 +205,13 @@ $$
 #### Matrix Construction and Normalization
 
 A raw crosstalk matrix $M$ is constructed where each column represents the response to one of the calibration lights:
+
 $$
 M = \begin{bmatrix} S_R & S_G & S_B \end{bmatrix} = \begin{bmatrix} R_R & R_G & R_B \\ G_R & G_G & G_B \\ B_R & B_G & B_B \end{bmatrix}
 $$
 
 To prevent overall brightness scaling from distorting the color balance, $M$ is normalized column-wise. Each column $j$ is divided by its diagonal element $M_{j,j}$ (the response of channel $j$ to its own corresponding illumination):
+
 $$
 M_{norm} = \begin{bmatrix} 1 & \frac{R_G}{G_G} & \frac{R_B}{B_B} \\ \frac{G_R}{R_R} & 1 & \frac{G_B}{B_B} \\ \frac{B_R}{R_R} & \frac{B_G}{G_G} & 1 \end{bmatrix}
 $$
@@ -225,6 +219,7 @@ $$
 #### Correction Matrix Computation
 
 The final crosstalk correction matrix $C$ is the mathematical inverse of the normalized crosstalk matrix:
+
 $$
 C = M_{norm}^{-1}
 $$
@@ -246,25 +241,30 @@ Let the film base capture be acquired at exposure time $t_b$ and sensitivity $IS
 Let the target capture (containing the IT8 reference target) be acquired at exposure time $t_t$ and sensitivity $ISO_t$.
 
 The raw exposure metrics are calculated as:
+
 $$
 \text{Exposure}_b = t_b \times \frac{ISO_b}{100.0}
 $$
+
 $$
 \text{Exposure}_t = t_t \times \frac{ISO_t}{100.0}
 $$
 
 The exposure ratio mapping target measurements to film base capture conditions is:
+
 $$
 \text{Ratio} = \frac{\text{Exposure}_b}{\text{Exposure}_t}
 $$
 
 ### 5.2 Film Base Normalization
 To map the measured crosstalk-corrected film base levels ($FB_R$, $FB_G$, $FB_B$) to a fixed target normalization level $N_{\text{target}}$ (defaulting to $55000.0$), channel-specific scaling factors $S_c$ are calculated:
+
 $$
 S_c = \frac{N_{\text{target}}}{FB_c} \times \text{Ratio} \quad \text{for } c \in \{R, G, B\}
 $$
 
 The raw patch measurements $P_{\text{raw}, c}$ are then scaled:
+
 $$
 P_{\text{scaled}, c} = P_{\text{raw}, c} \times S_c
 $$
@@ -273,11 +273,13 @@ $$
 We extract the grayscale patches $i \in \{0, \dots, 23\}$ from the target data. Let their scaled crosstalk-corrected averages be represented by $V_c(i)$ for $c \in \{R, G, B\}$. 
 
 Using the reference XYZ target data, we normalize the reference luminance $Y_{\text{ref}}(i)$ to the range $[0.0, \text{whitest\_patch\_scaling}]$:
+
 $$
 Y_{\text{norm}}(i) = Y_{\text{ref}}(i) \times \frac{\text{whitest\_patch\_scaling}}{\max(Y_{\text{ref}})}
 $$
 
 Monotonic cubic spline functions $\text{TRC}_c(V)$ are fitted to map from the linear sensor space to the normalized reference luminance space:
+
 $$
 \text{TRC}_c(V) \approx Y_{\text{norm}}
 $$
@@ -286,26 +288,31 @@ These curves act as the independent red, green, and blue Tone Reproduction Curve
 
 ### 5.4 Dynamic Scaling and Matrix Merging
 When converting a raw negative scan captured at shutter speed $t_s$ and sensitivity $ISO_s$, we calculate the scan-to-base exposure ratio:
+
 $$
 \text{Ratio}_{\text{scan}} = \frac{t_b \times (ISO_b / 100.0)}{t_s \times (ISO_s / 100.0)}
 $$
 
 The dynamic normalization scale factors are:
+
 $$
 S_c = \frac{N_{\text{target}}}{FB_c} \times \text{Ratio}_{\text{scan}} \quad \text{for } c \in \{R, G, B\}
 $$
 
 The $3\times3$ crosstalk correction matrix $C$ is merged with these scale factors row-wise:
+
 $$
 M_{\text{merged}} = \begin{bmatrix} S_R & 0 & 0 \\ 0 & S_G & 0 \\ 0 & 0 & S_B \end{bmatrix} \cdot C
 $$
 
 This single combined matrix performs both crosstalk correction and film base normalization in a single step:
+
 $$
 V_{\text{scaled}} = M_{\text{merged}} \cdot V_{\text{raw}}
 $$
 
 Finally, the scaled camera RGB values are passed through the independent TRC curves and color-managed through the 3D cLUT ICC profile to produce the final sRGB output:
+
 $$
 V_{\text{sRGB}} = \text{ICC}_{\text{LUT}}\left(\begin{bmatrix} \text{TRC}_R(R_{\text{scaled}}) \\ \text{TRC}_G(G_{\text{scaled}}) \\ \text{TRC}_B(B_{\text{scaled}}) \end{bmatrix}\right)
 $$
@@ -316,18 +323,9 @@ To support multi-target calibration profiles (profiles containing calibration ta
 2. **Subsampling Optimization**: To avoid performance bottlenecks on high-resolution 61MP sensor captures, the region of interest is subsampled by taking every 10th pixel in both dimensions. This reduces the pixels under analysis by a factor of 100 (from 17.8 million down to ~178k elements), reducing execution time from ~10 seconds to under 20ms while preserving the statistical distribution of the dynamic range.
 3. **Crosstalk Correction**: Corrects the subsampled raw image patch using the profile's crosstalk matrix.
 4. **Percentile Calculation**: Computes the 2% and 98% intensity percentiles on the green channel to represent the density range of the scanned target.
-5. **Transmittance Mapping**: Normalizes the percentiles by the captured film base green channel and scales them by the exposure ratio between the base capture and the current scan:
-   $$
-   t_{c} = \frac{P_c}{FB_G} \times \text{Ratio}_{\text{scan}}
-   $$
+5. **Transmittance Mapping**: Normalizes the percentiles by the captured film base green channel and scales them by the exposure ratio between the base capture and the current scan: $t_{c} = \frac{P_c}{FB_G} \times \text{Ratio}_{\text{scan}}$
 6. **Grayscale Alignment**: Maps the measured 2% and 98% transmittances against the 24 gray scale patches ($gs0 \dots gs23$) of each candidate target profile.
-7. **Luminance Matching**: Calculates the mid-grey distance metric:
-   $$
-   \text{center\_idx} = \frac{\text{idx}_{98} + \text{idx}_2}{2.0}
-   $$
-   $$
-   \text{dist} = |\text{center\_idx} - 11.5|
-   $$
+7. **Luminance Matching**: Calculates the mid-grey distance metric: $\text{center\_idx} = \frac{\text{idx}_{98} + \text{idx}_2}{2.0}$ and $\text{dist} = |\text{center\_idx} - 11.5|$
    The target profile with the minimum distance metric (closest mid-grey patch alignment to target index 11.5) is selected as the optimal conversion profile.
 8. **Identity-Based Range Caching**: To prevent redundant re-evaluations during UI redraws or target selection changes, the computed transmittance range is cached using a composite key representing the identities of the raw image object and the active profile: `(id(raw_image), id(profile))`.
 
@@ -348,13 +346,16 @@ To transform raw linear camera responses into standard sRGB space, the pipeline 
 6. **Output Curve Correction (Stage 3 / TRC2)**: Passes the cLUT output through the output 1D tone curves.
 7. **PCS Range Expansion**: Scales the resulting coordinates by $65535.0 / 32768.0$ to project them into standard PCS D50 XYZ coordinates.
 8. **Bradford Chromatic Adaptation (D50 to D65)**: Applies a Bradford adaptation matrix to shift colors from the profile's D50 white point to the sRGB D65 white point:
-   $$
-   M_{\text{adapt}} = \begin{bmatrix} 0.9555766 & -0.0230393 & 0.0631636 \\ -0.0282895 & 1.0099416 & 0.0210077 \\ 0.0122982 & -0.0204830 & 1.3299098 \end{bmatrix}
-   $$
+
+$$
+M_{\text{adapt}} = \begin{bmatrix} 0.9555766 & -0.0230393 & 0.0631636 \\ -0.0282895 & 1.0099416 & 0.0210077 \\ 0.0122982 & -0.0204830 & 1.3299098 \end{bmatrix}
+$$
+
 9. **XYZ to Linear sRGB Matrix Projection**: Converts the D65 XYZ vector to linear sRGB space:
-   $$
-   M_{\text{xyz\_to\_srgb}} = \begin{bmatrix} 3.2406255 & -1.5372080 & -0.4986286 \\ -0.9689307 & 1.8757561 & 0.0415175 \\ 0.0557101 & -0.2040211 & 1.0569959 \end{bmatrix}
-   $$
+
+$$
+M_{\text{xyz\_to\_srgb}} = \begin{bmatrix} 3.2406255 & -1.5372080 & -0.4986286 \\ -0.9689307 & 1.8757561 & 0.0415175 \\ 0.0557101 & -0.2040211 & 1.0569959 \end{bmatrix}
+$$
    and clips coordinates to $[0.0, 1.0]$.
 10. **EOTF Mapping & Quantization**: Applies target colorspace EOTF (the piecewise non-linear sRGB mapping curve for `"srgb"`, or identity mapping for `"srgb-g10"`), multiplies by $65535.0$, and rounds to `uint16_t` values.
 
