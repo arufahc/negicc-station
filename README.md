@@ -49,6 +49,37 @@ Rather than using disconnected tools, this project uniquely integrates the entir
 
 ---
 
+## Hardware Requirements
+
+To set up the negative film scanning station, you will need the following hardware components:
+
+### 1. Digital Camera & Lens
+* **Camera**: The default camera is the **Sony A7R4 (ILCE-7RM4)**. However, any Sony mirrorless camera that supports the [Sony Camera Remote SDK](https://support.d-imaging.sony.co.jp/app/sdk/en/index.html) is compatible. A camera supporting the in-body image stabilization (IBIS) sub-pixel **4-shot pixel-shift** function is highly recommended, as it allows full RGB sensor reconstruction at every pixel site, eliminating Bayer interpolation artifacts.
+* **Macro Lens**:
+  - For digitizing medium format film (e.g., 6x6 or 6x7) using a 35mm full-frame sensor, a macro lens with **0.5x magnification** is preferred (e.g., Nikon Micro-Nikkor 55mm f/2.8 AI-S or Rayfact QVM05041MF).
+  - For digitizing 35mm film, a macro lens with **1.0x magnification** is required (e.g., Rayfact QVM10065MF).
+* **Focusing Rack & Mount**: A secure focusing rack is necessary to adjust and lock the distance between the camera and the film gate (e.g., mounting an N-adapter to a 5/8" wall plate).
+
+### 2. Light Source & Filters
+* **Light Source**: Use a high-quality RGB LED light box with individually adjustable Red, Green, and Blue channels. The system is designed to use the LED light box with adjustable R, G, and B lights provided by [Shoebox Photos BCS](https://www.shoeboxphotosbcs.com). Alternatively, an RGB flood light with a white diffuser glass and a milk carton mixing chamber can be used.
+* **Filters**:
+  - **Tri-band Filter**: A tri-band filter (such as Edmund Optics #87-246, 50mm Dia.) is mounted to the camera lens during normal scanning to restrict light transmission to three narrow bands corresponding to the film dyes.
+  - **Bandpass Calibration Filters**: During the one-time crosstalk calibration phase, three additional filters are temporarily used to isolate each channel (Edmund Optics 464, 542, & 639nm, or MidOpt BP470 blue, BP525 green, and LP610 red bandpass filters).
+
+### 3. IT8 Calibration Target & Film Exposures
+Because there are no pre-made "Negative IT8 targets" on the market, you must prepare custom target exposures:
+1. **Source Target**: Obtain a standard reflective or transmissive IT8.7/2 calibration target (e.g., C1 target in A4 size or CF target on Fuji paper from coloraid.de), supplied with manufacturer-calibrated XYZ/Yxy reference data.
+2. **Expose the Film**: Expose the film stock you wish to profile (e.g., Kodak Portra 400, Fuji Gold 200) under controlled, natural 5500K sunlight (typically on a clear spring/fall day, 3–4 hours before sunset).
+3. **Bracketing (Multi-Exposure)**: Capture multiple bracketed exposures of the IT8 target on the negative film (e.g., a sweep of -2, -1, +0, +1, and +2 EV).
+4. **Development**: Develop the film normally at the laboratory you plan to use for scanning in the future.
+5. **Reference Readings (Optional)**: If available, you can use a Konica Minolta CS-100A spot colorimeter to take custom reference readings of the physical target patches under the same exposure lighting.
+
+### 4. Linux Processing Host
+* **Nvidia Jetson Orin Nano**: The preferred computing host is the [Nvidia Jetson Orin Nano Developer Kit](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/nano-super-developer-kit/). The system was developed utilizing the Jetson GPU cores for fast, real-time CUDA-accelerated image conversion and 3D cLUT interpolation.
+* **Standard Linux PC**: Alternatively, any standard Linux PC running **Ubuntu 22.04 LTS** (or later) will work. While a CUDA-capable Nvidia GPU is preferred for sub-second processing, the CPU-based conversion backend runs on any standard x86_64 or aarch64 CPU using Little CMS.
+
+---
+
 ## 1. Jetson Nano System Dependencies
 
 Before building and running the scanning software, ensure that the Jetson Nano system is updated and the following system dependencies are installed:
