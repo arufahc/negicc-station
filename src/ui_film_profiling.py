@@ -1581,221 +1581,277 @@ class FilmProfilingAppWindow(Gtk.Window):
         self.show_error_dialog("Download/Parse Error", err_msg)
 
     def on_save_profile_clicked(self, widget):
-        if not self.calib:
-            self.status_lbl.set_text("Status: No crosstalk profile loaded.")
-            return
-        
-        if not hasattr(self, 'base_values') or self.base_values is None:
-            dialog = Gtk.MessageDialog(
-                transient_for=self,
-                flags=0,
-                message_type=Gtk.MessageType.WARNING,
-                buttons=Gtk.ButtonsType.OK,
-                text="Missing Film Base"
-            )
-            dialog.format_secondary_text("Please capture and read the Film Base values first.")
-            dialog.run()
-            dialog.destroy()
-            return
+        print("[Save Profile] Button clicked. Verifying state variables...", file=sys.stdout)
+        sys.stdout.flush()
+        try:
+            print(f"  - self.calib: {self.calib}", file=sys.stdout)
+            print(f"  - hasattr(self, 'base_values'): {hasattr(self, 'base_values')}", file=sys.stdout)
+            if hasattr(self, 'base_values'):
+                print(f"  - self.base_values: {self.base_values}", file=sys.stdout)
+            print(f"  - hasattr(self, 'reference_xyz_path'): {hasattr(self, 'reference_xyz_path')}", file=sys.stdout)
+            if hasattr(self, 'reference_xyz_path'):
+                print(f"  - self.reference_xyz_path: {self.reference_xyz_path}", file=sys.stdout)
+            sys.stdout.flush()
 
-        if not hasattr(self, 'reference_xyz_path') or self.reference_xyz_path is None:
-            self.show_error_dialog("Missing Reference", "Please download or load the IT8 reference file first.")
-            return
-
-        active_target_tabs = []
-        for tab in self.target_tabs:
-            if len(tab.it8_store) > 0:
-                active_target_tabs.append(tab)
-
-        if not active_target_tabs:
-            dialog = Gtk.MessageDialog(
-                transient_for=self,
-                flags=0,
-                message_type=Gtk.MessageType.WARNING,
-                buttons=Gtk.ButtonsType.OK,
-                text="Missing Target Data"
-            )
-            dialog.format_secondary_text("Please read mask values for at least one Target tab.")
-            dialog.run()
-            dialog.destroy()
-            return
-
-        film_stock = self.prompt_for_film_stock()
-        if not film_stock:
-            self.status_lbl.set_text("Status: Save canceled.")
-            return
-
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        filename = f"profile_{film_stock}_{timestamp}.json"
-
-        file_dialog = Gtk.FileChooserDialog(
-            title="Save Film Profile JSON",
-            parent=self,
-            action=Gtk.FileChooserAction.SAVE
-        )
-        file_dialog.add_buttons(
-            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-            Gtk.STOCK_SAVE, Gtk.ResponseType.OK
-        )
-        file_dialog.set_current_name(filename)
-        
-        filter_json = Gtk.FileFilter()
-        filter_json.set_name("JSON files")
-        filter_json.add_mime_type("application/json")
-        filter_json.add_pattern("*.json")
-        file_dialog.add_filter(filter_json)
-
-        response = file_dialog.run()
-        if response == Gtk.ResponseType.OK:
-            filepath = file_dialog.get_filename()
-            file_dialog.destroy()
+            if not self.calib:
+                print("[Save Profile] Error: No crosstalk profile loaded.", file=sys.stderr)
+                sys.stderr.flush()
+                self.status_lbl.set_text("Status: No crosstalk profile loaded.")
+                self.show_error_dialog("Missing Crosstalk Profile", "No crosstalk profile is loaded. Please calibrate crosstalk first.")
+                return
             
-            # Show progress dialog
-            progress_dialog = ProfileProgressDialog(self, len(active_target_tabs))
+            if not hasattr(self, 'base_values') or self.base_values is None:
+                print("[Save Profile] Error: Missing Film Base.", file=sys.stderr)
+                sys.stderr.flush()
+                dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    flags=0,
+                    message_type=Gtk.MessageType.WARNING,
+                    buttons=Gtk.ButtonsType.OK,
+                    text="Missing Film Base"
+                )
+                dialog.format_secondary_text("Please capture and read the Film Base values first.")
+                dialog.run()
+                dialog.destroy()
+                return
+
+            if not hasattr(self, 'reference_xyz_path') or self.reference_xyz_path is None:
+                print("[Save Profile] Error: Missing Reference XYZ path.", file=sys.stderr)
+                sys.stderr.flush()
+                self.show_error_dialog("Missing Reference", "Please download or load the IT8 reference file first.")
+                return
+
+            active_target_tabs = []
+            for tab in self.target_tabs:
+                if len(tab.it8_store) > 0:
+                    active_target_tabs.append(tab)
+
+            print(f"  - Total target tabs: {len(self.target_tabs)}, active tabs: {len(active_target_tabs)}", file=sys.stdout)
+            sys.stdout.flush()
+
+            if not active_target_tabs:
+                print("[Save Profile] Error: No active target tabs found.", file=sys.stderr)
+                sys.stderr.flush()
+                dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    flags=0,
+                    message_type=Gtk.MessageType.WARNING,
+                    buttons=Gtk.ButtonsType.OK,
+                    text="Missing Target Data"
+                )
+                dialog.format_secondary_text("Please read mask values for at least one Target tab.")
+                dialog.run()
+                dialog.destroy()
+                return
+
+            film_stock = self.prompt_for_film_stock()
+            print(f"  - Prompted film stock name: '{film_stock}'", file=sys.stdout)
+            sys.stdout.flush()
+            if not film_stock:
+                print("[Save Profile] Save canceled by user at film stock prompt.", file=sys.stdout)
+                sys.stdout.flush()
+                self.status_lbl.set_text("Status: Save canceled.")
+                return
+
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            filename = f"profile_{film_stock}_{timestamp}.json"
+
+            file_dialog = Gtk.FileChooserDialog(
+                title="Save Film Profile JSON",
+                parent=self,
+                action=Gtk.FileChooserAction.SAVE
+            )
+            file_dialog.add_buttons(
+                Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                Gtk.STOCK_SAVE, Gtk.ResponseType.OK
+            )
+            file_dialog.set_current_name(filename)
             
-            def run_builds():
-                try:
-                    targets_json_list = []
-                    results_report = {}
-                    
-                    for idx, tab in enumerate(active_target_tabs):
-                        t_num = idx + 1
-                        t_tot = len(active_target_tabs)
+            filter_json = Gtk.FileFilter()
+            filter_json.set_name("JSON files")
+            filter_json.add_mime_type("application/json")
+            filter_json.add_pattern("*.json")
+            file_dialog.add_filter(filter_json)
+
+            response = file_dialog.run()
+            print(f"  - Save file chooser response: {response}", file=sys.stdout)
+            sys.stdout.flush()
+            if response == Gtk.ResponseType.OK:
+                filepath = file_dialog.get_filename()
+                file_dialog.destroy()
+                print(f"[Save Profile] Saving profile JSON to: {filepath}", file=sys.stdout)
+                sys.stdout.flush()
+                
+                # Show progress dialog
+                progress_dialog = ProfileProgressDialog(self, len(active_target_tabs))
+                
+                def run_builds():
+                    print("[Save Profile] run_builds thread started.", file=sys.stdout)
+                    sys.stdout.flush()
+                    try:
+                        targets_json_list = []
+                        results_report = {}
                         
-                        GLib.idle_add(progress_dialog.update_progress, 
-                                      f"Processing Target {tab.label_text} ({t_num}/{t_tot})", 
-                                      "Preparing training data...", 
-                                      idx / t_tot + 0.1 / t_tot)
-                        
-                        patches = {}
-                        for row in tab.it8_store:
-                            patch_name = row[0]
-                            patches[patch_name] = {
-                                "r": row[1],
-                                "g": row[2],
-                                "b": row[3],
-                                "r_std": row[4],
-                                "g_std": row[5],
-                                "b_std": row[6]
+                        for idx, tab in enumerate(active_target_tabs):
+                            t_num = idx + 1
+                            t_tot = len(active_target_tabs)
+                            print(f"[Save Profile] Processing target {tab.label_text} ({t_num}/{t_tot})...", file=sys.stdout)
+                            sys.stdout.flush()
+                            
+                            GLib.idle_add(progress_dialog.update_progress, 
+                                          f"Processing Target {tab.label_text} ({t_num}/{t_tot})", 
+                                          "Preparing training data...", 
+                                          idx / t_tot + 0.1 / t_tot)
+                            
+                            patches = {}
+                            for row in tab.it8_store:
+                                patch_name = row[0]
+                                patches[patch_name] = {
+                                    "r": row[1],
+                                    "g": row[2],
+                                    "b": row[3],
+                                    "r_std": row[4],
+                                    "g_std": row[5],
+                                    "b_std": row[6]
+                                }
+                            
+                            calib_dict = {
+                                "camera_model": self.calib.camera_model,
+                                "crosstalk_matrix_raw": self.calib.M.tolist() if self.calib.M is not None else None,
+                                "crosstalk_matrix_normalized": self.calib.M_norm.tolist() if self.calib.M_norm is not None else None,
+                                "crosstalk_correction_matrix": self.calib.M_corr.tolist() if self.calib.M_corr is not None else None,
+                                "captured_data": self.calib.captured_data
                             }
-                        
-                        calib_dict = {
-                            "camera_model": self.calib.camera_model,
-                            "crosstalk_matrix_raw": self.calib.M.tolist() if self.calib.M is not None else None,
-                            "crosstalk_matrix_normalized": self.calib.M_norm.tolist() if self.calib.M_norm is not None else None,
-                            "crosstalk_correction_matrix": self.calib.M_corr.tolist() if self.calib.M_corr is not None else None,
-                            "captured_data": self.calib.captured_data
-                        }
-                        
-                        # Prepare temporary dict
-                        temp_profile_dict = {
-                            "camera_name": self.calib.camera_model,
-                            "crosstalk_profile": calib_dict,
-                            "targets": [{
+                            
+                            # Prepare temporary dict
+                            temp_profile_dict = {
+                                "camera_name": self.calib.camera_model,
+                                "crosstalk_profile": calib_dict,
+                                "targets": [{
+                                    "name": tab.label_text,
+                                    "iso": tab.iso if tab.iso is not None else 100,
+                                    "shutter": tab.shutter if tab.shutter is not None else "1/8s",
+                                    "patches": patches
+                                }],
+                                "film_base": self.base_values,
+                                "normalization_target": film_profiling.DEFAULT_NORMALIZATION_TARGET
+                            }
+                            
+                            temp_profile = FilmProfile(temp_profile_dict)
+                            
+                            GLib.idle_add(progress_dialog.update_progress, 
+                                          f"Processing Target {tab.label_text} ({t_num}/{t_tot})", 
+                                          "Compiling ICC profile (colprof)...", 
+                                          idx / t_tot + 0.3 / t_tot)
+                            
+                            output_profiles_dir = os.path.join(project_dir, "profiles")
+                            os.makedirs(output_profiles_dir, exist_ok=True)
+                            
+                            def make_icc_progress_cb(step, detail):
+                                GLib.idle_add(progress_dialog.detail_label.set_text, detail[:50])
+                                
+                            print(f"[Save Profile] Calling build_icc_profile for target {tab.label_text}...", file=sys.stdout)
+                            sys.stdout.flush()
+                            res = film_profiling.build_icc_profile(
+                                temp_profile,
+                                self.reference_xyz_path,
+                                output_profiles_dir,
+                                progress_callback=make_icc_progress_cb
+                            )
+                            print(f"[Save Profile] build_icc_profile completed for target {tab.label_text}.", file=sys.stdout)
+                            sys.stdout.flush()
+                            
+                            clut_path = res['clut_icc_path']
+                            
+                            GLib.idle_add(progress_dialog.update_progress, 
+                                          f"Processing Target {tab.label_text} ({t_num}/{t_tot})", 
+                                          "Encoding ICC profile...", 
+                                          idx / t_tot + 0.8 / t_tot)
+                            
+                            with open(clut_path, 'rb') as f_icc:
+                                icc_bytes = f_icc.read()
+                            icc_b64 = base64.b64encode(icc_bytes).decode('utf-8')
+                            
+                            target_dict = {
                                 "name": tab.label_text,
                                 "iso": tab.iso if tab.iso is not None else 100,
                                 "shutter": tab.shutter if tab.shutter is not None else "1/8s",
-                                "patches": patches
-                            }],
+                                "patches": patches,
+                                "icc_profile_base64": icc_b64,
+                                "profcheck_output": res['profcheck_output'],
+                                "log_messages": res['log_messages']
+                            }
+                            targets_json_list.append(target_dict)
+                            
+                            results_report[tab.label_text] = {
+                                "trc_curves": res['trc_curves'],
+                                "profcheck_output": res['profcheck_output'],
+                                "log_messages": res['log_messages'],
+                                "sc_profile": FilmProfile(temp_profile_dict),
+                                "arr_raw": tab.arr_raw,
+                                "filepaths": getattr(tab, 'filepaths', None),
+                                "img_obj": getattr(tab, 'img_obj', None),
+                                "iso": tab.iso,
+                                "shutter": tab.shutter,
+                                "cc_matrix": temp_profile.crosstalk_matrix,
+                                "sc_profile_data": target_dict
+                            }
+                            
+                            # Set self-contained ICC bytes directly in memory (no base64 decode needed)
+                            results_report[tab.label_text]["sc_profile"].icc_profile_bytes = icc_bytes
+                            
+                            GLib.idle_add(progress_dialog.update_progress, 
+                                          f"Processing Target {tab.label_text} ({t_num}/{t_tot})", 
+                                          "Done!", 
+                                          (idx + 1) / t_tot)
+                        
+                        GLib.idle_add(progress_dialog.update_progress, "Saving File", "Writing profile JSON...", 0.95)
+                        
+                        profile_data = {
+                            "camera_name": self.calib.camera_model,
+                            "crosstalk_profile": calib_dict,
+                            "targets": targets_json_list,
                             "film_base": self.base_values,
                             "normalization_target": film_profiling.DEFAULT_NORMALIZATION_TARGET
                         }
                         
-                        temp_profile = FilmProfile(temp_profile_dict)
+                        print(f"[Save Profile] Writing full profile JSON to filepath: {filepath}...", file=sys.stdout)
+                        sys.stdout.flush()
+                        with open(filepath, 'w') as f:
+                            json.dump(profile_data, f, indent=4)
+                        print(f"[Save Profile] JSON file successfully written.", file=sys.stdout)
+                        sys.stdout.flush()
                         
-                        GLib.idle_add(progress_dialog.update_progress, 
-                                      f"Processing Target {tab.label_text} ({t_num}/{t_tot})", 
-                                      "Compiling ICC profile (colprof)...", 
-                                      idx / t_tot + 0.3 / t_tot)
+                        GLib.idle_add(progress_dialog.destroy)
+                        GLib.idle_add(self.status_lbl.set_text, f"Status: Profile saved to {os.path.basename(filepath)}")
                         
-                        output_profiles_dir = os.path.join(project_dir, "profiles")
-                        os.makedirs(output_profiles_dir, exist_ok=True)
+                        # Open Report Window
+                        print(f"[Save Profile] Launching ProfileReportWindow...", file=sys.stdout)
+                        sys.stdout.flush()
+                        GLib.idle_add(self.open_report_window, results_report)
                         
-                        def make_icc_progress_cb(step, detail):
-                            GLib.idle_add(progress_dialog.detail_label.set_text, detail[:50])
-                            
-                        res = film_profiling.build_icc_profile(
-                            temp_profile,
-                            self.reference_xyz_path,
-                            output_profiles_dir,
-                            progress_callback=make_icc_progress_cb
-                        )
-                        
-                        clut_path = res['clut_icc_path']
-                        
-                        GLib.idle_add(progress_dialog.update_progress, 
-                                      f"Processing Target {tab.label_text} ({t_num}/{t_tot})", 
-                                      "Encoding ICC profile...", 
-                                      idx / t_tot + 0.8 / t_tot)
-                        
-                        with open(clut_path, 'rb') as f_icc:
-                            icc_bytes = f_icc.read()
-                        icc_b64 = base64.b64encode(icc_bytes).decode('utf-8')
-                        
-                        target_dict = {
-                            "name": tab.label_text,
-                            "iso": tab.iso if tab.iso is not None else 100,
-                            "shutter": tab.shutter if tab.shutter is not None else "1/8s",
-                            "patches": patches,
-                            "icc_profile_base64": icc_b64,
-                            "profcheck_output": res['profcheck_output'],
-                            "log_messages": res['log_messages']
-                        }
-                        targets_json_list.append(target_dict)
-                        
-                        results_report[tab.label_text] = {
-                            "trc_curves": res['trc_curves'],
-                            "profcheck_output": res['profcheck_output'],
-                            "log_messages": res['log_messages'],
-                            "sc_profile": FilmProfile(temp_profile_dict),
-                            "arr_raw": tab.arr_raw,
-                            "filepaths": getattr(tab, 'filepaths', None),
-                            "img_obj": getattr(tab, 'img_obj', None),
-                            "iso": tab.iso,
-                            "shutter": tab.shutter,
-                            "cc_matrix": temp_profile.crosstalk_matrix,
-                            "sc_profile_data": target_dict
-                        }
-                        
-                        # Set self-contained ICC bytes directly in memory (no base64 decode needed)
-                        results_report[tab.label_text]["sc_profile"].icc_profile_bytes = icc_bytes
-                        
-                        GLib.idle_add(progress_dialog.update_progress, 
-                                      f"Processing Target {tab.label_text} ({t_num}/{t_tot})", 
-                                      "Done!", 
-                                      (idx + 1) / t_tot)
-                    
-                    GLib.idle_add(progress_dialog.update_progress, "Saving File", "Writing profile JSON...", 0.95)
-                    
-                    profile_data = {
-                        "camera_name": self.calib.camera_model,
-                        "crosstalk_profile": calib_dict,
-                        "targets": targets_json_list,
-                        "film_base": self.base_values,
-                        "normalization_target": film_profiling.DEFAULT_NORMALIZATION_TARGET
-                    }
-                    
-                    with open(filepath, 'w') as f:
-                        json.dump(profile_data, f, indent=4)
-                    
-                    GLib.idle_add(progress_dialog.destroy)
-                    GLib.idle_add(self.status_lbl.set_text, f"Status: Profile saved to {os.path.basename(filepath)}")
-                    
-                    # Open Report Window
-                    GLib.idle_add(self.open_report_window, results_report)
-                    
-                except Exception as e:
-                    import traceback
-                    traceback.print_exc()
-                    GLib.idle_add(progress_dialog.destroy)
-                    GLib.idle_add(self.status_lbl.set_text, f"Status: Save failed ({str(e)})")
-                    GLib.idle_add(self.show_error_dialog, "Save Profile Error", f"An error occurred: {str(e)}")
-            
-            t = threading.Thread(target=run_builds)
-            t.daemon = True
-            t.start()
-        else:
-            file_dialog.destroy()
+                    except Exception as e:
+                        import traceback
+                        print(f"[Save Profile] ERROR in run_builds thread: {e}", file=sys.stderr)
+                        traceback.print_exc()
+                        sys.stderr.flush()
+                        GLib.idle_add(progress_dialog.destroy)
+                        GLib.idle_add(self.status_lbl.set_text, f"Status: Save failed ({str(e)})")
+                        GLib.idle_add(self.show_error_dialog, "Save Profile Error", f"An error occurred in compilation: {str(e)}")
+                
+                t = threading.Thread(target=run_builds)
+                t.daemon = True
+                t.start()
+            else:
+                file_dialog.destroy()
+                print("[Save Profile] Save canceled at file chooser dialog.", file=sys.stdout)
+                sys.stdout.flush()
+        except Exception as e:
+            import traceback
+            print(f"[Save Profile] CRITICAL EXCEPTION in on_save_profile_clicked handler: {e}", file=sys.stderr)
+            traceback.print_exc()
+            sys.stderr.flush()
+            self.show_error_dialog("Save Intitiate Error", f"Failed to run save workflow: {e}")
 
     def open_report_window(self, results_report):
         report_win = ProfileReportWindow(self, results_report, self.base_values, getattr(self, 'arr_raw_base', None), self.reference_xyz_path)
