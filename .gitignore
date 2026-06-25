@@ -18,7 +18,7 @@ __pycache__/
 *.so
 
 # Compressed RAW test images and TIFF outputs
-test_imgs/*.ARW.xz
 *.tiff
 *.tif
+
 
