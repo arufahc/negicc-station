@@ -20,6 +20,24 @@ This repository contains the software for a negative film scanning station desig
 
 ---
 
+## Why This Setup is Superior (Scientific Principles)
+
+This scanning station employs a mathematically rigorous pipeline to digitize negative film, yielding superior results compared to traditional flatbed scanners or simple camera-on-copy-stand captures. 
+
+### 1. Light Source & Sensor Crosstalk Calibration
+Even when utilizing high-quality narrow-band LED light sources, the camera sensor's built-in color filter array (CFA) has relatively wide, overlapping spectral sensitivity curves (crosstalk). As a result, red light registers slightly on the green pixels, green light registers on red and blue, and so forth.
+* **The Solution**: This system calibrates the camera sensor's color matrix with respect to the specific light source. By capturing flat-field red, green, and blue exposures, we construct and apply a crosstalk correction matrix that mathematically decouples the channel overlaps, ensuring true channel purity before any color profiling or negative inversion.
+
+### 2. Film Stock Profiling & Color Management
+Correcting for crosstalk alone is insufficient. Without profiling for the specific film stock (e.g., Kodak Portra 400, Fujifilm Gold 200), the raw RGB values—even if corrected—lack color space metadata (like ICC profiles) and will not represent true-to-life colors.
+* **The Solution**: The profiling module fits monotonic red, green, and blue spline curves (TRC curves) to IT8 target grayscale patches and compiles a custom 3D color lookup table (cLUT) ICC profile. This maps the sensor's raw response to a standard colorimetric space, preserving color fidelity and rendering the film stock's signature colors accurately.
+
+### 3. Film Base Normalization (Transmittance Scaling)
+Negative film possesses an orange-tinted developed emulsion (the film base). Capturing and normalizing the film base is critical to isolate the actual image information.
+* **The Solution**: The system measures the film base to normalize all scanned transmittances. Since the film base represents the maximum possible light transmission (unexposed film), treating it as the $100\%$ transmittance reference ($1.0$ in linear space) allows us to compute all subsequent exposure transmittances relative to the base, effectively neutralizing the orange mask without discarding dynamic range.
+
+---
+
 ## 1. Jetson Nano System Dependencies
 
 Before building and running the scanning software, ensure that the Jetson Nano system is updated and the following system dependencies are installed:
