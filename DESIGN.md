@@ -1,12 +1,12 @@
 # Software Design Document
 
-## Capture and Decoding: Obtaining Linear Values with LibRaw
+## 1. Capture and Decoding: Obtaining Linear Values with LibRaw
 
 This section details the software design, processing pipelines, and configuration necessary to capture RAW image data and decode it into mathematically precise **linear RGB values** using `LibRaw`. It covers both single-shot debayering and 4-shot pixel-shift reconstruction.
 
 ---
 
-### 1. Overview and Core Objectives
+### 1.1 Overview and Core Objectives
 
 When digitizing color negatives, the pixel values must represent physical transmittance (the fraction of light passing through the film) in a linear space. Non-linear conversions (such as camera-internal white balancing, gamma curves, auto-exposure, or auto-brightness) distort the relationship between light intensity and raw sensor response, making accurate negative inversion mathematically impossible.
 
@@ -18,7 +18,7 @@ To obtain true linear values:
 
 ---
 
-### 2. Bayer Filter Array & LibRaw Sensor Extraction
+### 1.2 Bayer Filter Array & LibRaw Sensor Extraction
 
 Most digital cameras use a Single-Sensor Bayer Color Filter Array (CFA). A repeating $2\times2$ grid of color filters covers the sensor:
 
@@ -45,7 +45,7 @@ To obtain linear values, LibRaw parameters must be configured to bypass automati
 
 ---
 
-### 3. Single-Shot Capture and Debayering (Interpolation)
+### 1.3 Single-Shot Capture and Debayering (Interpolation)
 
 In single-shot mode, LibRaw must interpolate the missing color channels for every pixel.
 
@@ -65,7 +65,7 @@ In single-shot mode, LibRaw must interpolate the missing color channels for ever
 
 ---
 
-### 4. Sony 4-Shot Pixel-Shift Capture and Merging (No Interpolation)
+### 1.4 Sony 4-Shot Pixel-Shift Capture and Merging (No Interpolation)
 
 This pixel-shift pipeline is designed specifically and exclusively for Sony 4-shot pixel-shift captures. The camera physical sensor shifts by exactly one pixel pitch between four successive exposures using the in-body image stabilization (IBIS) coils.
 
@@ -106,7 +106,7 @@ This allows us to assemble a complete RGB triplet for every pixel **without inte
 
 ---
 
-### 5. CPython C-Extension Interface
+## 2. CPython C-Extension Interface
 
 To allow high-performance integration with Python-based negative inversion and processing pipelines, the core capture and LibRaw decoding routines are exposed as a Python C-extension module named `negicc_station`.
 
@@ -118,7 +118,7 @@ Refer to the following source files for implementation details:
 
 ---
 
-### 6. Auto-Exposure Search Algorithm & Overexposure Constraint
+## 3. Auto-Exposure Search Algorithm & Overexposure Constraint
 
 To automate the selection of the optimal shutter speed, the system integrates a hill-climbing search algorithm based on dynamic range maximization.
 
@@ -145,7 +145,7 @@ This penalty function guarantees that any exposure where the 95th percentile exc
 
 ---
 
-### 7. Crosstalk Correction Mathematics & Principles
+## 4. Crosstalk Correction Mathematics & Principles
 
 In film negative scanning systems, obtaining independent readings for each color channel (Red, Green, and Blue) is critical. However, even when utilizing narrow-band LED light sources or high-quality optical filters, digital camera sensors suffer from **spectral crosstalk**. Spectral crosstalk occurs because the transmission curves of the sensor's Color Filter Array (CFA) overlap (for example, the green filter has non-zero transmission in the red and blue bands). Consequently, a pure red illumination source will register non-zero responses in the green and blue channels of the raw linear image.
 
@@ -170,7 +170,7 @@ $$V_{corr, i} = \max\left(0, \min\left(65535, V_{corr, i}\right)\right) \quad \t
 
 ---
 
-### 8. Calibration and Matrix Generation
+### 4.1 Calibration and Matrix Generation
 
 Calibration is performed to generate the correction matrix $C$ by measuring the sensor's specific crosstalk signature under controlled, single-channel illumination.
 
@@ -207,11 +207,11 @@ If the matrix is singular (i.e., columns are linearly dependent due to severe se
 
 ---
 
-### 9. Film Profiling, ICC Generation, and Linear Negative Conversion
+## 5. Film Profiling, ICC Generation, and Linear Negative Conversion
 
 This section covers the mathematical steps utilized to compile negative film profiles containing custom 3D cLUT ICC profiles and Tone Reproduction Curves (TRCs), and apply them dynamically during raw image conversion.
 
-#### 1. Exposure Ratio Scaling
+### 5.1 Exposure Ratio Scaling
 Let the film base capture be acquired at exposure time $t_b$ and sensitivity $ISO_b$.
 Let the target capture (containing the IT8 reference target) be acquired at exposure time $t_t$ and sensitivity $ISO_t$.
 
@@ -222,14 +222,14 @@ $$\text{Exposure}_t = t_t \times \frac{ISO_t}{100.0}$$
 The exposure ratio mapping target measurements to film base capture conditions is:
 $$\text{Ratio} = \frac{\text{Exposure}_b}{\text{Exposure}_t}$$
 
-#### 2. Film Base Normalization
+### 5.2 Film Base Normalization
 To map the measured crosstalk-corrected film base levels ($FB_R, FB_G, FB_B$) to a fixed target normalization level $N_{\text{target}}$ (defaulting to $55000.0$), channel-specific scaling factors $S_c$ are calculated:
 $$S_c = \frac{N_{\text{target}}}{FB_c} \times \text{Ratio} \quad \text{for } c \in \{R, G, B\}$$
 
 The raw patch measurements $P_{\text{raw}, c}$ are then scaled:
 $$P_{\text{scaled}, c} = P_{\text{raw}, c} \times S_c$$
 
-#### 3. Tone Reproduction Curve (TRC) Estimation
+### 5.3 Tone Reproduction Curve (TRC) Estimation
 We extract the grayscale patches $i \in \{0, \dots, 23\}$ from the target data. Let their scaled crosstalk-corrected averages be represented by $V_c(i)$ for $c \in \{R, G, B\}$. 
 
 Using the reference XYZ target data, we normalize the reference luminance $Y_{\text{ref}}(i)$ to the range $[0.0, \text{whitest\_patch\_scaling}]$:
@@ -240,7 +240,7 @@ $$\text{TRC}_c(V) \approx Y_{\text{norm}}$$
 
 These curves act as the independent red, green, and blue Tone Reproduction Curves (TRCs) serialized into the final profile.
 
-#### 4. Dynamic Scaling and Matrix Merging
+### 5.4 Dynamic Scaling and Matrix Merging
 When converting a raw negative scan captured at shutter speed $t_s$ and sensitivity $ISO_s$, we calculate the scan-to-base exposure ratio:
 $$\text{Ratio}_{\text{scan}} = \frac{t_b \times (ISO_b / 100.0)}{t_s \times (ISO_s / 100.0)}$$
 
@@ -256,7 +256,7 @@ $$V_{\text{scaled}} = M_{\text{merged}} \cdot V_{\text{raw}}$$
 Finally, the scaled camera RGB values are passed through the independent TRC curves and color-managed through the 3D cLUT ICC profile to produce the final sRGB output:
 $$V_{\text{sRGB}} = \text{ICC}_{\text{LUT}}\left(\begin{bmatrix} \text{TRC}_R(R_{\text{scaled}}) \\ \text{TRC}_G(G_{\text{scaled}}) \\ \text{TRC}_B(B_{\text{scaled}}) \end{bmatrix}\right)$$
 
-#### 5. Dynamic Profile Target Selection & Performance Optimization
+### 5.5 Dynamic Profile Target Selection & Performance Optimization
 To support multi-target calibration profiles (profiles containing calibration targets captured at different exposure levels), the system implements a dynamic profile matching algorithm:
 1. **Region of Interest Extraction**: Extracts the $2/3$ center square of the shorter side from the raw image to focus on the calibration target area.
 2. **Subsampling Optimization**: To avoid performance bottlenecks on high-resolution 61MP sensor captures, the region of interest is subsampled by taking every 10th pixel in both dimensions. This reduces the pixels under analysis by a factor of 100 (from 17.8 million down to ~178k elements), reducing execution time from ~10 seconds to under 20ms while preserving the statistical distribution of the dynamic range.
@@ -273,11 +273,11 @@ To support multi-target calibration profiles (profiles containing calibration ta
 
 ---
 
-### 10. Color Space Conversion Pipeline & Multi-Backend Architecture
+## 6. Color Space Conversion Pipeline & Multi-Backend Architecture
 
 Following crosstalk correction and film base scaling, the normalized linear RGB sensor pixels must be color-managed. This section describes the standard ICC conversion sequence, details the differences between the three available pipeline backends, and presents benchmark and parity data obtained on the target Jetson Nano platform.
 
-#### A. The Color Space Conversion Steps
+### 6.1 The Color Space Conversion Steps
 To transform raw linear camera responses into standard sRGB space, the pipeline evaluates the film's custom IT8 profile stages and projects coordinates through the Profile Connection Space (PCS):
 
 1. **Pixel Normalization**: Converts raw 16-bit unsigned integers ($[0, 65535]$ LSB) to normalized `float32` values in the range $[0.0, 1.0]$.
@@ -296,7 +296,7 @@ To transform raw linear camera responses into standard sRGB space, the pipeline 
 
 ---
 
-#### B. Pipeline Backends Comparison
+### 6.2 Pipeline Backends Comparison
 
 The system supports three distinct modes to run these steps:
 
@@ -315,7 +315,7 @@ The system supports three distinct modes to run these steps:
 
 ---
 
-#### C. Parity and Discrepancy Analysis
+### 6.3 Parity and Discrepancy Analysis
 
 Outputs from the three backends were compared under identical inputs ($[0, 65535]$ LSB) to evaluate correctness and quantization behavior:
 
@@ -328,7 +328,7 @@ Outputs from the three backends were compared under identical inputs ($[0, 65535
 
 ---
 
-#### D. Performance Benchmarks on Nvidia Jetson Nano
+### 6.4 Performance Benchmarks on Nvidia Jetson Nano
 
 We measured processing times on a sample 16-bit linear RAW image ($4784 \times 3188$ pixels, ~15.2M pixels, half-resolution scan) executing on the Nvidia Jetson Nano (ARM Aarch64 CPU + Maxwell GPU):
 
