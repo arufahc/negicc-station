@@ -63,6 +63,8 @@ In single-shot mode, LibRaw must interpolate the missing color channels for ever
    - **Quality 0 (Bilinear)**: Highly recommended for film scanning. While advanced algorithms (e.g., AHD, VNG) produce sharper edges for natural scenes, they interpolate missing channels by looking at gradients in other channels. For negative film, this causes grain structure in the dense red channel to bleed into the green and blue channels, producing artificial grid-like grain artifacts. Bilinear interpolation performs simple averaging, preventing inter-channel grain bleeding.
 4. Call `proc->dcraw_process()` to perform debayering and generate the linear 16-bit RGB image.
 
+*Implementation Reference:* The single-shot LibRaw configuration and processing are implemented in the `load_raw` function in [src/raw_processor.cpp](src/raw_processor.cpp).
+
 ---
 
 ### 1.4 Sony 4-Shot Pixel-Shift Capture and Merging (No Interpolation)
@@ -101,6 +103,8 @@ This allows us to assemble a complete RGB triplet for every pixel **without inte
      - For **Red** (`col == 0`) and **Blue** (`col == 2`), copy directly: $\text{Target}(r+dr, c+dc)[\text{col}] = \text{Source}_{mi}(r, c)[\text{col}]$
      - For **Green** (`col == 1` or `col == 3`), accumulate and average the two samples from the exposures to reduce noise: $\text{Target}(r+dr, c+dc)[1] = \frac{\text{Source}_{mi1}(r, c)[\text{col}] + \text{Source}_{mi2}(r, c)[\text{col}]}{2}$
 4. Re-label the output color count to 3 (`proc[0]->imgdata.idata.colors = 3`) to mark it as a full RGB image.
+
+*Implementation Reference:* The Sony 4-shot pixel-shift merging algorithm is implemented in the `merge_pixel_shift_raw` function in [src/raw_processor.cpp](src/raw_processor.cpp).
 
 ---
 
@@ -152,6 +156,8 @@ $$
 $$
 
 This penalty function guarantees that any exposure where the 95th percentile exceeds the safety threshold is rejected in favor of a safe, unclipped exposure. Checking the 95th percentile instead of the absolute peak pixel value also makes the overexposure constraint robust against hot pixels and sensor noise.
+
+*Implementation Reference:* The dynamic range calculation, highlight penalty, and hill-climbing search logic are implemented in [src/auto_exposure.py](src/auto_exposure.py) (specifically the `calculate_dynamic_range` and `run_auto_exposure` functions).
 
 ---
 
@@ -242,11 +248,15 @@ If the matrix is singular (i.e., columns are linearly dependent due to severe se
 > **Overexposure Constraint During Calibration:**
 > The calibration exposures must maximize the dynamic range of each channel to optimize the signal-to-noise ratio, but **must strictly avoid overexposure (clipping)**. If any pixel values in the calibration region saturate (reach the 14-bit sensor ceiling of 16384), the response becomes non-linear, distorting the calculated ratios and rendering the calibration matrix invalid.
 
+*Implementation Reference:* The crosstalk matrix calibration and normalized matrix inversion are implemented in the `compute_calibration_matrices` function in [src/crosstalk_calibration.py](src/crosstalk_calibration.py), while the application of the matrix to pixel arrays is implemented in the `apply_correction` function of the same file.
+
 ---
 
 ## 5. Film Profiling, ICC Generation, and Linear Negative Conversion
 
 This section covers the mathematical steps utilized to compile negative film profiles containing custom 3D cLUT ICC profiles and Tone Reproduction Curves (TRCs), and apply them dynamically during raw image conversion.
+
+*Implementation Reference:* The overall film profiling library, ArgyllCMS TI3 generation, and ICC generation process are managed by the `FilmProfile` class and helper functions in [src/film_profiling.py](src/film_profiling.py).
 
 ### 5.0 Why a Profile is Needed (Even with a Tricolor/Narrow-band Light Source)
 
@@ -371,6 +381,8 @@ $$
    The target profile with the minimum distance metric (closest mid-grey patch alignment to target index 11.5) is selected as the optimal conversion profile.
 8. **Identity-Based Range Caching**: To prevent redundant re-evaluations during UI redraws or target selection changes, the computed transmittance range is cached using a composite key representing the identities of the raw image object and the active profile: `(id(raw_image), id(profile))`.
 
+*Implementation Reference:* The dynamic target selection algorithm is implemented in the `find_best_target_index` function in [src/target_selection.py](src/target_selection.py). The performance optimizations (subsampling and range caching) are integrated within the `get_image_transmittance_range` function in [src/ui_capture.py](src/ui_capture.py).
+
 ---
 
 ## 6. Color Space Conversion Pipeline & Multi-Backend Architecture
@@ -401,6 +413,8 @@ $$
    and clips coordinates to $[0.0, 1.0]$.
 10. **EOTF Mapping & Quantization**: Applies target colorspace EOTF (the piecewise non-linear sRGB mapping curve for `"srgb"`, or identity mapping for `"srgb-g10"`), multiplies by $65535.0$, and rounds to `uint16_t` values.
 
+*Implementation Reference:* The unified color space conversion pipeline entrypoint is implemented in the `CapturedImage::get_linear_rgb` function in [src/image_capture.cpp](src/image_capture.cpp).
+
 ---
 
 ### 6.2 Pipeline Backends Comparison
@@ -419,6 +433,11 @@ The system supports three distinct modes to run these steps:
 * **CUDA Backend**: Processes pixels concurrently across blocks of threads. The film profile's internal TRCs and cLUT are uploaded to GPU buffers, and the remaining colorspace adaptation and sRGB EOTF mappings are performed using optimized CUDA arithmetic. Custom output profiles are bypassed and fall back to CPU.
 * **Python Backend**: Used in prototype scripts. Leverages ctypes to parse `cmsStage` elements and executes the manual matrix operations and tetrahedral lookups using NumPy vectorization.
 * **C++ CPU Backend**: Built around the Little CMS library. It compiles a standard link between the input IT8 profile and the target output profile, processing pixels through optimized fixed-point integer lookup tables. This is the only backend that dynamically uses the output profile file during math transformation.
+
+*Implementation Reference:*
+- **CUDA Backend**: The optimized float32 GPU kernel is defined as `color_conversion_kernel` in [src/color_conversion.cu](src/color_conversion.cu) and declared in [src/color_conversion.h](src/color_conversion.h).
+- **Python Backend**: The NumPy-vectorized tetrahedral interpolation and native lcms2 ctypes wrapper are implemented in [src/color_conversion.py](src/color_conversion.py).
+- **C++ CPU Backend**: The Little CMS pipeline integration is implemented in the `CapturedImage::color_transform_cpp` function in [src/image_capture.cpp](src/image_capture.cpp).
 
 ---
 
