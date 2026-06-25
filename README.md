@@ -43,6 +43,8 @@ Rather than using disconnected tools, this project uniquely integrates the entir
 * **Tethered Automation**: Automating tethered Sony A7R4 USB capture sessions, including auto-exposure and sub-pixel shifted 4-shot captures.
 * **CUDA Hardware Acceleration**: Running a fully hardware-accelerated GPU pipeline optimized for NVIDIA platforms (such as the Jetson Orin Nano and Jetson Nano). By moving demosaicing, matrix conversions, and color lookups to the GPU cores, the system performs accurate, high-fidelity film conversions in a fraction of a second.
 
+![End-to-End Scanning and Processing Pipeline Workflow](test_imgs/screenshot_workflow.jpg)
+
 ---
 
 ## 1. Jetson Nano System Dependencies
@@ -156,6 +158,8 @@ make
 # Run the central UI launcher (recommended)
 ./venv/bin/python3 src/ui_main.py
 ```
+
+![Launcher Window (ui_main.py)](test_imgs/main_ui.jpg)
 
 ### Desktop Launcher Installation
 
@@ -305,6 +309,8 @@ With the crosstalk profile ready, you can now scan your film base and IT8 target
    ```bash
    ./venv/bin/python3 src/ui_film_profiling.py
    ```
+
+   ![Film Profiling Interface (ui_film_profiling.py)](test_imgs/film_profiling_ui.jpg)
 2. Click **LOAD CROSSTALK PROFILE** in the left sidebar and select your `sony_a7r4_crosstalk.json`.
 3. In the reference field, input the IT8 target reference URL or local path (e.g. `http://www.colorreference.de/targets/R190808.zip`) and click **DOWNLOAD REFERENCE**.
 
@@ -325,6 +331,8 @@ You can scan multiple targets captured at different exposure offsets (e.g., brac
 5. Align the patch grid:
    * Click **LAYER IT8 MASK** to show the patch mapping boxes.
    * Use the arrow keys (`Up`, `Down`, `Left`, `Right`) to nudge, and `+`/`-` keys to scale the layout until the overlay boxes align precisely with the 288 physical film patches.
+
+   ![IT8 Target Alignment Grid](test_imgs/film_profiling_it8_sampling.jpg)
 6. Click **READ PATCH VALUES**.
 7. If you want to profile other exposures (e.g., a $-1$ EV underexposure or a $+1$ EV overexposure):
    * Click the **`+` (Add Tab)** button to create **Target 2**.
@@ -345,6 +353,8 @@ You can scan multiple targets captured at different exposure offsets (e.g., brac
    * The final profile verification error metrics (max/average CIEDE2000 errors).
    * A static **Target Converted** positive image showing the crosstalk-corrected and color-managed positive result.
    * Collapsible compilation step logs.
+
+   ![Film Profiling and Calibration Report](test_imgs/film_profiling_results.jpg)
 
 ---
 
@@ -375,6 +385,8 @@ To clean and neutralize the film base's orange tint, you must record a reference
 
 ### Phase 3: Negative Film Capture and Correction
 1. Switch to the **Capture** tab.
+
+   ![Capture & Scan Interface (ui_capture.py)](test_imgs/main_capture_ui.jpg)
 2. Click **Load Profile...** to load a calibration profile JSON file. 
    * The application supports loading both full profiles (containing IT8 targets and custom ICC tables) and crosstalk-only calibration profiles (containing only the sensor's crosstalk matrix).
 3. If the profile includes custom color calibration targets:
