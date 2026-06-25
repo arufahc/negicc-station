@@ -27,7 +27,7 @@ This repository contains the software for a negative film scanning station desig
 This scanning station employs a mathematically rigorous pipeline to digitize negative film, yielding superior results compared to traditional flatbed scanners or simple camera-on-copy-stand captures. 
 
 ### 1. Light Source & Sensor Crosstalk Calibration
-Even when utilizing high-quality narrow-band LED light sources, the camera sensor's built-in color filter array (CFA) has relatively wide, overlapping spectral sensitivity curves (crosstalk). As a result, red light registers slightly on the green pixels, green light registers on red and blue, and so forth.
+Even when utilizing high-quality narrow-band LED light sources (such as the adjustable R, G, B LED light box from [Shoebox Photos BCS](https://www.shoeboxphotosbcs.com)), the camera sensor's built-in color filter array (CFA) has relatively wide, overlapping spectral sensitivity curves (crosstalk). As a result, red light registers slightly on the green pixels, green light registers on red and blue, and so forth.
 * **The Solution**: This system calibrates the camera sensor's color matrix with respect to the specific light source. By capturing flat-field red, green, and blue exposures, we construct and apply a crosstalk correction matrix that mathematically decouples the channel overlaps, ensuring true channel purity before any color profiling or negative inversion.
 
 ### 2. Film Stock Profiling & Color Management
