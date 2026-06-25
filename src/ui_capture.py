@@ -851,7 +851,7 @@ class CalibrationTargetsDetailsWindow(Gtk.Window):
                 # Update main treeview selection to stay in sync
                 main_select = self.app.target_treeview.get_selection()
                 for i, row in enumerate(self.app.target_liststore):
-                    if row[0] == idx:
+                    if row[1] == idx:
                         main_select.select_path(Gtk.TreePath.new_from_indices([i]))
                         break
                 
@@ -1423,14 +1423,19 @@ class ScanningAppWindow(Gtk.Window):
         
         target_box.pack_start(tgt_header_box, False, False, 5)
         
-        self.target_liststore = Gtk.ListStore(int, str, str) # Index, Target Name, Mid-grey Match Distance
+        self.target_liststore = Gtk.ListStore(str, int, str, str, str) # Active, Index, Target Name, gs0 T, gs23 T
         self.target_treeview = Gtk.TreeView(model=self.target_liststore)
         
         renderer_text = Gtk.CellRendererText()
-        col1 = Gtk.TreeViewColumn("Target Name", renderer_text, text=1)
-        col2 = Gtk.TreeViewColumn("Mid-Grey Distance", renderer_text, text=2)
+        col_active = Gtk.TreeViewColumn("Active", renderer_text, text=0)
+        col_active.set_alignment(0.5)
+        col1 = Gtk.TreeViewColumn("Target Name", renderer_text, text=2)
+        col_gs0 = Gtk.TreeViewColumn("gs0 (Densest) R/G/B T", renderer_text, text=3)
+        col_gs23 = Gtk.TreeViewColumn("gs23 (Lightest) R/G/B T", renderer_text, text=4)
+        self.target_treeview.append_column(col_active)
         self.target_treeview.append_column(col1)
-        self.target_treeview.append_column(col2)
+        self.target_treeview.append_column(col_gs0)
+        self.target_treeview.append_column(col_gs23)
         
         select = self.target_treeview.get_selection()
         select.connect("changed", self.on_target_selection_changed)
@@ -1662,7 +1667,20 @@ class ScanningAppWindow(Gtk.Window):
                 if hasattr(self.profile, 'raw_data') and 'targets' in self.profile.raw_data:
                     for idx, tgt in enumerate(self.profile.raw_data['targets']):
                         name = tgt.get('name', f"Target {idx}")
-                        self.target_liststore.append([idx, name, "--"])
+                        
+                        # Get gs0 and gs23 transmittances
+                        ts = get_target_transmittances(self.profile, idx)
+                        if ts and len(ts) == 24:
+                            gs0_r, gs0_g, gs0_b = ts[0]
+                            gs23_r, gs23_g, gs23_b = ts[23]
+                            gs0_str = f"{gs0_r:.3f} / {gs0_g:.3f} / {gs0_b:.3f}"
+                            gs23_str = f"{gs23_r:.3f} / {gs23_g:.3f} / {gs23_b:.3f}"
+                        else:
+                            gs0_str = "N/A"
+                            gs23_str = "N/A"
+                            
+                        active = "➔" if idx == self.selected_target_idx else ""
+                        self.target_liststore.append([active, idx, name, gs0_str, gs23_str])
                         
                 if self.raw_linear_pixels is not None and self.film_base_rgb is not None and len(self.target_liststore) > 0:
                     scan_shutter = self.raw_image.shutter_speed if self.raw_image else 0.125
@@ -1675,10 +1693,10 @@ class ScanningAppWindow(Gtk.Window):
                         base_shutter=base_shutter, base_iso=base_iso
                     )
                     self.selected_target_idx = best_idx
-                    for row in self.target_liststore:
-                        row[2] = f"{dist:.2f}" if row[0] == best_idx else "--"
+                    self.update_main_target_indicators()
                 else:
                     self.selected_target_idx = 0
+                    self.update_main_target_indicators()
                     
                 if len(self.target_liststore) > 0:
                     select = self.target_treeview.get_selection()
@@ -1832,13 +1850,18 @@ class ScanningAppWindow(Gtk.Window):
         else:
             dialog.destroy()
 
+    def update_main_target_indicators(self):
+        for row in self.target_liststore:
+            row[0] = "➔" if row[1] == self.selected_target_idx else ""
+
     def on_target_selection_changed(self, selection):
         model, treeiter = selection.get_selected()
         if treeiter is not None:
-            idx = model[treeiter][0]
-            name = model[treeiter][1]
+            idx = model[treeiter][1]
+            name = model[treeiter][2]
             if idx != self.selected_target_idx:
                 self.selected_target_idx = idx
+                self.update_main_target_indicators()
                 self.capture_converted_rgb_cache = None
                 self.capture_corr_hist_cache = None
                 self.update_capture_preview()
@@ -2090,13 +2113,11 @@ class ScanningAppWindow(Gtk.Window):
                     base_shutter=base_shutter, base_iso=base_iso
                 )
                 self.selected_target_idx = best_idx
+                self.update_main_target_indicators()
                 
-                for row in self.target_liststore:
-                    row[2] = f"{dist:.2f}" if row[0] == best_idx else "--"
-                    
                 select = self.target_treeview.get_selection()
                 for i, row in enumerate(self.target_liststore):
-                    if row[0] == best_idx:
+                    if row[1] == best_idx:
                         select.select_path(Gtk.TreePath.new_from_indices([i]))
                         break
                         
