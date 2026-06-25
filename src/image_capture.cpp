@@ -261,6 +261,123 @@ static void adjust_correction_matrix(std::vector<float>& r_coef,
     scale_vector(b_coef, b_scale * global_exposure_comp);
 }
 
+static std::vector<float> prepare_adjusted_crosstalk(
+    const std::vector<float>& cc_matrix,
+    float exposure_comp,
+    const std::vector<int>& profile_film_base,
+    const std::vector<int>& film_base
+) {
+    std::vector<float> adjusted_cc = cc_matrix;
+    if (adjusted_cc.empty()) {
+        adjusted_cc = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+    }
+    std::vector<int> p_fb = profile_film_base;
+    std::vector<int> c_fb = film_base;
+    if (p_fb.empty() || c_fb.empty()) {
+        p_fb = {1, 1, 1};
+        c_fb = {1, 1, 1};
+    }
+    std::vector<float> r_coef = {adjusted_cc[0], adjusted_cc[1], adjusted_cc[2]};
+    std::vector<float> g_coef = {adjusted_cc[3], adjusted_cc[4], adjusted_cc[5]};
+    std::vector<float> b_coef = {adjusted_cc[6], adjusted_cc[7], adjusted_cc[8]};
+    adjust_correction_matrix(r_coef, g_coef, b_coef, exposure_comp, p_fb, c_fb);
+    return {
+        r_coef[0], r_coef[1], r_coef[2],
+        g_coef[0], g_coef[1], g_coef[2],
+        b_coef[0], b_coef[1], b_coef[2]
+    };
+}
+
+static bool parse_icc_profile(
+    const std::string& it8_profile_path,
+    const uint8_t* it8_profile_data,
+    size_t it8_profile_data_size,
+    int& has_prof_flag,
+    std::vector<float>& in_trc0, std::vector<float>& in_trc1, std::vector<float>& in_trc2,
+    std::vector<float>& out_trc0, std::vector<float>& out_trc1, std::vector<float>& out_trc2,
+    std::vector<float>& matrix_3x3, std::vector<float>& offset_3,
+    std::vector<float>& clut_grid,
+    int& clut_dim_r, int& clut_dim_g, int& clut_dim_b
+) {
+    has_prof_flag = 0;
+    cmsHPROFILE h_profile = nullptr;
+    if (it8_profile_data && it8_profile_data_size > 0) {
+        h_profile = cmsOpenProfileFromMem(it8_profile_data, it8_profile_data_size);
+    } else if (!it8_profile_path.empty()) {
+        unsigned* prof = nullptr;
+        unsigned size = 0;
+        if (read_profile_from_file(it8_profile_path, &prof, &size) == 0) {
+            h_profile = cmsOpenProfileFromMem(prof, size);
+            free(prof);
+        }
+    }
+
+    if (!h_profile) {
+        return false;
+    }
+
+    cmsPipeline* h_pipeline = (cmsPipeline*)cmsReadTag(h_profile, cmsSigAToB0Tag);
+    if (h_pipeline) {
+        has_prof_flag = 1;
+        int curve_set_count = 0;
+        cmsStage* stage_ptr = cmsPipelineGetPtrToFirstStage(h_pipeline);
+        while (stage_ptr) {
+            cmsStageSignature stage_type = cmsStageType(stage_ptr);
+            if (stage_type == cmsSigCurveSetElemType) {
+                _cmsStageToneCurvesData* curve_data = (_cmsStageToneCurvesData*)cmsStageData(stage_ptr);
+                if (curve_data->nCurves >= 3) {
+                    std::vector<float>* p_trc0 = (curve_set_count == 0) ? &in_trc0 : &out_trc0;
+                    std::vector<float>* p_trc1 = (curve_set_count == 0) ? &in_trc1 : &out_trc1;
+                    std::vector<float>* p_trc2 = (curve_set_count == 0) ? &in_trc2 : &out_trc2;
+
+                    cmsToneCurve* tc0 = curve_data->TheCurves[0];
+                    int entries0 = cmsGetToneCurveEstimatedTableEntries(tc0);
+                    cmsUInt16Number* table0 = (cmsUInt16Number*)cmsGetToneCurveEstimatedTable(tc0);
+                    p_trc0->resize(entries0);
+                    for (int i = 0; i < entries0; ++i) (*p_trc0)[i] = table0[i] / 65535.0f;
+
+                    cmsToneCurve* tc1 = curve_data->TheCurves[1];
+                    int entries1 = cmsGetToneCurveEstimatedTableEntries(tc1);
+                    cmsUInt16Number* table1 = (cmsUInt16Number*)cmsGetToneCurveEstimatedTable(tc1);
+                    p_trc1->resize(entries1);
+                    for (int i = 0; i < entries1; ++i) (*p_trc1)[i] = table1[i] / 65535.0f;
+
+                    cmsToneCurve* tc2 = curve_data->TheCurves[2];
+                    int entries2 = cmsGetToneCurveEstimatedTableEntries(tc2);
+                    cmsUInt16Number* table2 = (cmsUInt16Number*)cmsGetToneCurveEstimatedTable(tc2);
+                    p_trc2->resize(entries2);
+                    for (int i = 0; i < entries2; ++i) (*p_trc2)[i] = table2[i] / 65535.0f;
+                }
+                curve_set_count++;
+            } else if (stage_type == cmsSigMatrixElemType) {
+                _cmsStageMatrixData* matrix_data = (_cmsStageMatrixData*)cmsStageData(stage_ptr);
+                matrix_3x3.resize(9);
+                offset_3.resize(3);
+                for (int i = 0; i < 9; ++i) matrix_3x3[i] = (float)matrix_data->Double[i];
+                for (int i = 0; i < 3; ++i) offset_3[i] = (float)matrix_data->Offset[i];
+            } else if (stage_type == cmsSigCLutElemType) {
+                _cmsStageCLutData* clut_data = (_cmsStageCLutData*)cmsStageData(stage_ptr);
+                clut_dim_r = clut_data->Params->nSamples[0];
+                clut_dim_g = clut_data->Params->nSamples[1];
+                clut_dim_b = clut_data->Params->nSamples[2];
+                int total_elements = clut_dim_r * clut_dim_g * clut_dim_b * 3;
+                clut_grid.resize(total_elements);
+                if (clut_data->HasFloatValues) {
+                    float* table = clut_data->Tab.TFloat;
+                    for (int i = 0; i < total_elements; ++i) clut_grid[i] = table[i];
+                } else {
+                    cmsUInt16Number* table = clut_data->Tab.T;
+                    for (int i = 0; i < total_elements; ++i) clut_grid[i] = table[i] / 65535.0f;
+                }
+            }
+            stage_ptr = cmsStageNext(stage_ptr);
+        }
+    }
+    cmsCloseProfile(h_profile);
+    return true;
+}
+
+
 // Private cmsStage structs are now imported via lcms2_plugin.h
 
 /*
@@ -304,87 +421,9 @@ static bool run_color_pipeline_host(
             std::vector<float> clut_grid;
             int clut_dim_r = 0, clut_dim_g = 0, clut_dim_b = 0;
 
-            cmsHPROFILE h_profile = nullptr;
-            if (it8_profile_data && it8_profile_data_size > 0) {
-                h_profile = cmsOpenProfileFromMem(it8_profile_data, it8_profile_data_size);
-            } else if (!it8_profile_path.empty()) {
-                unsigned* prof = nullptr;
-                unsigned size = 0;
-                if (read_profile_from_file(it8_profile_path, &prof, &size) == 0) {
-                    h_profile = cmsOpenProfileFromMem(prof, size);
-                    free(prof);
-                }
-            }
-
-            if (h_profile) {
-                cmsPipeline* h_pipeline = (cmsPipeline*)cmsReadTag(h_profile, cmsSigAToB0Tag);
-                if (h_pipeline) {
-                    has_prof_flag = 1;
-                    int curve_set_count = 0;
-                    cmsStage* stage_ptr = cmsPipelineGetPtrToFirstStage(h_pipeline);
-                    while (stage_ptr) {
-                        cmsStageSignature stage_type = cmsStageType(stage_ptr);
-                        if (stage_type == cmsSigCurveSetElemType) {
-                            _cmsStageToneCurvesData* curve_data = (_cmsStageToneCurvesData*)cmsStageData(stage_ptr);
-                            if (curve_data->nCurves >= 3) {
-                                std::vector<float>* p_trc0 = nullptr;
-                                std::vector<float>* p_trc1 = nullptr;
-                                std::vector<float>* p_trc2 = nullptr;
-                                if (curve_set_count == 0) {
-                                    p_trc0 = &in_trc0;
-                                    p_trc1 = &in_trc1;
-                                    p_trc2 = &in_trc2;
-                                } else {
-                                    p_trc0 = &out_trc0;
-                                    p_trc1 = &out_trc1;
-                                    p_trc2 = &out_trc2;
-                                }
-
-                                cmsToneCurve* tc0 = curve_data->TheCurves[0];
-                                int entries0 = cmsGetToneCurveEstimatedTableEntries(tc0);
-                                cmsUInt16Number* table0 = (cmsUInt16Number*)cmsGetToneCurveEstimatedTable(tc0);
-                                p_trc0->resize(entries0);
-                                for (int i = 0; i < entries0; ++i) (*p_trc0)[i] = table0[i] / 65535.0f;
-
-                                cmsToneCurve* tc1 = curve_data->TheCurves[1];
-                                int entries1 = cmsGetToneCurveEstimatedTableEntries(tc1);
-                                cmsUInt16Number* table1 = (cmsUInt16Number*)cmsGetToneCurveEstimatedTable(tc1);
-                                p_trc1->resize(entries1);
-                                for (int i = 0; i < entries1; ++i) (*p_trc1)[i] = table1[i] / 65535.0f;
-
-                                cmsToneCurve* tc2 = curve_data->TheCurves[2];
-                                int entries2 = cmsGetToneCurveEstimatedTableEntries(tc2);
-                                cmsUInt16Number* table2 = (cmsUInt16Number*)cmsGetToneCurveEstimatedTable(tc2);
-                                p_trc2->resize(entries2);
-                                for (int i = 0; i < entries2; ++i) (*p_trc2)[i] = table2[i] / 65535.0f;
-                            }
-                            curve_set_count++;
-                        } else if (stage_type == cmsSigMatrixElemType) {
-                            _cmsStageMatrixData* matrix_data = (_cmsStageMatrixData*)cmsStageData(stage_ptr);
-                            matrix_3x3.resize(9);
-                            offset_3.resize(3);
-                            for (int i = 0; i < 9; ++i) matrix_3x3[i] = (float)matrix_data->Double[i];
-                            for (int i = 0; i < 3; ++i) offset_3[i] = (float)matrix_data->Offset[i];
-                        } else if (stage_type == cmsSigCLutElemType) {
-                            _cmsStageCLutData* clut_data = (_cmsStageCLutData*)cmsStageData(stage_ptr);
-                            clut_dim_r = clut_data->Params->nSamples[0];
-                            clut_dim_g = clut_data->Params->nSamples[1];
-                            clut_dim_b = clut_data->Params->nSamples[2];
-                            int total_elements = clut_dim_r * clut_dim_g * clut_dim_b * 3;
-                            clut_grid.resize(total_elements);
-                            if (clut_data->HasFloatValues) {
-                                float* table = clut_data->Tab.TFloat;
-                                for (int i = 0; i < total_elements; ++i) clut_grid[i] = table[i];
-                            } else {
-                                cmsUInt16Number* table = clut_data->Tab.T;
-                                for (int i = 0; i < total_elements; ++i) clut_grid[i] = table[i] / 65535.0f;
-                            }
-                        }
-                        stage_ptr = cmsStageNext(stage_ptr);
-                    }
-                }
-                cmsCloseProfile(h_profile);
-            }
+            parse_icc_profile(it8_profile_path, it8_profile_data, it8_profile_data_size,
+                              has_prof_flag, in_trc0, in_trc1, in_trc2, out_trc0, out_trc1, out_trc2,
+                              matrix_3x3, offset_3, clut_grid, clut_dim_r, clut_dim_g, clut_dim_b);
 
             float bradford_matrix[9] = {
                  0.9555766f, -0.0230393f,  0.0631636f,
@@ -570,24 +609,7 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
     std::vector<float> adjusted_cc = cc_matrix;
     bool has_profile = !it8_profile_path.empty() || (it8_profile_data != nullptr && it8_profile_data_size > 0);
     if (has_profile) {
-        if (adjusted_cc.empty()) {
-            adjusted_cc = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
-        }
-        std::vector<int> p_fb = profile_film_base;
-        std::vector<int> c_fb = film_base;
-        if (p_fb.empty() || c_fb.empty()) {
-            p_fb = {1, 1, 1};
-            c_fb = {1, 1, 1};
-        }
-        std::vector<float> r_coef = {adjusted_cc[0], adjusted_cc[1], adjusted_cc[2]};
-        std::vector<float> g_coef = {adjusted_cc[3], adjusted_cc[4], adjusted_cc[5]};
-        std::vector<float> b_coef = {adjusted_cc[6], adjusted_cc[7], adjusted_cc[8]};
-        adjust_correction_matrix(r_coef, g_coef, b_coef, exposure_comp, p_fb, c_fb);
-        adjusted_cc = {
-            r_coef[0], r_coef[1], r_coef[2],
-            g_coef[0], g_coef[1], g_coef[2],
-            b_coef[0], b_coef[1], b_coef[2]
-        };
+        adjusted_cc = prepare_adjusted_crosstalk(cc_matrix, exposure_comp, profile_film_base, film_base);
     }
 
     std::vector<float> cpu_cc = adjusted_cc;
