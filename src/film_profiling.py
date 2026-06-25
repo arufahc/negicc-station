@@ -1075,6 +1075,44 @@ def log_memory_usage(label=""):
     print(f"{prefix}Memory Status: RAM Process RSS: {ram_mb:.1f} MB | GPU Memory {gpu_str}", file=sys.stdout)
     sys.stdout.flush()
 
+def _log_conversion_details(profile, film_base_rgb, t_base, iso_base, t_scan, iso_scan, scale_factors, raw_crosstalk, final_matrix, exposure_comp, pipeline):
+    import sys
+    print("================ [Color Conversion Details] ================", file=sys.stdout)
+    print(f"Pipeline: {pipeline}", file=sys.stdout)
+    print(f"Film Profile Name: {getattr(profile, 'film_name', 'Unknown')}", file=sys.stdout)
+    print(f"Target Used: {getattr(profile, 'target_name', 'None')}", file=sys.stdout)
+    
+    if isinstance(profile.film_base, dict):
+        p_fb_r = profile.film_base.get('r_avg', 1.0)
+        p_fb_g = profile.film_base.get('g_avg', 1.0)
+        p_fb_b = profile.film_base.get('b_avg', 1.0)
+    else:
+        p_fb_r, p_fb_g, p_fb_b = profile.film_base
+    print(f"Profile Default Film Base RGB: R={p_fb_r:.1f}, G={p_fb_g:.1f}, B={p_fb_b:.1f}", file=sys.stdout)
+    print(f"Captured/Applied Film Base RGB: R={film_base_rgb[0]:.1f}, G={film_base_rgb[1]:.1f}, B={film_base_rgb[2]:.1f}", file=sys.stdout)
+    
+    exposure_base = t_base * (iso_base / 100.0)
+    exposure_scan = t_scan * (iso_scan / 100.0)
+    exposure_ratio = exposure_base / exposure_scan if exposure_scan > 0 else 1.0
+    print(f"Base Exposure (Shutter={t_base:.4f}s, ISO={iso_base}) -> {exposure_base:.4f}", file=sys.stdout)
+    print(f"Scan Exposure (Shutter={t_scan:.4f}s, ISO={iso_scan}) -> {exposure_scan:.4f}", file=sys.stdout)
+    print(f"Exposure Ratio (Base / Scan): {exposure_ratio:.4f}", file=sys.stdout)
+    
+    target_val = getattr(profile, 'normalization_target', 55000.0)
+    print(f"Normalization Target: {target_val:.1f}", file=sys.stdout)
+    print(f"Scaling Factors: R={scale_factors[0]:.6f}, G={scale_factors[1]:.6f}, B={scale_factors[2]:.6f}", file=sys.stdout)
+    print(f"Exposure Compensation (Gain): {exposure_comp:.4f}", file=sys.stdout)
+    
+    print("Raw 3x3 Crosstalk Matrix (from profile):", file=sys.stdout)
+    for row in raw_crosstalk:
+        print(f"  [ {row[0]:.6f}, {row[1]:.6f}, {row[2]:.6f} ]", file=sys.stdout)
+        
+    print("Final 3x3 Correction Matrix (Crosstalk * Scales * Gain):", file=sys.stdout)
+    for row in final_matrix:
+        print(f"  [ {row[0]:.6f}, {row[1]:.6f}, {row[2]:.6f} ]", file=sys.stdout)
+    print("============================================================", file=sys.stdout)
+    sys.stdout.flush()
+
 def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=None, shutter_str=None, exposure_comp=1.0, half=True, film_base_rgb=None, film_base_img=None, pipeline="cuda"):
     """Converts RAW image and saves directly to TIFF in C++ or CUDA without NumPy image copy."""
     import time
@@ -1137,6 +1175,20 @@ def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=
     scales = np.array([scale_r, scale_g, scale_b])
     merged_matrix = raw_crosstalk * scales[:, np.newaxis]
     flat_merged_matrix = merged_matrix.flatten().tolist()
+
+    _log_conversion_details(
+        profile=profile,
+        film_base_rgb=(fb_r, fb_g, fb_b),
+        t_base=t_base,
+        iso_base=iso_base,
+        t_scan=t_scan,
+        iso_scan=iso_scan,
+        scale_factors=(scale_r, scale_g, scale_b),
+        raw_crosstalk=raw_crosstalk,
+        final_matrix=merged_matrix * exposure_comp,
+        exposure_comp=exposure_comp,
+        pipeline=pipeline
+    )
 
     kwargs = dict(
         output_path=output_path,
@@ -1216,6 +1268,20 @@ def convert_raw_to_numpy(img, profile, colorspace="srgb", clut_path=None, shutte
     scales = np.array([scale_r, scale_g, scale_b])
     merged_matrix = raw_crosstalk * scales[:, np.newaxis]
     flat_merged_matrix = merged_matrix.flatten().tolist()
+
+    _log_conversion_details(
+        profile=profile,
+        film_base_rgb=(fb_r, fb_g, fb_b),
+        t_base=t_base,
+        iso_base=iso_base,
+        t_scan=t_scan,
+        iso_scan=iso_scan,
+        scale_factors=(scale_r, scale_g, scale_b),
+        raw_crosstalk=raw_crosstalk,
+        final_matrix=merged_matrix * exposure_comp,
+        exposure_comp=exposure_comp,
+        pipeline=pipeline
+    )
 
     kwargs = dict(
         half=half,

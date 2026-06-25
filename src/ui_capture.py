@@ -674,6 +674,7 @@ class ScanningAppWindow(Gtk.Window):
         self.film_base_img = None
         self.film_base_raw_linear = None
         self.film_base_rgb = None
+        self.last_save_folder = None
         self.capture_converted_rgb_cache = None
         self.capture_corr_hist_cache = None
         self.base_converted_rgb_cache = None
@@ -1179,13 +1180,13 @@ class ScanningAppWindow(Gtk.Window):
                     fb_g = self.profile.film_base.get('g_avg', 0.0)
                     fb_b = self.profile.film_base.get('b_avg', 0.0)
                     if fb_r > 0 or fb_g > 0 or fb_b > 0:
-                        self.film_base_rgb = (fb_r, fb_g, fb_b)
-                        corr_r, corr_g, corr_b = fb_r, fb_g, fb_b
-                        if self.has_crosstalk:
-                            corr_rgb = np.dot([fb_r, fb_g, fb_b], self.profile.crosstalk_matrix.T)
-                            corr_r, corr_g, corr_b = corr_rgb[0], corr_rgb[1], corr_rgb[2]
-                        self.lbl_base_vals.set_text(f"Raw: {fb_r:.1f}, {fb_g:.1f}, {fb_b:.1f} | "
-                                                    f"Corr: {corr_r:.1f}, {corr_g:.1f}, {corr_b:.1f}")
+                        # Only use profile fallback values if a custom film base image has not been captured/loaded yet
+                        if self.film_base_img is None:
+                            self.film_base_rgb = (fb_r, fb_g, fb_b)
+                            # Averages in the profile are already crosstalk-corrected. 
+                            # Print them directly as both Raw and Corr.
+                            self.lbl_base_vals.set_text(f"Raw: {fb_r:.1f}, {fb_g:.1f}, {fb_b:.1f} | "
+                                                        f"Corr: {fb_r:.1f}, {fb_g:.1f}, {fb_b:.1f}")
                 
                 # Clip name to 10 chars
                 film_name = self.profile.film_name if self.profile.film_name else "Unknown"
@@ -1207,9 +1208,21 @@ class ScanningAppWindow(Gtk.Window):
                 elif hasattr(self.profile, 'raw_data') and 'targets' in self.profile.raw_data:
                     targets_count = len(self.profile.raw_data['targets'])
                 
-                print(f"[Profile] Loaded Film Profile: {self.profile.film_name}", file=sys.stdout)
+                print(f"[Profile] Loaded Film Profile: {self.profile.film_name} from {filepath}", file=sys.stdout)
                 print(f"[Profile]   Has ICC curves/targets: {'Yes' if self.has_icc else 'No'}", file=sys.stdout)
                 print(f"[Profile]   Has Crosstalk matrix: {'Yes' if self.has_crosstalk else 'No'}", file=sys.stdout)
+                if self.has_crosstalk:
+                    print(f"[Profile]   Crosstalk Matrix:", file=sys.stdout)
+                    for row in self.profile.crosstalk_matrix:
+                        print(f"      [ {row[0]:.6f}, {row[1]:.6f}, {row[2]:.6f} ]", file=sys.stdout)
+                if hasattr(self.profile, 'film_base') and self.profile.film_base:
+                    fb_r = self.profile.film_base.get('r_avg', 0.0)
+                    fb_g = self.profile.film_base.get('g_avg', 0.0)
+                    fb_b = self.profile.film_base.get('b_avg', 0.0)
+                    print(f"[Profile]   Default Film Base RGB: R={fb_r:.1f}, G={fb_g:.1f}, B={fb_b:.1f}", file=sys.stdout)
+                fb_shutter = getattr(self.profile, 'film_base_shutter', 'None')
+                fb_iso = getattr(self.profile, 'film_base_iso', 100)
+                print(f"[Profile]   Default Film Base Exposure: Shutter={fb_shutter}, ISO={fb_iso}", file=sys.stdout)
                 print(f"[Profile]   Targets count loaded: {targets_count}", file=sys.stdout)
                 sys.stdout.flush()
                 
@@ -1662,15 +1675,19 @@ class ScanningAppWindow(Gtk.Window):
             if x2 > x1 and y2 > y1:
                 data = data[y1:y2, x1:x2]
                 
-        rgb = np.mean(data, axis=(0, 1))
-        self.film_base_rgb = (rgb[0], rgb[1], rgb[2])
+        data_f32 = data.astype(np.float32)
+        rgb = np.mean(data_f32, axis=(0, 1), dtype=np.float32)
+        
+        corr_rgb = rgb
+        if self.profile and self.has_crosstalk:
+            matrix = np.array(self.profile.crosstalk_matrix, dtype=np.float32)
+            corr_rgb = np.dot(rgb, matrix.T)
+            
+        # The film_base_rgb passed to target matching and conversions must be crosstalk-corrected.
+        self.film_base_rgb = (float(corr_rgb[0]), float(corr_rgb[1]), float(corr_rgb[2]))
         
         self.update_profile_dependencies()
         
-        corr_rgb = rgb
-        if self.has_crosstalk:
-            corr_rgb = np.dot(rgb, self.profile.crosstalk_matrix.T)
-            
         self.lbl_base_vals.set_text(f"Raw: {rgb[0]:.1f}, {rgb[1]:.1f}, {rgb[2]:.1f} | "
                                     f"Corr: {corr_rgb[0]:.1f}, {corr_rgb[1]:.1f}, {corr_rgb[2]:.1f}")
                                     
@@ -2288,6 +2305,29 @@ class ScanningAppWindow(Gtk.Window):
             if self.notebook.get_current_page() == 0:
                 self.update_capture_histograms()
 
+    def suggest_filename(self, folder, film_name, file_type, extension):
+        # Clean film name: replace spaces and non-alphanumeric chars with underscores
+        import re
+        clean_film = re.sub(r'[^a-zA-Z0-9]', '_', film_name)
+        clean_film = re.sub(r'_+', '_', clean_film).strip('_')
+        
+        prefix = f"{clean_film}_{file_type}_"
+        
+        max_idx = 0
+        if os.path.exists(folder):
+            try:
+                for f in os.listdir(folder):
+                    if f.startswith(prefix) and (f.endswith(f".{extension}") or f.endswith(f".{extension.upper()}") or f.endswith(f".{extension.lower()}")):
+                        ext_len = len(extension)
+                        name_part = f[len(prefix):-ext_len-1]
+                        if name_part.isdigit():
+                            max_idx = max(max_idx, int(name_part))
+            except Exception:
+                pass
+        
+        next_idx = max_idx + 1
+        return f"{prefix}{next_idx:04d}.{extension}"
+
     def on_save_tiff(self, btn):
         if not self.raw_image:
             return
@@ -2298,15 +2338,33 @@ class ScanningAppWindow(Gtk.Window):
         dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_SAVE, Gtk.ResponseType.OK)
         dialog.set_do_overwrite_confirmation(True)
         
-        raw_paths = self.raw_image.filepaths
-        if raw_paths:
-            base = os.path.splitext(os.path.basename(raw_paths[0]))[0]
-            if len(raw_paths) == 4:
-                base += "_merged"
-            default_filename = f"{base}.tiff"
-        else:
-            default_filename = "capture.tiff"
+        film_name = "capture"
+        if self.profile and hasattr(self.profile, 'film_name') and self.profile.film_name:
+            film_name = self.profile.film_name
+            
+        file_type = "corrected"
+        extension = "tiff"
+        
+        folder = None
+        if self.last_save_folder and os.path.exists(self.last_save_folder):
+            folder = self.last_save_folder
+        elif self.raw_image.filepaths:
+            folder = os.path.dirname(self.raw_image.filepaths[0])
+        if not folder or not os.path.exists(folder):
+            folder = os.getcwd()
+            
+        dialog.set_current_folder(folder)
+        
+        default_filename = self.suggest_filename(folder, film_name, file_type, extension)
         dialog.set_current_name(default_filename)
+        
+        def on_folder_changed(file_chooser):
+            curr_folder = file_chooser.get_current_folder()
+            if curr_folder and os.path.exists(curr_folder):
+                name = self.suggest_filename(curr_folder, film_name, file_type, extension)
+                file_chooser.set_current_name(name)
+                
+        dialog.connect("current-folder-changed", on_folder_changed)
         
         if dialog.run() == Gtk.ResponseType.OK:
             filepath = dialog.get_filename()
@@ -2383,25 +2441,45 @@ class ScanningAppWindow(Gtk.Window):
         dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_SAVE, Gtk.ResponseType.OK)
         dialog.set_do_overwrite_confirmation(True)
         
-        # Suggest filename based on the source files
-        base = os.path.splitext(os.path.basename(filepaths[0]))[0]
-        if len(filepaths) == 1:
-            default_filename = f"{base}.ARW"
+        film_name = "capture"
+        if self.profile and hasattr(self.profile, 'film_name') and self.profile.film_name:
+            film_name = self.profile.film_name
             
+        file_type = "base" if is_base else "raw"
+        extension = "zip" if len(filepaths) > 1 else "ARW"
+        
+        if len(filepaths) == 1:
             filter_arw = Gtk.FileFilter()
             filter_arw.set_name("Sony RAW Image (*.ARW)")
             filter_arw.add_pattern("*.arw")
             filter_arw.add_pattern("*.ARW")
             dialog.add_filter(filter_arw)
         else:
-            default_filename = f"{base}_pixelshift.zip"
-            
             filter_zip = Gtk.FileFilter()
             filter_zip.set_name("ZIP Archive (*.zip)")
             filter_zip.add_pattern("*.zip")
             dialog.add_filter(filter_zip)
             
+        folder = None
+        if self.last_save_folder and os.path.exists(self.last_save_folder):
+            folder = self.last_save_folder
+        elif filepaths:
+            folder = os.path.dirname(filepaths[0])
+        if not folder or not os.path.exists(folder):
+            folder = os.getcwd()
+            
+        dialog.set_current_folder(folder)
+        
+        default_filename = self.suggest_filename(folder, film_name, file_type, extension)
         dialog.set_current_name(default_filename)
+        
+        def on_folder_changed(file_chooser):
+            curr_folder = file_chooser.get_current_folder()
+            if curr_folder and os.path.exists(curr_folder):
+                name = self.suggest_filename(curr_folder, film_name, file_type, extension)
+                file_chooser.set_current_name(name)
+                
+        dialog.connect("current-folder-changed", on_folder_changed)
         
         if dialog.run() == Gtk.ResponseType.OK:
             dest_path = dialog.get_filename()
@@ -2444,6 +2522,7 @@ class ScanningAppWindow(Gtk.Window):
     def on_save_raw_success(self, filepath, duration):
         self.spinner.stop()
         self.is_capturing = False
+        self.last_save_folder = os.path.dirname(filepath)
         self.update_capture_button_sensitivity()
         self.update_save_buttons_sensitivity()
         self.lbl_status.set_text(f"Status: Saved RAW to {os.path.basename(filepath)}.")
@@ -2453,6 +2532,7 @@ class ScanningAppWindow(Gtk.Window):
     def on_save_success(self, filepath, duration):
         self.spinner.stop()
         self.is_capturing = False
+        self.last_save_folder = os.path.dirname(filepath)
         self.update_capture_button_sensitivity()
         self.update_save_buttons_sensitivity()
         self.lbl_status.set_text(f"Status: Saved {os.path.basename(filepath)}.")

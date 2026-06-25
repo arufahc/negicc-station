@@ -273,6 +273,21 @@ def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=
     adjusted_cc = adjust_correction_matrix(flat_merged_matrix, exposure_comp, None, None)
     
     if len(adjusted_cc) > 0:
+        final_matrix = np.array(adjusted_cc).reshape(3, 3)
+        from film_profiling import _log_conversion_details
+        _log_conversion_details(
+            profile=profile,
+            film_base_rgb=(fb_r, fb_g, fb_b),
+            t_base=t_base,
+            iso_base=iso_base,
+            t_scan=t_scan,
+            iso_scan=iso_scan,
+            scale_factors=(scale_r, scale_g, scale_b),
+            raw_crosstalk=raw_crosstalk,
+            final_matrix=final_matrix,
+            exposure_comp=exposure_comp,
+            pipeline="python"
+        )
         r_c = img_float[..., 0] * adjusted_cc[0] + img_float[..., 1] * adjusted_cc[1] + img_float[..., 2] * adjusted_cc[2]
         g_c = img_float[..., 0] * adjusted_cc[3] + img_float[..., 1] * adjusted_cc[4] + img_float[..., 2] * adjusted_cc[5]
         b_c = img_float[..., 0] * adjusted_cc[6] + img_float[..., 1] * adjusted_cc[7] + img_float[..., 2] * adjusted_cc[8]

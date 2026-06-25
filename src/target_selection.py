@@ -83,10 +83,19 @@ def find_best_target_index(profile, raw_image, film_base_rgb, scan_shutter=None,
     t_98_b = (p98_b / fb_b) * exposure_ratio
 
     import sys
+    print("================ [Target Selection Details] ================", file=sys.stdout)
+    print(f"Film Base RGB used: R={film_base_rgb[0]:.1f}, G={film_base_rgb[1]:.1f}, B={film_base_rgb[2]:.1f}", file=sys.stdout)
+    print(f"Base Exposure (Shutter={t_base:.4f}s, ISO={iso_base}) -> {exposure_base:.4f}", file=sys.stdout)
+    print(f"Scan Exposure (Shutter={t_scan:.4f}s, ISO={iso_scan}) -> {exposure_scan:.4f}", file=sys.stdout)
+    print(f"Exposure Ratio: {exposure_ratio:.4f}", file=sys.stdout)
+    print(f"RAW Green percentiles: 2%={p2:.1f}, 98%={p98:.1f}", file=sys.stdout)
+    print(f"RAW Transmittance range computed (Green): 2%={t_2:.6f}, 98%={t_98:.6f}", file=sys.stdout)
     print(f"[Profile Selection] Transmittance percentiles (2% / 98%):\n"
           f"  Red:   2%={t_2_r:.6f}, 98%={t_98_r:.6f}\n"
           f"  Green: 2%={t_2:.6f}, 98%={t_98:.6f} (Used for matching)\n"
           f"  Blue:  2%={t_2_b:.6f}, 98%={t_98_b:.6f}", file=sys.stdout)
+    print("------------------------------------------------------------", file=sys.stdout)
+    print("Available Calibration Targets in Profile:", file=sys.stdout)
     sys.stdout.flush()
     
     best_target_idx = 0
@@ -100,19 +109,13 @@ def find_best_target_index(profile, raw_image, film_base_rgb, scan_shutter=None,
         for j in range(24):
             key = f"gs{j}"
             if key in patches and 'g' in patches[key]:
-                # We need to normalize the target patch by the target's film base to get transmittance
-                # Wait, the profile JSON patches are already absolute raw values.
-                # The profile has its own film base:
                 prof_fb_g = profile.raw_data.get('film_base', {}).get('g', {}).get('avg', 1.0)
                 patch_t = patches[key]['g'] / prof_fb_g
                 gs_transmittances.append(patch_t)
             else:
-                # Fallback if missing
                 gs_transmittances.append(1.0 - (j / 23.0)) 
                 
         # Find enclosing patches for t_98 and t_2
-        # gs0 is the highest transmittance (whitest/clearest), gs23 is lowest (blackest/densest)
-        # We find where t_98 fits
         idx_98 = 0
         for j in range(24):
             if gs_transmittances[j] <= t_98:
@@ -129,9 +132,23 @@ def find_best_target_index(profile, raw_image, film_base_rgb, scan_shutter=None,
         center_idx = (idx_98 + idx_2) / 2.0
         dist = abs(center_idx - 11.5)
         
+        min_t = min(gs_transmittances)
+        max_t = max(gs_transmittances)
+        target_name = target.get('name', f"Target {i}")
+        print(f"  Target {i}: '{target_name}'", file=sys.stdout)
+        print(f"    Green Transmittance Range: min={min_t:.6f} (gs23), max={max_t:.6f} (gs0)", file=sys.stdout)
+        print(f"    Matched indices for RAW range: gs{idx_98} (98% t) to gs{idx_2} (2% t)", file=sys.stdout)
+        print(f"    Center index: {center_idx:.2f} (Target Mid-Grey is 11.5) | Distance: {dist:.2f}", file=sys.stdout)
+        sys.stdout.flush()
+        
         if dist < min_dist_to_mid_grey:
             min_dist_to_mid_grey = dist
             best_target_idx = i
             
+    chosen_target_name = targets[best_target_idx].get('name', f"Target {best_target_idx}")
+    print("------------------------------------------------------------", file=sys.stdout)
+    print(f"Best Target Selected: Index {best_target_idx} ('{chosen_target_name}') with distance {min_dist_to_mid_grey:.2f}", file=sys.stdout)
+    print("============================================================", file=sys.stdout)
+    sys.stdout.flush()
     return best_target_idx, min_dist_to_mid_grey
 

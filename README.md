@@ -132,6 +132,37 @@ make
 ./venv/bin/python3 src/ui_main.py
 ```
 
+### Desktop Launcher Installation
+
+To make it easy to start the scanning application from your desktop, you can install a `.desktop` launcher. This launcher runs the interface inside the virtual environment (`venv`) and appends all launch times, standard output, and standard error logs to `~/.config/negicc-station/log`.
+
+To generate and install the desktop shortcut, run the following commands from the repository root:
+
+```bash
+# Create the launcher shortcut on your Desktop
+cat <<EOF > ~/Desktop/negicc-station.desktop
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=NegICC Station
+Comment=Launch NegICC Capture Station
+Exec=bash -c "mkdir -p \$HOME/.config/negicc-station && echo '--- Launch: \$(date) ---' >> \$HOME/.config/negicc-station/log && $(pwd)/venv/bin/python $(pwd)/src/ui_main.py >> \$HOME/.config/negicc-station/log 2>&1"
+Icon=camera-photo
+Path=$(pwd)
+Terminal=false
+Categories=Graphics;Utility;
+EOF
+
+# Make the desktop shortcut executable
+chmod +x ~/Desktop/negicc-station.desktop
+```
+
+Once installed, you can double-click the **NegICC Station** icon on your desktop to start the control panel window.
+
+#### Log File Location
+Stdout and stderr logs from the launcher and all components are appended to:
+* `~/.config/negicc-station/log`
+
 The central launcher window ([ui_main.py](src/ui_main.py)) acts as the control panel for the scanning station, providing quick access to the following three components:
 
 1. **Crosstalk Calibration**: Calibrate RGB sensor crosstalk correction matrices using red, green, and blue negative color target exposures.
