@@ -355,7 +355,10 @@ class HistogramCanvas(Gtk.Box):
         self.ax.tick_params(colors='#888888', labelsize=7)
         self.ax.grid(True, color='#2c2c2c', linestyle='--', linewidth=0.5)
         
-        max_val = 65535 if (is_corrected and has_icc) else 16384
+        if data is not None and data.dtype == np.uint8:
+            max_val = 255
+        else:
+            max_val = 65535 if (is_corrected and has_icc) else 16384
         
         if data is None or data.size == 0:
             self.ax.set_xlim(0, max_val)
@@ -374,7 +377,10 @@ class HistogramCanvas(Gtk.Box):
         else:
             data_sampled = data
             
-        max_val = 65535 if (is_corrected and has_icc) else 16384
+        if data is not None and data.dtype == np.uint8:
+            max_val = 255
+        else:
+            max_val = 65535 if (is_corrected and has_icc) else 16384
         
         bins = 256
         hist_r, _ = np.histogram(data_sampled[:, :, 0], bins=bins, range=(0, max_val))
@@ -2300,7 +2306,7 @@ class ScanningAppWindow(Gtk.Window):
                     res = film_profiling.convert_raw_to_numpy(
                         img=self.raw_image, profile=temp_profile,
                         exposure_comp=self.gain, half=True, film_base_rgb=self.film_base_rgb,
-                        film_base_img=self.film_base_img, pipeline="cuda"
+                        film_base_img=self.film_base_img, pipeline="cuda", to_uint8=True
                     )
                     img_array = res
                     corr_hist_array = res
@@ -2319,13 +2325,16 @@ class ScanningAppWindow(Gtk.Window):
             self.capture_corr_hist_cache = corr_hist_array
             
         # Convert to 8-bit strictly for display (GdkPixbuf requires 8-bit)
-        assert img_array.dtype in (np.uint16, np.float32), f"Expected 16-bit image array for preview scaling, got {img_array.dtype}"
-        if self.profile and self.has_icc:
-            # Range is [0, 65535]
-            img_8bit = (img_array / 256.0).astype(np.uint8)
+        if img_array.dtype == np.uint8:
+            img_8bit = img_array
         else:
-            # Range is [0, 16384]
-            img_8bit = (img_array / 64.0).astype(np.uint8)
+            assert img_array.dtype in (np.uint16, np.float32), f"Expected 16-bit image array for preview scaling, got {img_array.dtype}"
+            if self.profile and self.has_icc:
+                # Range is [0, 65535]
+                img_8bit = (img_array / 256.0).astype(np.uint8)
+            else:
+                # Range is [0, 16384]
+                img_8bit = (img_array / 64.0).astype(np.uint8)
             
         img_8bit = apply_transforms_numpy(img_8bit, self.hflip, self.vflip, self.orientation)
         

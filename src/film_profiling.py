@@ -1212,7 +1212,7 @@ def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=
     sys.stdout.flush()
     return res
 
-def convert_raw_to_numpy(img, profile, colorspace="srgb", clut_path=None, shutter_str=None, exposure_comp=1.0, half=True, film_base_rgb=None, film_base_img=None, pipeline="cuda"):
+def convert_raw_to_numpy(img, profile, colorspace="srgb", clut_path=None, shutter_str=None, exposure_comp=1.0, half=True, film_base_rgb=None, film_base_img=None, pipeline="cuda", to_uint8=False):
     """Converts RAW image to NumPy array in C++ or CUDA without saving to disk."""
     import time
     t_start = time.time()
@@ -1290,7 +1290,8 @@ def convert_raw_to_numpy(img, profile, colorspace="srgb", clut_path=None, shutte
         profile_film_base=None,
         film_base=None,
         exposure_comp=exposure_comp,
-        pipeline=pipeline
+        pipeline=pipeline,
+        to_uint8=to_uint8
     )
     if icc_bytes is not None:
         kwargs['it8_profile_bytes'] = icc_bytes
