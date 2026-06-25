@@ -1618,7 +1618,7 @@ class FilmProfilingAppWindow(Gtk.Window):
             if not hasattr(self, 'reference_xyz_path') or self.reference_xyz_path is None:
                 print("[Save Profile] Error: Missing Reference XYZ path.", file=sys.stderr)
                 sys.stderr.flush()
-                self.show_error_dialog("Missing Reference", "Please download or load the IT8 reference file first.")
+                self.show_error_dialog("Missing Reference", "Please download or select the IT8 reference XYZ file first.")
                 return
 
             active_target_tabs = []
