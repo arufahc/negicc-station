@@ -213,7 +213,23 @@ class LauncherWindow(Gtk.Window):
             return
         self.is_launching = True
 
-        # Check if this script window is already running
+        # Check if the target is ui_capture.py and enforce maximum one instance globally
+        if target_script == "ui_capture.py":
+            import fcntl
+            import tempfile
+            lock_path = os.path.join(tempfile.gettempdir(), 'negicc_ui_capture.lock')
+            try:
+                test_lock = open(lock_path, 'a')
+                fcntl.lockf(test_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                # Success, lock acquired! We must release it so the child can lock it.
+                fcntl.lockf(test_lock, fcntl.LOCK_UN)
+                test_lock.close()
+            except IOError:
+                self.show_info_dialog("Already Running", "An instance of 'ui_capture.py' is already running.")
+                self.is_launching = False
+                return
+
+        # Check if this script window is already running (for other scripts)
         running_proc = self.processes.get(target_script)
         if running_proc is not None:
             if running_proc.poll() is None:
@@ -232,6 +248,11 @@ class LauncherWindow(Gtk.Window):
             proc = subprocess.Popen([sys.executable, script_path])
             self.processes[target_script] = proc
             
+            if target_script == "ui_capture.py":
+                # Terminate the main window when launching the capture window
+                self.destroy()
+                return
+
             # Throttles double-clicks on launch buttons
             GLib.timeout_add(1000, lambda: setattr(self, 'is_launching', False) or False)
         except Exception as e:

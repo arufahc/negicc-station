@@ -3114,6 +3114,19 @@ class ScanningAppWindow(Gtk.Window):
         os._exit(0)
 
 def main():
+    import fcntl
+    import tempfile
+    
+    # Enforce maximum one capture window running globally
+    global _lock_file
+    lock_path = os.path.join(tempfile.gettempdir(), 'negicc_ui_capture.lock')
+    _lock_file = open(lock_path, 'a')
+    try:
+        fcntl.lockf(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError:
+        print("Another instance of ui_capture.py is already running. Exiting.", file=sys.stderr)
+        sys.exit(0)
+
     # Preload the Sony CrSDK shared library from the virtual environment
     project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     lib_path = os.path.join(project_dir, 'venv/bin/libCr_Core.so')
