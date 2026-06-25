@@ -313,6 +313,25 @@ When transferring large RAW image files (like the 61MP files from the Sony A7R4)
   ```bash
   echo "options usbcore usbfs_memory_mb=1024" | sudo tee /etc/modprobe.d/usbcore.conf
   ```
+* **Launcher Integration (Passwordless Sudo)**:
+  To automatically adjust this limit when starting the capture station from the desktop launcher:
+  1. Use the script provided in this repository at `src/set_usbfs_memory.sh`:
+     ```bash
+     #!/bin/bash
+     echo 1024 > /sys/module/usbcore/parameters/usbfs_memory_mb
+     ```
+  2. Grant the script executable permission:
+     ```bash
+     chmod +x $(pwd)/src/set_usbfs_memory.sh
+     ```
+  3. Add a `NOPASSWD` rule to `/etc/sudoers` using `sudo visudo` (replace `$USER` with your actual username and `/path/to/negicc-station` with the absolute path to your repository):
+     ```sudoers
+     $USER ALL=(ALL) NOPASSWD: /path/to/negicc-station/src/set_usbfs_memory.sh
+     ```
+  4. Modify the `Exec` command in the desktop launcher to run this script with `sudo` before executing the Python UI application:
+     ```desktop
+     Exec=bash -c "sudo /path/to/negicc-station/src/set_usbfs_memory.sh && /path/to/negicc-station/venv/bin/python /path/to/negicc-station/src/ui_main.py"
+     ```
 
 ### B. USB Autosuspend
 The Linux kernel's USB power management can suspend the camera during long exposures or idle periods, leading to `0x8207` (`CrError_Connect_Disconnected`) errors.
