@@ -48,6 +48,8 @@ def main():
                         help="Select conversion pipeline (default: cpp)")
     parser.add_argument("--compare", action="store_true",
                         help="Run Python, C++ CPU and CUDA pipelines and compare results.")
+    parser.add_argument("--rebuild-profile-json", default=None,
+                        help="Path to save the rebuilt self-contained film profile JSON.")
     
     args = parser.parse_args()
 
@@ -61,6 +63,73 @@ def main():
     if not os.path.exists(profile_path):
         print(f"Error: Profile file {profile_path} not found.")
         sys.exit(1)
+
+    if args.rebuild_profile_json:
+        import base64
+        with open(profile_path, 'r') as f:
+            profile_data = json.load(f)
+
+        print(f"Loading reference targets from: {args.reference}")
+        cache_dir = tempfile.gettempdir()
+        patches, loaded_filename, reference_dir, illuminant = download_and_parse_reference_file(
+            args.reference, cache_dir, prompt_zip_callback=None
+        )
+        ref_base_name = os.path.splitext(os.path.basename(loaded_filename))[0]
+        out_json_path = os.path.join(reference_dir, f"{ref_base_name}_ref.json")
+
+        ref_data = {
+            "description": "IT8.7/2 Reference XYZ values",
+            "source": args.reference,
+            "illuminant": illuminant,
+            "patches": patches
+        }
+        with open(out_json_path, 'w') as f:
+            json.dump(ref_data, f, indent=2)
+
+        print(f"Loaded {len(patches)} reference patches to {out_json_path} (Illuminant: {illuminant})")
+
+        targets = profile_data.get('targets', [])
+        print(f"Rebuilding {len(targets)} targets in the profile...")
+
+        output_profiles_dir = "profiles"
+        os.makedirs(output_profiles_dir, exist_ok=True)
+
+        temp_profile = FilmProfile(profile_path)
+
+        for idx, target_dict in enumerate(targets):
+            name = target_dict.get('name', f"Target {idx + 1}")
+            print(f"\n--- Rebuilding Target {idx + 1}/{len(targets)}: '{name}' ---")
+
+            temp_profile.target_name = name
+            temp_profile.target_iso = target_dict.get('iso', 100)
+            temp_profile.target_shutter = target_dict.get('shutter', '1/8s')
+            temp_profile.patches = target_dict.get('patches', {})
+            temp_profile.icc_profile_bytes = None
+
+            res = film_profiling.build_icc_profile(
+                temp_profile,
+                out_json_path,
+                output_profiles_dir,
+                progress_callback=lambda step, detail: print(f"  [{step}] {detail}")
+            )
+
+            clut_path = res['clut_icc_path']
+            with open(clut_path, 'rb') as f_icc:
+                icc_bytes = f_icc.read()
+            icc_b64 = base64.b64encode(icc_bytes).decode('utf-8')
+
+            target_dict['icc_profile_base64'] = icc_b64
+            target_dict['profcheck_output'] = res['profcheck_output']
+            target_dict['log_messages'] = res['log_messages']
+
+            if os.path.exists(clut_path):
+                os.remove(clut_path)
+
+        print(f"\nSaving rebuilt profile JSON to: {args.rebuild_profile_json}")
+        with open(args.rebuild_profile_json, 'w') as f:
+            json.dump(profile_data, f, indent=4)
+        print("Rebuild complete. Exiting.")
+        sys.exit(0)
 
     profile = FilmProfile(profile_path)
     print(f"Film Profile Name: {profile.film_name}")
