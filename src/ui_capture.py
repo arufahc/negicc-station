@@ -1398,10 +1398,12 @@ class ScanningAppWindow(Gtk.Window):
         
         top_box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL), False, False, 5)
         
-        for rot in [0, 90, 180, 270]:
-            b = Gtk.Button(label=f"{rot}°")
-            b.connect("clicked", self.on_set_rot, rot)
+        self.rot_buttons = {}
+        for rot in [90, 180, 270]:
+            b = Gtk.ToggleButton(label=f"{rot}°")
+            b.connect("toggled", self.on_rot_toggled, rot)
             top_box.pack_start(b, False, False, 0)
+            self.rot_buttons[rot] = b
         
         self.btn_hf = Gtk.ToggleButton(label="H-Flip")
         self.btn_hf.connect("toggled", self.on_hflip)
@@ -1593,8 +1595,22 @@ class ScanningAppWindow(Gtk.Window):
             
         return False
 
-    def on_set_rot(self, btn, rot):
-        self.orientation = rot
+    def on_rot_toggled(self, btn, rot):
+        if getattr(self, '_updating_rot_buttons', False):
+            return
+            
+        active = btn.get_active()
+        if active:
+            self.orientation = rot
+            self._updating_rot_buttons = True
+            for r, other_btn in self.rot_buttons.items():
+                if r != rot:
+                    other_btn.set_active(False)
+            self._updating_rot_buttons = False
+        else:
+            if self.orientation == rot:
+                self.orientation = 0
+                
         self.update_capture_preview()
         self.update_base_preview()
 
