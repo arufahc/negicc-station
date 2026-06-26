@@ -76,7 +76,7 @@ def main():
         # Download and parse reference file
         print(f"Loading reference targets from: {args.reference}")
         cache_dir = tempfile.gettempdir()
-        patches, loaded_filename, reference_dir = download_and_parse_reference_file(
+        patches, loaded_filename, reference_dir, illuminant = download_and_parse_reference_file(
             args.reference, cache_dir, prompt_zip_callback=None
         )
         ref_base_name = os.path.splitext(os.path.basename(loaded_filename))[0]
@@ -85,6 +85,7 @@ def main():
         ref_data = {
             "description": "IT8.7/2 Reference XYZ values",
             "source": args.reference,
+            "illuminant": illuminant,
             "patches": patches
         }
         with open(out_json_path, 'w') as f:

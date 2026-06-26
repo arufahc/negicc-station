@@ -190,6 +190,7 @@ class FilmProfile:
 
         df = pd.DataFrame(rows)
         df.set_index('patch', inplace=True)
+        df.attrs['illuminant'] = ref_data.get('illuminant', 'D50')
         return df
 
 
@@ -251,9 +252,39 @@ def _chromatic_adaptation_to_d50(df):
 
     unadapted_XYZ = np.array(df[['refX', 'refY', 'refZ']])
 
-    # If colour-science is available and we have a test white,
-    # perform chromatic adaptation. Otherwise just use as-is (assume D50).
-    adapted_XYZ = unadapted_XYZ  # default: no adaptation needed for D50 ref
+    # Read illuminant metadata from DataFrame attributes
+    illuminant = df.attrs.get('illuminant', 'D50')
+
+    # Define standard 2-degree observer white points (scaled with Y=100)
+    STANDARD_WHITE_POINTS = {
+        'D50': np.array([96.42, 100.0, 82.49]),
+        'D55': np.array([95.68, 100.0, 92.14]),
+        'D65': np.array([95.04, 100.0, 108.89]),
+        'D75': np.array([94.97, 100.0, 122.61])
+    }
+
+    if illuminant in STANDARD_WHITE_POINTS and illuminant != 'D50':
+        src_white = STANDARD_WHITE_POINTS[illuminant]
+        dest_white = STANDARD_WHITE_POINTS['D50']
+
+        # Bradford chromatic adaptation matrix mapping to LMS cone space
+        M_BF = np.array([
+            [ 0.8951,  0.2664, -0.1614],
+            [-0.7502,  1.7135,  0.0367],
+            [ 0.0389, -0.0685,  1.0296]
+        ])
+        M_BF_inv = np.linalg.inv(M_BF)
+
+        lms_s = M_BF.dot(src_white)
+        lms_d = M_BF.dot(dest_white)
+
+        scale = lms_d / lms_s
+        Lambda = np.diag(scale)
+        M = M_BF_inv.dot(Lambda).dot(M_BF)
+
+        adapted_XYZ = unadapted_XYZ.dot(M.T)
+    else:
+        adapted_XYZ = unadapted_XYZ
 
     # Normalize to max value of 100 (what colprof expects)
     max_val = adapted_XYZ.max()
@@ -943,10 +974,33 @@ def download_and_parse_reference_file(url_or_path, cache_dir, prompt_zip_callbac
         except ValueError:
             continue
             
-    if not patches:
-        raise ValueError("No valid patch data parsed.")
-        
-    return patches, loaded_filename, reference_dir
+    # Detect target illuminant
+    illuminant = 'D50'  # default
+    for line in lines:
+        line_strip = line.strip()
+        if line_strip.upper().startswith('DESCRIPTOR'):
+            desc = line_strip.upper()
+            if 'D55' in desc:
+                illuminant = 'D55'
+            elif 'D65' in desc:
+                illuminant = 'D65'
+            elif 'D75' in desc:
+                illuminant = 'D75'
+            elif 'D50' in desc:
+                illuminant = 'D50'
+            break
+
+    # Fallback to filename detection
+    if illuminant == 'D50':
+        lower_filename = loaded_filename.lower()
+        if 'd55' in lower_filename:
+            illuminant = 'D55'
+        elif 'd65' in lower_filename:
+            illuminant = 'D65'
+        elif 'd75' in lower_filename:
+            illuminant = 'D75'
+
+    return patches, loaded_filename, reference_dir, illuminant
 
 
 def convert_raw_image(img, profile, clut_path=None, shutter_str=None, exposure_comp=1.0, half=True, film_base_rgb=None, film_base_img=None, pipeline="cuda"):

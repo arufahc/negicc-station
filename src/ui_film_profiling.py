@@ -1547,7 +1547,7 @@ class FilmProfilingAppWindow(Gtk.Window):
             try:
                 # Use data/ directory in the workspace
                 cache_dir = os.path.join(project_dir, "data")
-                patches, loaded_filename, reference_dir = download_and_parse_reference_file(
+                patches, loaded_filename, reference_dir, illuminant = download_and_parse_reference_file(
                     zip_location, cache_dir, prompt_zip_callback=prompt_zip_callback
                 )
                 
@@ -1557,6 +1557,7 @@ class FilmProfilingAppWindow(Gtk.Window):
                 ref_data = {
                     "description": "IT8.7/2 Reference XYZ values",
                     "source": zip_location,
+                    "illuminant": illuminant,
                     "patches": patches
                 }
                 with open(out_json_path, 'w') as f:
