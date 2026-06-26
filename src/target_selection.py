@@ -115,9 +115,31 @@ def find_best_target_index(profile, raw_image, film_base_rgb, scan_shutter=None,
             else:
                 gs_transmittances.append(1.0 - (j / 23.0)) 
                 
-        # Find closest patch indices for t_98 and t_2
-        idx_98 = min(range(24), key=lambda j: abs(gs_transmittances[j] - t_98))
-        idx_2 = min(range(24), key=lambda j: abs(gs_transmittances[j] - t_2))
+        # Find enclosing patches for t_98 and t_2
+        is_descending = gs_transmittances[0] > gs_transmittances[-1]
+        if is_descending:
+            idx_98 = 0
+            for j in range(24):
+                if gs_transmittances[j] <= t_98:
+                    idx_98 = j
+                    break
+            idx_2 = 23
+            for j in range(23, -1, -1):
+                if gs_transmittances[j] >= t_2:
+                    idx_2 = j
+                    break
+        else:
+            # Ascending (negative target)
+            idx_98 = 23
+            for j in range(23, -1, -1):
+                if gs_transmittances[j] <= t_98:
+                    idx_98 = j
+                    break
+            idx_2 = 0
+            for j in range(24):
+                if gs_transmittances[j] >= t_2:
+                    idx_2 = j
+                    break
                 
         # Mid-grey is between gs11 and gs12 (index 11.5)
         center_idx = (idx_98 + idx_2) / 2.0
