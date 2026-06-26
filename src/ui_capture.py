@@ -845,26 +845,9 @@ class CalibrationTargetsDetailsWindow(Gtk.Window):
             idx = model[treeiter][1]
             name = model[treeiter][2]
             if idx != self.app.selected_target_idx:
-                self.app.selected_target_idx = idx
                 print(f"[Profile] Target selected via Details Window: Index {idx}, Name: {name}", file=sys.stdout)
                 sys.stdout.flush()
-                
-                # Invalidate cache and update main capture preview
-                self.app.capture_converted_rgb_cache = None
-                self.app.capture_corr_hist_cache = None
-                self.app.update_capture_preview()
-                
-                # Update main treeview selection to stay in sync
-                main_select = self.app.target_treeview.get_selection()
-                for i, row in enumerate(self.app.target_liststore):
-                    if row[1] == idx:
-                        main_select.select_path(Gtk.TreePath.new_from_indices([i]))
-                        break
-                
-                # Redraw ourselves
-                self.update_indicators()
-                self.update_plot()
-                self.update_text_info()
+                self.app.set_active_target_idx(idx)
 
     def get_captured_film_transmittance_range(self):
         if self.app.raw_image is None or self.app.raw_linear_pixels is None:
@@ -1892,26 +1875,45 @@ class ScanningAppWindow(Gtk.Window):
         for row in self.target_liststore:
             row[0] = "➔" if row[1] == self.selected_target_idx else ""
 
+    def set_active_target_idx(self, idx):
+        if idx == self.selected_target_idx:
+            return
+            
+        self.selected_target_idx = idx
+        
+        # 1. Update main table indicators
+        self.update_main_target_indicators()
+        
+        # 2. Update main treeview selection (without recursion)
+        main_select = self.target_treeview.get_selection()
+        main_select.handler_block_by_func(self.on_target_selection_changed)
+        for i, row in enumerate(self.target_liststore):
+            if row[1] == idx:
+                main_select.select_path(Gtk.TreePath.new_from_indices([i]))
+                break
+        main_select.handler_unblock_by_func(self.on_target_selection_changed)
+        
+        # 3. Update details window if open
+        if hasattr(self, 'details_window') and self.details_window is not None:
+            self.details_window.update_indicators()
+            self.details_window.select_active_in_treeview()
+            self.details_window.update_plot()
+            self.details_window.update_text_info()
+            
+        # 4. Invalidate preview cache and redraw
+        self.capture_converted_rgb_cache = None
+        self.capture_corr_hist_cache = None
+        self.update_capture_preview()
+
     def on_target_selection_changed(self, selection):
         model, treeiter = selection.get_selected()
         if treeiter is not None:
             idx = model[treeiter][1]
             name = model[treeiter][2]
             if idx != self.selected_target_idx:
-                self.selected_target_idx = idx
-                self.update_main_target_indicators()
-                self.capture_converted_rgb_cache = None
-                self.capture_corr_hist_cache = None
-                self.update_capture_preview()
-                
                 print(f"[Profile] Target selected: Index {idx}, Name: {name}", file=sys.stdout)
                 sys.stdout.flush()
-                
-                if hasattr(self, 'details_window') and self.details_window is not None:
-                    self.details_window.update_indicators()
-                    self.details_window.select_active_in_treeview()
-                    self.details_window.update_plot()
-                    self.details_window.update_text_info()
+                self.set_active_target_idx(idx)
 
     def on_show_target_details(self, btn):
         if hasattr(self, 'details_window') and self.details_window is not None:
@@ -2151,15 +2153,7 @@ class ScanningAppWindow(Gtk.Window):
                     scan_shutter=scan_shutter, scan_iso=scan_iso,
                     base_shutter=base_shutter, base_iso=base_iso
                 )
-                self.selected_target_idx = best_idx
-                self.update_main_target_indicators()
-                
-                select = self.target_treeview.get_selection()
-                for i, row in enumerate(self.target_liststore):
-                    if row[1] == best_idx:
-                        select.select_path(Gtk.TreePath.new_from_indices([i]))
-                        break
-                        
+                self.set_active_target_idx(best_idx)
                 if hasattr(self, 'details_window') and self.details_window is not None:
                     self.details_window.refresh_all()
                         
