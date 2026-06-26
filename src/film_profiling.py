@@ -264,6 +264,8 @@ def _chromatic_adaptation_to_d50(df):
     }
 
     if illuminant in STANDARD_WHITE_POINTS and illuminant != 'D50':
+        print(f"[Chromatic Adaptation] Adapting reference XYZ values from {illuminant} to D50 using Bradford transform.", file=sys.stdout)
+        sys.stdout.flush()
         src_white = STANDARD_WHITE_POINTS[illuminant]
         dest_white = STANDARD_WHITE_POINTS['D50']
 
@@ -284,6 +286,9 @@ def _chromatic_adaptation_to_d50(df):
 
         adapted_XYZ = unadapted_XYZ.dot(M.T)
     else:
+        if illuminant != 'D50':
+            print(f"[Warning] Chromatic adaptation from '{illuminant}' is not available/supported. Using XYZ values as-is (assuming D50).", file=sys.stdout)
+            sys.stdout.flush()
         adapted_XYZ = unadapted_XYZ
 
     # Normalize to max value of 100 (what colprof expects)
