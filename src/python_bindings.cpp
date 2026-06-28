@@ -99,7 +99,7 @@ static PyObject* PyCapturedImage_to_numpy(PyCapturedImage* self, PyObject* args,
 
     static const char* kwlist[] = {
         "half", "crosstalk_matrix", "it8_profile_path", "output_profile_path",
-        "profile_film_base", "film_base", "exposure_comp", "pipeline",
+        "profile_film_base", "film_base", "exposure_comp", "g_gain", "b_gain", "pipeline",
         "it8_profile_bytes", "to_uint8", nullptr
     };
     int half = 0;
@@ -109,14 +109,16 @@ static PyObject* PyCapturedImage_to_numpy(PyCapturedImage* self, PyObject* args,
     PyObject* py_profile_film_base = nullptr;
     PyObject* py_film_base = nullptr;
     float exposure_comp = 1.0f;
+    float g_gain = 1.0f;
+    float b_gain = 1.0f;
     const char* pipeline = "cuda";
     PyObject* py_icc_bytes = nullptr;
     int to_uint8 = 0;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|pOzzOOfzOp", const_cast<char**>(kwlist),
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|pOzzOOfffzOp", const_cast<char**>(kwlist),
                                      &half, &py_matrix, &it8_profile_path, &output_profile_path,
                                      &py_profile_film_base, &py_film_base, &exposure_comp,
-                                     &pipeline, &py_icc_bytes, &to_uint8)) {
+                                     &g_gain, &b_gain, &pipeline, &py_icc_bytes, &to_uint8)) {
         return nullptr;
     }
 
@@ -206,7 +208,7 @@ static PyObject* PyCapturedImage_to_numpy(PyCapturedImage* self, PyObject* args,
         }
         std::vector<uint8_t> buf;
         if (!self->cpp_img->get_preview_rgb8(w, h, buf, cc_matrix, it8_path, out_path,
-                                             profile_film_base, film_base, exposure_comp,
+                                             profile_film_base, film_base, exposure_comp, g_gain, b_gain,
                                              pipe_str, icc_data, (size_t)icc_data_size)) {
             PyErr_SetString(PyExc_RuntimeError, "Failed to load/process RAW image buffer to preview rgb8.");
             return nullptr;
@@ -223,7 +225,7 @@ static PyObject* PyCapturedImage_to_numpy(PyCapturedImage* self, PyObject* args,
     } else {
         std::vector<uint16_t> buf;
         if (!self->cpp_img->get_linear_rgb(half != 0, w, h, buf, cc_matrix, it8_path, out_path,
-                                           profile_film_base, film_base, exposure_comp,
+                                           profile_film_base, film_base, exposure_comp, g_gain, b_gain,
                                            pipe_str, icc_data, (size_t)icc_data_size)) {
             PyErr_SetString(PyExc_RuntimeError, "Failed to load/process RAW image buffer.");
             return nullptr;
@@ -248,7 +250,7 @@ static PyObject* PyCapturedImage_write_tiff(PyCapturedImage* self, PyObject* arg
 
     static const char* kwlist[] = {
         "output_path", "half", "crosstalk_matrix", "it8_profile_path", "output_profile_path",
-        "profile_film_base", "film_base", "exposure_comp", "pipeline",
+        "profile_film_base", "film_base", "exposure_comp", "g_gain", "b_gain", "pipeline",
         "it8_profile_bytes", nullptr
     };
     const char* output_path = nullptr;
@@ -259,13 +261,15 @@ static PyObject* PyCapturedImage_write_tiff(PyCapturedImage* self, PyObject* arg
     PyObject* py_profile_film_base = nullptr;
     PyObject* py_film_base = nullptr;
     float exposure_comp = 1.0f;
+    float g_gain = 1.0f;
+    float b_gain = 1.0f;
     const char* pipeline = "cuda";
     PyObject* py_icc_bytes = nullptr;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|pOzzOOfzO", const_cast<char**>(kwlist),
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|pOzzOOffzO", const_cast<char**>(kwlist),
                                      &output_path, &half, &py_matrix, &it8_profile_path, &output_profile_path,
                                      &py_profile_film_base, &py_film_base, &exposure_comp,
-                                     &pipeline, &py_icc_bytes)) {
+                                     &g_gain, &b_gain, &pipeline, &py_icc_bytes)) {
         return nullptr;
     }
 
@@ -347,7 +351,7 @@ static PyObject* PyCapturedImage_write_tiff(PyCapturedImage* self, PyObject* arg
     std::string pipe_str = pipeline ? pipeline : "cuda";
     bool success = write_linear_tiff(*self->cpp_img, output_path, half != 0, cc_matrix,
                                      it8_path, out_path, profile_film_base, film_base,
-                                     exposure_comp, pipe_str,
+                                     exposure_comp, g_gain, b_gain, pipe_str,
                                      icc_data, (size_t)icc_data_size);
     return PyBool_FromLong(success ? 1 : 0);
 }

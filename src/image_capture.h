@@ -38,6 +38,8 @@ public:
                         const std::vector<int>& profile_film_base = {},
                         const std::vector<int>& film_base = {},
                         float exposure_comp = 1.0f,
+                        float g_gain = 1.0f,
+                        float b_gain = 1.0f,
                         const std::string& pipeline = "cuda",
                         const uint8_t* it8_profile_data = nullptr,
                         size_t it8_profile_data_size = 0) const;
@@ -49,6 +51,8 @@ public:
                           const std::vector<int>& profile_film_base = {},
                           const std::vector<int>& film_base = {},
                           float exposure_comp = 1.0f,
+                          float g_gain = 1.0f,
+                          float b_gain = 1.0f,
                           const std::string& pipeline = "cuda",
                           const uint8_t* it8_profile_data = nullptr,
                           size_t it8_profile_data_size = 0) const;
@@ -73,6 +77,8 @@ bool write_linear_tiff(const CapturedImage& img,
                        const std::vector<int>& profile_film_base = {},
                        const std::vector<int>& film_base = {},
                        float exposure_comp = 1.0f,
+                       float g_gain = 1.0f,
+                       float b_gain = 1.0f,
                        const std::string& pipeline = "cuda",
                        const uint8_t* it8_profile_data = nullptr,
                        size_t it8_profile_data_size = 0);

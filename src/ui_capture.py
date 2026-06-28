@@ -1093,6 +1093,8 @@ class ScanningAppWindow(Gtk.Window):
         self.is_capturing = False
         
         self.gain = 1.0
+        self.g_gain = 1.0
+        self.b_gain = 1.0
         self.orientation = 0
         self.hflip = False
         self.vflip = False
@@ -1379,6 +1381,27 @@ class ScanningAppWindow(Gtk.Window):
         btn_g_reset.connect("clicked", lambda x: self.reset_gain())
         top_box.pack_start(btn_g_reset, False, False, 5)
         
+        self.btn_auto_gain = Gtk.Button(label="A")
+        self.btn_auto_gain.get_style_context().add_class("btn-action")
+        self.btn_auto_gain.connect("clicked", self.on_auto_gain_clicked)
+        top_box.pack_start(self.btn_auto_gain, False, False, 5)
+        
+        top_box.pack_start(Gtk.Label(label=" G:"), False, False, 0)
+        self.combo_g_gain = Gtk.ComboBoxText()
+        for i in range(80, 121, 5):
+            self.combo_g_gain.append_text(f"{i/100:.2f}")
+        self.combo_g_gain.set_active(4) # 1.00 is at index 4
+        self.combo_g_gain.connect("changed", self.on_gb_gain_changed)
+        top_box.pack_start(self.combo_g_gain, False, False, 2)
+        
+        top_box.pack_start(Gtk.Label(label=" B:"), False, False, 0)
+        self.combo_b_gain = Gtk.ComboBoxText()
+        for i in range(80, 121, 5):
+            self.combo_b_gain.append_text(f"{i/100:.2f}")
+        self.combo_b_gain.set_active(4) # 1.00 is at index 4
+        self.combo_b_gain.connect("changed", self.on_gb_gain_changed)
+        top_box.pack_start(self.combo_b_gain, False, False, 2)
+        
         top_box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL), False, False, 5)
         
         self.rot_buttons = {}
@@ -1549,10 +1572,139 @@ class ScanningAppWindow(Gtk.Window):
 
     def reset_gain(self):
         self.gain = 1.0
+        self.g_gain = 1.0
+        self.b_gain = 1.0
         self.entry_gain.set_text("1.00")
+        self.combo_g_gain.set_active(4)
+        self.combo_b_gain.set_active(4)
         self.capture_converted_rgb_cache = None
         self.capture_corr_hist_cache = None
         self.update_capture_preview()
+
+    def on_gb_gain_changed(self, combo):
+        g_text = self.combo_g_gain.get_active_text()
+        b_text = self.combo_b_gain.get_active_text()
+        if g_text and b_text:
+            try:
+                self.g_gain = float(g_text)
+                self.b_gain = float(b_text)
+                self.capture_converted_rgb_cache = None
+                self.capture_corr_hist_cache = None
+                self.update_capture_preview()
+            except ValueError:
+                pass
+                
+    def on_auto_gain_clicked(self, widget):
+        if not self.raw_image or not self.profile:
+            return
+            
+        self.btn_auto_gain.set_sensitive(False)
+        self.combo_g_gain.set_sensitive(False)
+        self.combo_b_gain.set_sensitive(False)
+        self.entry_gain.set_sensitive(False)
+        
+        def _search_thread():
+            import film_profiling
+            import numpy as np
+            import cv2
+            import time
+            
+            # Create temp_profile to respect selected target
+            prof_data = json.loads(json.dumps(self.profile.raw_data))
+            if 'targets' in prof_data and self.selected_target_idx < len(prof_data['targets']):
+                prof_data['targets'] = [prof_data['targets'][self.selected_target_idx]]
+                tgt = prof_data['targets'][0]
+                if 'icc_profile_base64' in tgt:
+                    prof_data['icc_profile_base64'] = tgt['icc_profile_base64']
+                    
+            temp_profile = film_profiling.FilmProfile(prof_data)
+            if temp_profile.icc_profile_bytes is None and getattr(self.profile, 'icc_profile_bytes', None):
+                temp_profile.icc_profile_bytes = self.profile.icc_profile_bytes
+                
+            # Search Global Gain
+            best_gain = 1.0
+            best_L_diff = float('inf')
+            
+            # Wait a little bit so UI can update insensitive state
+            time.sleep(0.1)
+            
+            for gain in np.arange(0.1, 3.1, 0.1):
+                srgb_16 = film_profiling.convert_raw_to_numpy(
+                    img=self.raw_image, profile=temp_profile,
+                    shutter_str=None, exposure_comp=gain, g_gain=1.0, b_gain=1.0, half=True,
+                    film_base_rgb=self.film_base_rgb, film_base_img=self.film_base_img, pipeline="cuda", to_uint8=False
+                )
+                
+                srgb_float = srgb_16.astype(np.float32) / 65535.0
+                lab = cv2.cvtColor(srgb_float, cv2.COLOR_RGB2Lab)
+                H, W, _ = lab.shape
+                cH, cW = int(H * 0.8), int(W * 0.8)
+                y_start = (H - cH) // 2
+                x_start = (W - cW) // 2
+                crop = lab[y_start:y_start+cH, x_start:x_start+cW, :]
+                L = crop[:, :, 0]
+                mean_L = np.mean(L)
+                
+                if abs(mean_L - 50.0) < best_L_diff:
+                    best_L_diff = abs(mean_L - 50.0)
+                    best_gain = gain
+            
+            # Search G and B gains
+            best_g = 1.0
+            best_b = 1.0
+            min_cast = float('inf')
+            
+            for g in np.arange(0.8, 1.21, 0.05):
+                for b in np.arange(0.8, 1.21, 0.05):
+                    srgb_16 = film_profiling.convert_raw_to_numpy(
+                        img=self.raw_image, profile=temp_profile,
+                        shutter_str=None, exposure_comp=best_gain, g_gain=g, b_gain=b, half=True,
+                        film_base_rgb=self.film_base_rgb, film_base_img=self.film_base_img, pipeline="cuda", to_uint8=False
+                    )
+                    
+                    srgb_float = srgb_16.astype(np.float32) / 65535.0
+                    lab = cv2.cvtColor(srgb_float, cv2.COLOR_RGB2Lab)
+                    crop = lab[y_start:y_start+cH, x_start:x_start+cW, :]
+                    a = crop[:, :, 1]
+                    b_chan = crop[:, :, 2]
+                    cast = np.mean(np.square(a) + np.square(b_chan))
+                    
+                    if cast < min_cast:
+                        min_cast = cast
+                        best_g = g
+                        best_b = b
+                        
+            def _update_gui():
+                self.gain = float(best_gain)
+                self.g_gain = float(best_g)
+                self.b_gain = float(best_b)
+                self.entry_gain.set_text(f"{best_gain:.2f}")
+                
+                # Update comboboxes safely without triggering changes while doing it?
+                # Actually, setting active might trigger `on_gb_gain_changed` which sets `self.g_gain` again
+                g_idx = int(round((best_g - 0.8) / 0.05))
+                b_idx = int(round((best_b - 0.8) / 0.05))
+                
+                # temporarily block signal?
+                # it's fine, on_gb_gain_changed reads combobox and sets values back to the same floats
+                self.combo_g_gain.set_active(g_idx)
+                self.combo_b_gain.set_active(b_idx)
+                
+                self.capture_converted_rgb_cache = None
+                self.capture_corr_hist_cache = None
+                self.update_capture_preview()
+                
+                self.btn_auto_gain.set_sensitive(True)
+                self.combo_g_gain.set_sensitive(True)
+                self.combo_b_gain.set_sensitive(True)
+                self.entry_gain.set_sensitive(True)
+                return False
+                
+            from gi.repository import GLib
+            GLib.idle_add(_update_gui)
+            
+        import threading
+        threading.Thread(target=_search_thread, daemon=True).start()
 
     def on_gain_entry_activated(self, entry):
         text = entry.get_text()
@@ -2315,8 +2467,8 @@ class ScanningAppWindow(Gtk.Window):
                     import film_profiling
                     res = film_profiling.convert_raw_to_numpy(
                         img=self.raw_image, profile=temp_profile,
-                        exposure_comp=self.gain, half=True, film_base_rgb=self.film_base_rgb,
-                        film_base_img=self.film_base_img, pipeline="cuda", to_uint8=True
+                        shutter_str=None, exposure_comp=self.gain, g_gain=self.g_gain, b_gain=self.b_gain, half=True,
+                        film_base_rgb=self.film_base_rgb, film_base_img=self.film_base_img, pipeline="cuda", to_uint8=True
                     )
                     img_array = res
                     corr_hist_array = res

@@ -244,6 +244,8 @@ static void adjust_correction_matrix(std::vector<float>& r_coef,
                                      std::vector<float>& g_coef,
                                      std::vector<float>& b_coef,
                                      float global_exposure_comp,
+                                     float g_gain,
+                                     float b_gain,
                                      const std::vector<int>& profile_film_base_rgb,
                                      const std::vector<int>& film_base_rgb) {
     float cc_average_r = dot_product(r_coef, film_base_rgb);
@@ -257,13 +259,15 @@ static void adjust_correction_matrix(std::vector<float>& r_coef,
     float b_scale = 1.0f;
 
     scale_vector(r_coef, global_exposure_comp);
-    scale_vector(g_coef, g_scale * global_exposure_comp);
-    scale_vector(b_coef, b_scale * global_exposure_comp);
+    scale_vector(g_coef, g_scale * global_exposure_comp * g_gain);
+    scale_vector(b_coef, b_scale * global_exposure_comp * b_gain);
 }
 
 static std::vector<float> prepare_adjusted_crosstalk(
     const std::vector<float>& cc_matrix,
     float exposure_comp,
+    float g_gain,
+    float b_gain,
     const std::vector<int>& profile_film_base,
     const std::vector<int>& film_base
 ) {
@@ -280,7 +284,7 @@ static std::vector<float> prepare_adjusted_crosstalk(
     std::vector<float> r_coef = {adjusted_cc[0], adjusted_cc[1], adjusted_cc[2]};
     std::vector<float> g_coef = {adjusted_cc[3], adjusted_cc[4], adjusted_cc[5]};
     std::vector<float> b_coef = {adjusted_cc[6], adjusted_cc[7], adjusted_cc[8]};
-    adjust_correction_matrix(r_coef, g_coef, b_coef, exposure_comp, p_fb, c_fb);
+    adjust_correction_matrix(r_coef, g_coef, b_coef, exposure_comp, g_gain, b_gain, p_fb, c_fb);
     return {
         r_coef[0], r_coef[1], r_coef[2],
         g_coef[0], g_coef[1], g_coef[2],
@@ -598,6 +602,8 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
                                    const std::vector<int>& profile_film_base,
                                    const std::vector<int>& film_base,
                                    float exposure_comp,
+                                   float g_gain,
+                                   float b_gain,
                                    const std::string& pipeline,
                                    const uint8_t* it8_profile_data,
                                    size_t it8_profile_data_size) const {
@@ -609,7 +615,7 @@ bool CapturedImage::get_linear_rgb(bool half_size, int& out_w, int& out_h, std::
     std::vector<float> adjusted_cc = cc_matrix;
     bool has_profile = !it8_profile_path.empty() || (it8_profile_data != nullptr && it8_profile_data_size > 0);
     if (has_profile) {
-        adjusted_cc = prepare_adjusted_crosstalk(cc_matrix, exposure_comp, profile_film_base, film_base);
+        adjusted_cc = prepare_adjusted_crosstalk(cc_matrix, exposure_comp, g_gain, b_gain, profile_film_base, film_base);
     }
 
     std::vector<float> cpu_cc = adjusted_cc;
@@ -649,6 +655,8 @@ bool CapturedImage::get_preview_rgb8(int& out_w, int& out_h, std::vector<uint8_t
                                      const std::vector<int>& profile_film_base,
                                      const std::vector<int>& film_base,
                                      float exposure_comp,
+                                     float g_gain,
+                                     float b_gain,
                                      const std::string& pipeline,
                                      const uint8_t* it8_profile_data,
                                      size_t it8_profile_data_size) const {
@@ -664,7 +672,7 @@ bool CapturedImage::get_preview_rgb8(int& out_w, int& out_h, std::vector<uint8_t
 
     if (use_cuda) {
         // Run GPU pipeline
-        std::vector<float> adjusted_cc = prepare_adjusted_crosstalk(cc_matrix, exposure_comp, profile_film_base, film_base);
+        std::vector<float> adjusted_cc = prepare_adjusted_crosstalk(cc_matrix, exposure_comp, g_gain, b_gain, profile_film_base, film_base);
 
         std::vector<uint16_t> temp_in;
         if (!ensure_decoded_raw(*this, true, out_w, out_h, temp_in)) {
@@ -729,7 +737,7 @@ bool CapturedImage::get_preview_rgb8(int& out_w, int& out_h, std::vector<uint8_t
     std::vector<uint16_t> temp_out;
     if (!get_linear_rgb(true, out_w, out_h, temp_out, cc_matrix, it8_profile_path,
                          output_profile_path, profile_film_base, film_base, exposure_comp,
-                         "cpp", it8_profile_data, it8_profile_data_size)) {
+                         g_gain, b_gain, "cpp", it8_profile_data, it8_profile_data_size)) {
         return false;
     }
 
@@ -786,6 +794,8 @@ bool write_linear_tiff(const CapturedImage& img,
                        const std::vector<int>& profile_film_base,
                        const std::vector<int>& film_base,
                        float exposure_comp,
+                       float g_gain,
+                       float b_gain,
                        const std::string& pipeline,
                        const uint8_t* it8_profile_data,
                        size_t it8_profile_data_size) {
@@ -812,7 +822,7 @@ bool write_linear_tiff(const CapturedImage& img,
         std::vector<float> r_coef = {adjusted_cc[0], adjusted_cc[1], adjusted_cc[2]};
         std::vector<float> g_coef = {adjusted_cc[3], adjusted_cc[4], adjusted_cc[5]};
         std::vector<float> b_coef = {adjusted_cc[6], adjusted_cc[7], adjusted_cc[8]};
-        adjust_correction_matrix(r_coef, g_coef, b_coef, exposure_comp, p_fb, c_fb);
+        adjust_correction_matrix(r_coef, g_coef, b_coef, exposure_comp, g_gain, b_gain, p_fb, c_fb);
         adjusted_cc = {
             r_coef[0], r_coef[1], r_coef[2],
             g_coef[0], g_coef[1], g_coef[2],

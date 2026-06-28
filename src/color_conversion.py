@@ -123,7 +123,7 @@ def make_gamma_curve(gamma):
     curve[65535] = 65535
     return curve
 
-def adjust_correction_matrix(cc_matrix, exposure_comp, profile_film_base=None, film_base=None):
+def adjust_correction_matrix(cc_matrix, exposure_comp, profile_film_base=None, film_base=None, g_gain=1.0, b_gain=1.0):
     if len(cc_matrix) == 0:
         return []
     
@@ -151,8 +151,8 @@ def adjust_correction_matrix(cc_matrix, exposure_comp, profile_film_base=None, f
         b_scale = (cc_average_r / cc_average_b) * (cc_profile_b / cc_profile_r)
         
     r_coef *= exposure_comp
-    g_coef *= (g_scale * exposure_comp)
-    b_coef *= (b_scale * exposure_comp)
+    g_coef *= (g_scale * exposure_comp * g_gain)
+    b_coef *= (b_scale * exposure_comp * b_gain)
     
     return [
         r_coef[0], r_coef[1], r_coef[2],
@@ -174,7 +174,7 @@ def adjust_correction_matrix(cc_matrix, exposure_comp, profile_film_base=None, f
 # - For custom colorspaces (non-sRGB paths):
 #   - Uses a real Little CMS transform (cmsCreateTransform/cmsDoTransform) from XYZ to the custom output colorspace profile.
 #   - In this case, the output profile is actually used for pixel conversion.
-def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=None, shutter_str=None, exposure_comp=1.0, half=True, film_base_rgb=None, film_base_img=None):
+def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=None, shutter_str=None, exposure_comp=1.0, g_gain=1.0, b_gain=1.0, half=True, film_base_rgb=None, film_base_img=None):
     """
     Decodes and converts RAW image entirely in Python using Little CMS ctypes metadata extraction
     and NumPy-vectorized transformations. Saves output as 16-bit linear/sRGB TIFF with embedded ICC profile.
@@ -270,7 +270,7 @@ def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=
     img_float = arr_raw.astype(np.float32) / 65535.0
     
     # 6. Apply adjusted crosstalk matrix in Python (entirely in float32, clipped to [0.0, 1.0])
-    adjusted_cc = adjust_correction_matrix(flat_merged_matrix, exposure_comp, None, None)
+    adjusted_cc = adjust_correction_matrix(flat_merged_matrix, exposure_comp, None, None, g_gain, b_gain)
     
     if len(adjusted_cc) > 0:
         final_matrix = np.array(adjusted_cc).reshape(3, 3)
