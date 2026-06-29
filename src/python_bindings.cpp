@@ -266,7 +266,7 @@ static PyObject* PyCapturedImage_write_tiff(PyCapturedImage* self, PyObject* arg
     const char* pipeline = "cuda";
     PyObject* py_icc_bytes = nullptr;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|pOzzOOffzO", const_cast<char**>(kwlist),
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|pOzzOOfffzO", const_cast<char**>(kwlist),
                                      &output_path, &half, &py_matrix, &it8_profile_path, &output_profile_path,
                                      &py_profile_film_base, &py_film_base, &exposure_comp,
                                      &g_gain, &b_gain, &pipeline, &py_icc_bytes)) {
