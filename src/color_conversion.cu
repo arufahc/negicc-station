@@ -1,5 +1,74 @@
 #include "color_conversion.h"
 #include <cuda_runtime.h>
+
+__device__ inline float apply_trc(float val, const float* __restrict__ curve, int size) {
+    if (size <= 0 || !curve) return val;
+    float scaled = val * (size - 1);
+    int k = (int)scaled;
+    k = max(0, min(k, size - 2));
+    float delta = scaled - k;
+    return curve[k] * (1.0f - delta) + curve[k + 1] * delta;
+}
+
+__device__ inline float3 interpolate_clut(float r, float g, float b, const float* __restrict__ clut, int dim_r, int dim_g, int dim_b) {
+    float scaled_r = r * (dim_r - 1);
+    float scaled_g = g * (dim_g - 1);
+    float scaled_b = b * (dim_b - 1);
+
+    int ri = max(0, min((int)scaled_r, dim_r - 2));
+    int gi = max(0, min((int)scaled_g, dim_g - 2));
+    int bi = max(0, min((int)scaled_b, dim_b - 2));
+
+    float dr = scaled_r - ri;
+    float dg = scaled_g - gi;
+    float db = scaled_b - bi;
+
+    // We cant use lambda with auto if we want nvcc compatibility without specific flags sometimes, but here we can just macro or inline:
+    #define GET_CLUT(rr, gg, bb) make_float3(clut[((rr) * dim_g * dim_b + (gg) * dim_b + (bb)) * 3], clut[((rr) * dim_g * dim_b + (gg) * dim_b + (bb)) * 3 + 1], clut[((rr) * dim_g * dim_b + (gg) * dim_b + (bb)) * 3 + 2])
+
+    float3 c000 = GET_CLUT(ri, gi, bi);
+    float3 c100 = GET_CLUT(ri + 1, gi, bi);
+    float3 c010 = GET_CLUT(ri, gi + 1, bi);
+    float3 c001 = GET_CLUT(ri, gi, bi + 1);
+    float3 c110 = GET_CLUT(ri + 1, gi + 1, bi);
+    float3 c101 = GET_CLUT(ri + 1, gi, bi + 1);
+    float3 c011 = GET_CLUT(ri, gi + 1, bi + 1);
+    float3 c111 = GET_CLUT(ri + 1, gi + 1, bi + 1);
+    #undef GET_CLUT
+
+    float3 p;
+    if (dr >= dg) {
+        if (dg >= db) { // dr >= dg >= db
+            p.x = c000.x + dr * (c100.x - c000.x) + dg * (c110.x - c100.x) + db * (c111.x - c110.x);
+            p.y = c000.y + dr * (c100.y - c000.y) + dg * (c110.y - c100.y) + db * (c111.y - c110.y);
+            p.z = c000.z + dr * (c100.z - c000.z) + dg * (c110.z - c100.z) + db * (c111.z - c110.z);
+        } else if (dr >= db) { // dr >= db > dg
+            p.x = c000.x + dr * (c100.x - c000.x) + db * (c101.x - c100.x) + dg * (c111.x - c101.x);
+            p.y = c000.y + dr * (c100.y - c000.y) + db * (c101.y - c100.y) + dg * (c111.y - c101.y);
+            p.z = c000.z + dr * (c100.z - c000.z) + db * (c101.z - c100.z) + dg * (c111.z - c101.z);
+        } else { // db > dr >= dg
+            p.x = c000.x + db * (c001.x - c000.x) + dr * (c101.x - c001.x) + dg * (c111.x - c101.x);
+            p.y = c000.y + db * (c001.y - c000.y) + dr * (c101.y - c001.y) + dg * (c111.y - c101.y);
+            p.z = c000.z + db * (c001.z - c000.z) + dr * (c101.z - c001.z) + dg * (c111.z - c101.z);
+        }
+    } else {
+        if (dr >= db) { // dg > dr >= db
+            p.x = c000.x + dg * (c010.x - c000.x) + dr * (c110.x - c010.x) + db * (c111.x - c110.x);
+            p.y = c000.y + dg * (c010.y - c000.y) + dr * (c110.y - c010.y) + db * (c111.y - c110.y);
+            p.z = c000.z + dg * (c010.z - c000.z) + dr * (c110.z - c010.z) + db * (c111.z - c110.z);
+        } else if (dg >= db) { // dg >= db > dr
+            p.x = c000.x + dg * (c010.x - c000.x) + db * (c011.x - c010.x) + dr * (c111.x - c011.x);
+            p.y = c000.y + dg * (c010.y - c000.y) + db * (c011.y - c010.y) + dr * (c111.y - c011.y);
+            p.z = c000.z + dg * (c010.z - c000.z) + db * (c011.z - c010.z) + dr * (c111.z - c011.z);
+        } else { // db > dg > dr
+            p.x = c000.x + db * (c001.x - c000.x) + dg * (c011.x - c001.x) + dr * (c111.x - c011.x);
+            p.y = c000.y + db * (c001.y - c000.y) + dg * (c011.y - c001.y) + dr * (c111.y - c011.y);
+            p.z = c000.z + db * (c001.z - c000.z) + dg * (c011.z - c001.z) + dr * (c111.z - c011.z);
+        }
+    }
+    return p;
+}
+
 #include <iostream>
 #include <cmath>
 
@@ -679,6 +748,192 @@ bool run_cuda_color_pipeline_uint8(
     }
 
     if (d_output) cudaFree(d_output);
+    if (d_in_trc0) cudaFree(d_in_trc0);
+    if (d_in_trc1) cudaFree(d_in_trc1);
+    if (d_in_trc2) cudaFree(d_in_trc2);
+    if (d_out_trc0) cudaFree(d_out_trc0);
+    if (d_out_trc1) cudaFree(d_out_trc1);
+    if (d_out_trc2) cudaFree(d_out_trc2);
+    if (d_clut) cudaFree(d_clut);
+
+    return success;
+}
+
+
+
+
+
+__device__ inline float lab_f(float t) {
+    if (t > 0.008856451679f) {
+        return cbrtf(t);
+    } else {
+        return 7.787037037f * t + 0.137931034f;
+    }
+}
+
+__global__ void search_gains_lab_histograms_kernel(
+    const uint16_t* d_input,
+    uint32_t* d_histograms,
+    int w, int h,
+    int x_start, int y_start, int crop_w, int crop_h,
+    const float* d_cc_matrices,
+    int num_configs,
+    int has_profile,
+    const float* d_in_trc0, int in_size0,
+    const float* d_in_trc1, int in_size1,
+    const float* d_in_trc2, int in_size2,
+    const float* d_out_trc0, int out_size0,
+    const float* d_out_trc1, int out_size1,
+    const float* d_out_trc2, int out_size2,
+    float m0, float m1, float m2, float m3, float m4, float m5, float m6, float m7, float m8,
+    float off0, float off1, float off2,
+    const float* d_clut, int dim_r, int dim_g, int dim_b
+) {
+    int cx = blockIdx.x * blockDim.x + threadIdx.x;
+    int cy = blockIdx.y * blockDim.y + threadIdx.y;
+    int z = blockIdx.z;
+
+    if (cx >= crop_w || cy >= crop_h || z >= num_configs) return;
+
+    int in_idx = ((cy + y_start) * w + (cx + x_start)) * 3;
+    float r = d_input[in_idx] / 65535.0f;
+    float g = d_input[in_idx + 1] / 65535.0f;
+    float b = d_input[in_idx + 2] / 65535.0f;
+
+    const float* cc = d_cc_matrices + z * 9;
+    
+    float r_scaled = r * cc[0] + g * cc[1] + b * cc[2];
+    float g_scaled = r * cc[3] + g * cc[4] + b * cc[5];
+    float b_scaled = r * cc[6] + g * cc[7] + b * cc[8];
+
+    float out_val0 = max(0.0f, min(1.0f, r_scaled));
+    float out_val1 = max(0.0f, min(1.0f, g_scaled));
+    float out_val2 = max(0.0f, min(1.0f, b_scaled));
+
+    if (has_profile) {
+        if (d_in_trc0 && in_size0 > 0) out_val0 = apply_trc(out_val0, d_in_trc0, in_size0);
+        if (d_in_trc1 && in_size1 > 0) out_val1 = apply_trc(out_val1, d_in_trc1, in_size1);
+        if (d_in_trc2 && in_size2 > 0) out_val2 = apply_trc(out_val2, d_in_trc2, in_size2);
+
+        float tm0 = out_val0 * m0 + out_val1 * m1 + out_val2 * m2 + off0;
+        float tm1 = out_val0 * m3 + out_val1 * m4 + out_val2 * m5 + off1;
+        float tm2 = out_val0 * m6 + out_val1 * m7 + out_val2 * m8 + off2;
+        out_val0 = max(0.0f, min(1.0f, tm0));
+        out_val1 = max(0.0f, min(1.0f, tm1));
+        out_val2 = max(0.0f, min(1.0f, tm2));
+
+        if (d_clut && dim_r > 0 && dim_g > 0 && dim_b > 0) {
+            float3 clut_res = interpolate_clut(out_val0, out_val1, out_val2, d_clut, dim_r, dim_g, dim_b);
+            out_val0 = clut_res.x;
+            out_val1 = clut_res.y;
+            out_val2 = clut_res.z;
+        }
+
+        if (d_out_trc0 && out_size0 > 0) out_val0 = apply_trc(out_val0, d_out_trc0, out_size0);
+        if (d_out_trc1 && out_size1 > 0) out_val1 = apply_trc(out_val1, d_out_trc1, out_size1);
+        if (d_out_trc2 && out_size2 > 0) out_val2 = apply_trc(out_val2, d_out_trc2, out_size2);
+
+        float scale_pcs = 65535.0f / 32768.0f;
+        out_val0 *= scale_pcs;
+        out_val1 *= scale_pcs;
+        out_val2 *= scale_pcs;
+    }
+
+    float fx = lab_f(out_val0 / 0.9642f);
+    float fy = lab_f(out_val1);
+    float fz = lab_f(out_val2 / 0.8251f);
+
+    float L = 116.0f * fy - 16.0f;
+    float a = 500.0f * (fx - fy);
+    float b_star = 200.0f * (fy - fz);
+
+    int L_bin = max(0, min(65535, (int)(L * 655.35f)));
+    int a_bin = max(0, min(65535, (int)((a + 128.0f) * 256.0f)));
+    int b_bin = max(0, min(65535, (int)((b_star + 128.0f) * 256.0f)));
+
+    atomicAdd(&d_histograms[z * 3 * 65536 + 0 * 65536 + L_bin], 1);
+    atomicAdd(&d_histograms[z * 3 * 65536 + 1 * 65536 + a_bin], 1);
+    atomicAdd(&d_histograms[z * 3 * 65536 + 2 * 65536 + b_bin], 1);
+}
+
+bool run_cuda_gains_histogram_search(
+    const uint16_t* host_input_pixels,
+    uint32_t* host_histograms, // Pre-allocated on host, size: num_configs * 3 * 65536
+    int w, int h,
+    int x_start, int y_start, int crop_w, int crop_h,
+    const float* host_cc_matrices,
+    int num_configs,
+    int has_profile,
+    const float* in_trc_curve_0, int in_trc_size_0,
+    const float* in_trc_curve_1, int in_trc_size_1,
+    const float* in_trc_curve_2, int in_trc_size_2,
+    const float* out_trc_curve_0, int out_trc_size_0,
+    const float* out_trc_curve_1, int out_trc_size_1,
+    const float* out_trc_curve_2, int out_trc_size_2,
+    const float* matrix_3x3,
+    const float* offset_3,
+    const float* clut_grid,
+    int clut_dim_r, int clut_dim_g, int clut_dim_b
+) {
+    if (g_cached_device_raw_uint16_buf == nullptr) {
+        size_t in_size = w * h * 3 * sizeof(uint16_t);
+        cudaMalloc(&g_cached_device_raw_uint16_buf, in_size);
+        cudaMemcpy(g_cached_device_raw_uint16_buf, host_input_pixels, in_size, cudaMemcpyHostToDevice);
+    }
+
+    uint32_t* d_histograms = nullptr;
+    size_t hist_size = num_configs * 3 * 65536 * sizeof(uint32_t);
+    cudaMalloc(&d_histograms, hist_size);
+    cudaMemset(d_histograms, 0, hist_size);
+
+    float* d_cc_matrices = nullptr;
+    cudaMalloc(&d_cc_matrices, num_configs * 9 * sizeof(float));
+    cudaMemcpy(d_cc_matrices, host_cc_matrices, num_configs * 9 * sizeof(float), cudaMemcpyHostToDevice);
+
+    float *d_in_trc0 = nullptr, *d_in_trc1 = nullptr, *d_in_trc2 = nullptr;
+    float *d_out_trc0 = nullptr, *d_out_trc1 = nullptr, *d_out_trc2 = nullptr;
+    float *d_clut = nullptr;
+
+    if (has_profile) {
+        if (in_trc_size_0 > 0 && in_trc_curve_0) { cudaMalloc(&d_in_trc0, in_trc_size_0 * sizeof(float)); cudaMemcpy(d_in_trc0, in_trc_curve_0, in_trc_size_0 * sizeof(float), cudaMemcpyHostToDevice); }
+        if (in_trc_size_1 > 0 && in_trc_curve_1) { cudaMalloc(&d_in_trc1, in_trc_size_1 * sizeof(float)); cudaMemcpy(d_in_trc1, in_trc_curve_1, in_trc_size_1 * sizeof(float), cudaMemcpyHostToDevice); }
+        if (in_trc_size_2 > 0 && in_trc_curve_2) { cudaMalloc(&d_in_trc2, in_trc_size_2 * sizeof(float)); cudaMemcpy(d_in_trc2, in_trc_curve_2, in_trc_size_2 * sizeof(float), cudaMemcpyHostToDevice); }
+        if (out_trc_size_0 > 0 && out_trc_curve_0) { cudaMalloc(&d_out_trc0, out_trc_size_0 * sizeof(float)); cudaMemcpy(d_out_trc0, out_trc_curve_0, out_trc_size_0 * sizeof(float), cudaMemcpyHostToDevice); }
+        if (out_trc_size_1 > 0 && out_trc_curve_1) { cudaMalloc(&d_out_trc1, out_trc_size_1 * sizeof(float)); cudaMemcpy(d_out_trc1, out_trc_curve_1, out_trc_size_1 * sizeof(float), cudaMemcpyHostToDevice); }
+        if (out_trc_size_2 > 0 && out_trc_curve_2) { cudaMalloc(&d_out_trc2, out_trc_size_2 * sizeof(float)); cudaMemcpy(d_out_trc2, out_trc_curve_2, out_trc_size_2 * sizeof(float), cudaMemcpyHostToDevice); }
+        if (clut_grid && clut_dim_r > 0 && clut_dim_g > 0 && clut_dim_b > 0) {
+            size_t clut_sz = clut_dim_r * clut_dim_g * clut_dim_b * 3 * sizeof(float);
+            cudaMalloc(&d_clut, clut_sz);
+            cudaMemcpy(d_clut, clut_grid, clut_sz, cudaMemcpyHostToDevice);
+        }
+    }
+
+    dim3 threads(16, 16, 1);
+    dim3 blocks((crop_w + 15) / 16, (crop_h + 15) / 16, num_configs);
+
+    search_gains_lab_histograms_kernel<<<blocks, threads>>>(
+        g_cached_device_raw_uint16_buf, d_histograms, w, h, x_start, y_start, crop_w, crop_h,
+        d_cc_matrices, num_configs, has_profile,
+        d_in_trc0, in_trc_size_0, d_in_trc1, in_trc_size_1, d_in_trc2, in_trc_size_2,
+        d_out_trc0, out_trc_size_0, d_out_trc1, out_trc_size_1, d_out_trc2, out_trc_size_2,
+        matrix_3x3 ? matrix_3x3[0] : 1.0f, matrix_3x3 ? matrix_3x3[1] : 0.0f, matrix_3x3 ? matrix_3x3[2] : 0.0f,
+        matrix_3x3 ? matrix_3x3[3] : 0.0f, matrix_3x3 ? matrix_3x3[4] : 1.0f, matrix_3x3 ? matrix_3x3[5] : 0.0f,
+        matrix_3x3 ? matrix_3x3[6] : 0.0f, matrix_3x3 ? matrix_3x3[7] : 0.0f, matrix_3x3 ? matrix_3x3[8] : 1.0f,
+        offset_3 ? offset_3[0] : 0.0f, offset_3 ? offset_3[1] : 0.0f, offset_3 ? offset_3[2] : 0.0f,
+        d_clut, clut_dim_r, clut_dim_g, clut_dim_b
+    );
+
+    cudaError_t err = cudaDeviceSynchronize();
+    bool success = (err == cudaSuccess);
+
+    if (success) {
+        cudaMemcpy(host_histograms, d_histograms, hist_size, cudaMemcpyDeviceToHost);
+    } else {
+        std::cerr << "CUDA Kernel failed: " << cudaGetErrorString(err) << std::endl;
+    }
+
+    if (d_histograms) cudaFree(d_histograms);
+    if (d_cc_matrices) cudaFree(d_cc_matrices);
     if (d_in_trc0) cudaFree(d_in_trc0);
     if (d_in_trc1) cudaFree(d_in_trc1);
     if (d_in_trc2) cudaFree(d_in_trc2);

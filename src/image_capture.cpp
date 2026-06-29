@@ -915,3 +915,71 @@ std::string CapturedImage::camera_model() const {
     }
     return "Unknown";
 }
+
+bool CapturedImage::search_gains_histogram(
+    bool half, int crop_w, int crop_h,
+    const std::vector<float>& cc_matrix,
+    const std::string& it8_profile_path,
+    const std::vector<int>& profile_film_base,
+    const std::vector<int>& film_base,
+    const std::vector<float>& global_gains,
+    const std::vector<float>& g_gains,
+    const std::vector<float>& b_gains,
+    std::vector<uint32_t>& out_histograms,
+    const uint8_t* it8_profile_data,
+    size_t it8_profile_data_size) const
+{
+    if (m_filepaths.empty()) return false;
+    if (global_gains.size() != g_gains.size() || g_gains.size() != b_gains.size()) return false;
+    
+    int w = 0, h = 0;
+    std::vector<uint16_t> temp_in;
+    if (!ensure_decoded_raw(*this, half, w, h, temp_in)) return false;
+
+    int has_prof_flag = 0;
+    std::vector<float> in_trc0, in_trc1, in_trc2;
+    std::vector<float> out_trc0, out_trc1, out_trc2;
+    std::vector<float> matrix_3x3, offset_3, clut_grid;
+    int clut_dim_r = 0, clut_dim_g = 0, clut_dim_b = 0;
+
+    bool has_profile = !it8_profile_path.empty() || (it8_profile_data != nullptr && it8_profile_data_size > 0);
+    if (has_profile) {
+        if (!parse_icc_profile(it8_profile_path, it8_profile_data, it8_profile_data_size, has_prof_flag,
+                               in_trc0, in_trc1, in_trc2, out_trc0, out_trc1, out_trc2,
+                               matrix_3x3, offset_3, clut_grid, clut_dim_r, clut_dim_g, clut_dim_b)) {
+            return false;
+        }
+        has_prof_flag = 1;
+    }
+
+    int num_configs = global_gains.size();
+    std::vector<float> cc_matrices(num_configs * 9);
+    for (int i = 0; i < num_configs; ++i) {
+        std::vector<float> adjusted = prepare_adjusted_crosstalk(cc_matrix, global_gains[i], g_gains[i], b_gains[i], profile_film_base, film_base);
+        for (int j = 0; j < 9; ++j) cc_matrices[i * 9 + j] = adjusted[j];
+    }
+
+    out_histograms.resize(num_configs * 3 * 65536, 0);
+
+    int x_start = (w - crop_w) / 2;
+    int y_start = (h - crop_h) / 2;
+    if (x_start < 0) { x_start = 0; crop_w = w; }
+    if (y_start < 0) { y_start = 0; crop_h = h; }
+
+    return run_cuda_gains_histogram_search(
+        temp_in.data(),
+        out_histograms.data(),
+        w, h,
+        x_start, y_start, crop_w, crop_h,
+        cc_matrices.data(),
+        num_configs,
+        has_prof_flag,
+        in_trc0.data(), in_trc0.size(), in_trc1.data(), in_trc1.size(), in_trc2.data(), in_trc2.size(),
+        out_trc0.data(), out_trc0.size(), out_trc1.data(), out_trc1.size(), out_trc2.data(), out_trc2.size(),
+        matrix_3x3.empty() ? nullptr : matrix_3x3.data(),
+        offset_3.empty() ? nullptr : offset_3.data(),
+        clut_grid.empty() ? nullptr : clut_grid.data(),
+        clut_dim_r, clut_dim_g, clut_dim_b
+    );
+}
+

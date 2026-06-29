@@ -1622,57 +1622,107 @@ class ScanningAppWindow(Gtk.Window):
                 temp_profile.icc_profile_bytes = self.profile.icc_profile_bytes
                 
             # Search Global Gain
+            gains = np.arange(0.1, 3.1, 0.1).astype(np.float32)
+            
+            # Compute scales to pre-apply to crosstalk matrix
+            base_shutter = temp_profile.raw_data.get('exposure', {}).get('shutter_speed', 0.125)
+            base_iso = temp_profile.raw_data.get('exposure', {}).get('iso', 100)
+            base_exp = base_shutter * base_iso
+            
+            scan_shutter = 0.125
+            scan_iso = 100
+            if getattr(self, 'current_capture_settings', None):
+                shutter_str = self.current_capture_settings.get('shutter_speed', '1/8')
+                if '/' in shutter_str:
+                    num, den = shutter_str.split('/')
+                    scan_shutter = float(num) / float(den)
+                else:
+                    try:
+                        scan_shutter = float(shutter_str)
+                    except:
+                        pass
+                scan_iso = float(self.current_capture_settings.get('iso', 100))
+            scan_exp = scan_shutter * scan_iso
+            exposure_ratio = base_exp / scan_exp if scan_exp > 0 else 1.0
+            
+            target_val = getattr(temp_profile, 'normalization_target', 55000.0)
+            fb_r, fb_g, fb_b = self.film_base_rgb if self.film_base_rgb is not None else (1,1,1)
+            scale_r = (target_val / fb_r) * exposure_ratio if fb_r > 0 else 1.0
+            scale_g = (target_val / fb_g) * exposure_ratio if fb_g > 0 else 1.0
+            scale_b = (target_val / fb_b) * exposure_ratio if fb_b > 0 else 1.0
+            
+            scales = np.array([scale_r, scale_g, scale_b])
+            merged_matrix = np.array(temp_profile.crosstalk_matrix) * scales[:, np.newaxis]
+            flat_cc = merged_matrix.flatten().astype(float).tolist()
+            
+            w = getattr(self.raw_image, 'width', 9504) // 2
+            h = getattr(self.raw_image, 'height', 6336) // 2
+            cW = int(0.8 * w)
+            cH = int(0.8 * h)
+            
+            film_base = [int(x) for x in self.film_base_rgb] if self.film_base_rgb is not None else [1,1,1]
+            profile_film_base = [int(x) for x in temp_profile.get_film_base_rgb()]
+            
+            # Run Global Gain Histogram Kernel
+            hists_global = self.raw_image.search_gains_histogram(
+                half=True, crop_w=cW, crop_h=cH,
+                crosstalk_matrix=flat_cc,
+                global_gains=gains.tolist(),
+                g_gains=[1.0] * len(gains), b_gains=[1.0] * len(gains),
+                it8_profile_bytes=temp_profile.icc_profile_bytes,
+                film_base=film_base,
+                profile_film_base=profile_film_base
+            )
+            
+            bin_centers = np.arange(65536) / 65535.0 * 100.0
             best_gain = 1.0
             best_L_diff = float('inf')
             
-            # Wait a little bit so UI can update insensitive state
-            time.sleep(0.1)
+            for i, gain in enumerate(gains):
+                hist_L = hists_global[i, 0, :]
+                total_pixels = np.sum(hist_L)
+                if total_pixels > 0:
+                    mean_L = np.sum(hist_L * bin_centers) / total_pixels
+                    if abs(mean_L - 50.0) < best_L_diff:
+                        best_L_diff = abs(mean_L - 50.0)
+                        best_gain = float(gain)
             
-            for gain in np.arange(0.1, 3.1, 0.1):
-                srgb_16 = film_profiling.convert_raw_to_numpy(
-                    img=self.raw_image, profile=temp_profile,
-                    shutter_str=None, exposure_comp=gain, g_gain=1.0, b_gain=1.0, half=True,
-                    film_base_rgb=self.film_base_rgb, film_base_img=self.film_base_img, pipeline="cuda", to_uint8=False
-                )
-                
-                srgb_float = srgb_16.astype(np.float32) / 65535.0
-                lab = cv2.cvtColor(srgb_float, cv2.COLOR_RGB2Lab)
-                H, W, _ = lab.shape
-                cH, cW = int(H * 0.8), int(W * 0.8)
-                y_start = (H - cH) // 2
-                x_start = (W - cW) // 2
-                crop = lab[y_start:y_start+cH, x_start:x_start+cW, :]
-                L = crop[:, :, 0]
-                mean_L = np.mean(L)
-                
-                if abs(mean_L - 50.0) < best_L_diff:
-                    best_L_diff = abs(mean_L - 50.0)
-                    best_gain = gain
+            # 2. Search G and B gains
+            g_gains = []
+            b_gains = []
+            for g in np.arange(0.8, 1.21, 0.05):
+                for b in np.arange(0.8, 1.21, 0.05):
+                    g_gains.append(float(g))
+                    b_gains.append(float(b))
+                    
+            hists_gb = self.raw_image.search_gains_histogram(
+                half=True, crop_w=cW, crop_h=cH,
+                crosstalk_matrix=flat_cc,
+                global_gains=[best_gain] * len(g_gains),
+                g_gains=g_gains, b_gains=b_gains,
+                it8_profile_bytes=temp_profile.icc_profile_bytes,
+                film_base=film_base,
+                profile_film_base=profile_film_base
+            )
             
-            # Search G and B gains
+            bin_centers_ab = (np.arange(65536) / 65535.0 * 255.0) - 128.0
             best_g = 1.0
             best_b = 1.0
             min_cast = float('inf')
             
-            for g in np.arange(0.8, 1.21, 0.05):
-                for b in np.arange(0.8, 1.21, 0.05):
-                    srgb_16 = film_profiling.convert_raw_to_numpy(
-                        img=self.raw_image, profile=temp_profile,
-                        shutter_str=None, exposure_comp=best_gain, g_gain=g, b_gain=b, half=True,
-                        film_base_rgb=self.film_base_rgb, film_base_img=self.film_base_img, pipeline="cuda", to_uint8=False
-                    )
-                    
-                    srgb_float = srgb_16.astype(np.float32) / 65535.0
-                    lab = cv2.cvtColor(srgb_float, cv2.COLOR_RGB2Lab)
-                    crop = lab[y_start:y_start+cH, x_start:x_start+cW, :]
-                    a = crop[:, :, 1]
-                    b_chan = crop[:, :, 2]
-                    cast = np.mean(np.square(a) + np.square(b_chan))
-                    
+            for i, (g, b) in enumerate(zip(g_gains, b_gains)):
+                hist_a = hists_gb[i, 1, :]
+                hist_b = hists_gb[i, 2, :]
+                total_a = np.sum(hist_a)
+                total_b = np.sum(hist_b)
+                if total_a > 0 and total_b > 0:
+                    mean_a_sq = np.sum(hist_a * (bin_centers_ab**2)) / total_a
+                    mean_b_sq = np.sum(hist_b * (bin_centers_ab**2)) / total_b
+                    cast = mean_a_sq + mean_b_sq
                     if cast < min_cast:
                         min_cast = cast
-                        best_g = g
-                        best_b = b
+                        best_g = float(g)
+                        best_b = float(b)
                         
             def _update_gui():
                 self.gain = float(best_gain)

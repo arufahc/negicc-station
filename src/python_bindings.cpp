@@ -357,7 +357,100 @@ static PyObject* PyCapturedImage_write_tiff(PyCapturedImage* self, PyObject* arg
 }
 
 // Method table for CapturedImage type
+
+static PyObject* PyCapturedImage_search_gains_histogram(PyCapturedImage* self, PyObject* args, PyObject* kwargs) {
+    if (!self->cpp_img) {
+        PyErr_SetString(PyExc_RuntimeError, "CapturedImage C++ backend is null.");
+        return nullptr;
+    }
+
+    static const char* kwlist[] = {
+        "half", "crop_w", "crop_h", "crosstalk_matrix", "it8_profile_path",
+        "profile_film_base", "film_base", "global_gains", "g_gains", "b_gains",
+        "it8_profile_bytes", nullptr
+    };
+    int half = 0;
+    int crop_w = 0;
+    int crop_h = 0;
+    PyObject* py_matrix = nullptr;
+    const char* it8_profile_path = nullptr;
+    PyObject* py_profile_film_base = nullptr;
+    PyObject* py_film_base = nullptr;
+    PyObject* py_global_gains = nullptr;
+    PyObject* py_g_gains = nullptr;
+    PyObject* py_b_gains = nullptr;
+    PyObject* py_icc_bytes = nullptr;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "pii|OzOOOOOO", const_cast<char**>(kwlist),
+                                     &half, &crop_w, &crop_h, &py_matrix, &it8_profile_path,
+                                     &py_profile_film_base, &py_film_base,
+                                     &py_global_gains, &py_g_gains, &py_b_gains, &py_icc_bytes)) {
+        return nullptr;
+    }
+
+    auto parse_float_list = [](PyObject* list_obj, std::vector<float>& out) -> bool {
+        if (!list_obj || list_obj == Py_None) return true;
+        if (!PyList_Check(list_obj)) return false;
+        Py_ssize_t len = PyList_Size(list_obj);
+        for (Py_ssize_t i = 0; i < len; ++i) {
+            PyObject* item = PyList_GetItem(list_obj, i);
+            if (!PyFloat_Check(item) && !PyLong_Check(item)) return false;
+            out.push_back((float)PyFloat_AsDouble(item));
+        }
+        return true;
+    };
+
+    auto parse_int_list = [](PyObject* list_obj, std::vector<int>& out) -> bool {
+        if (!list_obj || list_obj == Py_None) return true;
+        if (!PyList_Check(list_obj)) return false;
+        Py_ssize_t len = PyList_Size(list_obj);
+        for (Py_ssize_t i = 0; i < len; ++i) {
+            PyObject* item = PyList_GetItem(list_obj, i);
+            if (!PyLong_Check(item)) return false;
+            out.push_back((int)PyLong_AsLong(item));
+        }
+        return true;
+    };
+
+    std::vector<float> cc_matrix, global_gains, g_gains, b_gains;
+    std::vector<int> profile_film_base, film_base;
+    
+    if (!parse_float_list(py_matrix, cc_matrix)) { PyErr_SetString(PyExc_TypeError, "crosstalk_matrix error"); return nullptr; }
+    if (!parse_int_list(py_profile_film_base, profile_film_base)) { PyErr_SetString(PyExc_TypeError, "profile_film_base error"); return nullptr; }
+    if (!parse_int_list(py_film_base, film_base)) { PyErr_SetString(PyExc_TypeError, "film_base error"); return nullptr; }
+    if (!parse_float_list(py_global_gains, global_gains)) { PyErr_SetString(PyExc_TypeError, "global_gains error"); return nullptr; }
+    if (!parse_float_list(py_g_gains, g_gains)) { PyErr_SetString(PyExc_TypeError, "g_gains error"); return nullptr; }
+    if (!parse_float_list(py_b_gains, b_gains)) { PyErr_SetString(PyExc_TypeError, "b_gains error"); return nullptr; }
+
+    const uint8_t* icc_data = nullptr;
+    Py_ssize_t icc_data_size = 0;
+    if (py_icc_bytes && py_icc_bytes != Py_None) {
+        if (!PyBytes_Check(py_icc_bytes)) { PyErr_SetString(PyExc_TypeError, "it8_profile_bytes error"); return nullptr; }
+        icc_data = reinterpret_cast<const uint8_t*>(PyBytes_AS_STRING(py_icc_bytes));
+        icc_data_size = PyBytes_GET_SIZE(py_icc_bytes);
+    }
+    std::string it8_path = (it8_profile_path && !icc_data) ? it8_profile_path : "";
+
+    std::vector<uint32_t> out_hist;
+    if (!self->cpp_img->search_gains_histogram(half != 0, crop_w, crop_h, cc_matrix, it8_path, profile_film_base, film_base,
+                                              global_gains, g_gains, b_gains, out_hist, icc_data, (size_t)icc_data_size)) {
+        PyErr_SetString(PyExc_RuntimeError, "Failed to run histogram search.");
+        return nullptr;
+    }
+
+    int num_configs = global_gains.size();
+    npy_intp dims[3] = { num_configs, 3, 65536 };
+    PyObject* arr = PyArray_SimpleNew(3, dims, NPY_UINT32);
+    if (!arr) return nullptr;
+
+    uint32_t* arr_data = static_cast<uint32_t*>(PyArray_DATA(reinterpret_cast<PyArrayObject*>(arr)));
+    std::copy(out_hist.begin(), out_hist.end(), arr_data);
+
+    return arr;
+}
+
 static PyMethodDef PyCapturedImage_methods[] = {
+    {"search_gains_histogram", (PyCFunction)PyCapturedImage_search_gains_histogram, METH_VARARGS | METH_KEYWORDS, "Search gains returning Lab histograms"},
     {"discard", (PyCFunction)PyCapturedImage_discard, METH_NOARGS, "Discard temporary RAW files from disk"},
     {"to_numpy", (PyCFunction)PyCapturedImage_to_numpy, METH_VARARGS | METH_KEYWORDS, "Convert captured image to linear RGB numpy array"},
     {"write_tiff", (PyCFunction)PyCapturedImage_write_tiff, METH_VARARGS | METH_KEYWORDS, "Write linear image directly to TIFF file"},

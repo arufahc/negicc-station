@@ -24,6 +24,19 @@ public:
     const std::vector<std::string>& filepaths() const { return m_filepaths; }
     std::string camera_model() const;
 
+    bool search_gains_histogram(
+        bool half, int crop_w, int crop_h,
+        const std::vector<float>& cc_matrix,
+        const std::string& it8_profile_path,
+        const std::vector<int>& profile_film_base,
+        const std::vector<int>& film_base,
+        const std::vector<float>& global_gains,
+        const std::vector<float>& g_gains,
+        const std::vector<float>& b_gains,
+        std::vector<uint32_t>& out_histograms,
+        const uint8_t* it8_profile_data = nullptr,
+        size_t it8_profile_data_size = 0) const;
+
     // Deletes the temporary raw files from disk
     void discard();
 
