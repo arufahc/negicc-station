@@ -1,4 +1,6 @@
 import numpy as np
+from film_profiling import compute_exposure_ratio
+
 
 def find_best_target_index(profile, raw_image, film_base_rgb, scan_shutter=None, scan_iso=100, base_shutter=None, base_iso=100):
     """
@@ -45,28 +47,16 @@ def find_best_target_index(profile, raw_image, film_base_rgb, scan_shutter=None,
         fb_g = 1.0 # Prevent division by zero
 
     # Compute exposure ratio: exposure_base / exposure_scan
-    t_scan = scan_shutter if scan_shutter is not None else 1.0
-    iso_scan = scan_iso if scan_iso is not None else 100
-    
-    if base_shutter is not None:
-        t_base = base_shutter
-        iso_base = base_iso if base_iso is not None else 100
-    else:
-        import sys
-        print("[Warning] target_selection: base_shutter is None. Falling back to profile film_base_shutter and film_base_iso.", file=sys.stdout)
-        sys.stdout.flush()
-        film_base_shutter = getattr(profile, 'film_base_shutter', None)
-        if film_base_shutter:
-            from auto_exposure import parse_shutter_speed
-            base_num, base_den = parse_shutter_speed(film_base_shutter)
-            t_base = base_num / base_den
-        else:
-            t_base = 1.0
-        iso_base = getattr(profile, 'film_base_iso', 100)
-
+    exposure_ratio, t_base, iso_base, t_scan, iso_scan = compute_exposure_ratio(
+        profile=profile,
+        t_scan=scan_shutter,
+        iso_scan=scan_iso,
+        t_base=base_shutter,
+        iso_base=base_iso,
+        return_details=True
+    )
     exposure_base = t_base * (iso_base / 100.0)
     exposure_scan = t_scan * (iso_scan / 100.0)
-    exposure_ratio = exposure_base / exposure_scan if exposure_scan > 0 else 1.0
         
     t_2 = (p2 / fb_g) * exposure_ratio
     t_98 = (p98 / fb_g) * exposure_ratio

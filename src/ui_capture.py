@@ -29,7 +29,7 @@ import zipfile
 import tarfile
 import shutil
 import negicc_station
-from film_profiling import FilmProfile
+from film_profiling import FilmProfile, compute_exposure_ratio, parse_shutter_speed
 import color_conversion
 from target_selection import find_best_target_index
 import auto_exposure
@@ -662,20 +662,12 @@ def get_target_transmittances(profile, target_idx):
         return []
     target = targets[target_idx]
     
-    # film base exposure
-    from film_profiling import parse_shutter_speed
-    fb_shutter = getattr(profile, 'film_base_shutter', '1/8s')
-    fb_iso = getattr(profile, 'film_base_iso', 100)
-    fb_num, fb_den = parse_shutter_speed(fb_shutter)
-    t_base = (fb_num / fb_den) * (fb_iso / 100.0)
-    
-    # target exposure
-    tgt_shutter = target.get('shutter', '1/8s')
-    tgt_iso = target.get('iso', 100)
-    tgt_num, tgt_den = parse_shutter_speed(tgt_shutter)
-    t_exp = (tgt_num / tgt_den) * (tgt_iso / 100.0)
-    
-    exposure_ratio = t_base / t_exp if t_exp > 0 else 1.0
+    # exposure ratio between film base and target
+    exposure_ratio = compute_exposure_ratio(
+        profile=profile,
+        t_scan=target.get('shutter', '1/8s'),
+        iso_scan=target.get('iso', 100)
+    )
     
     fb_r = profile.film_base.get('r_avg', 1.0)
     fb_g = profile.film_base.get('g_avg', 1.0)
@@ -884,23 +876,11 @@ class CalibrationTargetsDetailsWindow(Gtk.Window):
         p2_b = np.percentile(cc_img[..., 2], 2)
         p98_b = np.percentile(cc_img[..., 2], 98)
         
-        t_scan = self.app.raw_image.shutter_speed
-        iso_scan = self.app.raw_image.iso
-        exposure_scan = t_scan * (iso_scan / 100.0)
-        
-        if self.app.film_base_img:
-            t_base = self.app.film_base_img.shutter_speed
-            iso_base = self.app.film_base_img.iso
-        else:
-            from film_profiling import parse_shutter_speed
-            fb_shutter = getattr(profile, 'film_base_shutter', '1/8s')
-            fb_iso = getattr(profile, 'film_base_iso', 100)
-            fb_num, fb_den = parse_shutter_speed(fb_shutter)
-            t_base = fb_num / fb_den
-            iso_base = fb_iso
-            
-        exposure_base = t_base * (iso_base / 100.0)
-        exposure_ratio = exposure_base / exposure_scan if exposure_scan > 0 else 1.0
+        exposure_ratio = compute_exposure_ratio(
+            img=self.app.raw_image,
+            profile=profile,
+            film_base_img=self.app.film_base_img
+        )
         
         if self.app.film_base_rgb is not None:
             fb_r, fb_g, fb_b = self.app.film_base_rgb

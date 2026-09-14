@@ -102,17 +102,8 @@ class LittleCMS:
 # Helper Utilities
 # =============================================================================
 
-def parse_shutter_speed(shutter_str):
-    s = shutter_str.rstrip('s')
-    if '/' in s:
-        parts = s.split('/')
-        return int(parts[0]), int(parts[1])
-    else:
-        val = float(s)
-        if val.is_integer():
-            return int(val), 1
-        else:
-            return int(round(val * 10.0)), 10
+from film_profiling import parse_shutter_speed, compute_exposure_ratio
+
 
 def make_gamma_curve(gamma):
     pwr = 1.0 / gamma
@@ -227,29 +218,9 @@ def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=
     sys.stdout.flush()
 
     # 4. Compute exposure ratio
-    if shutter_str is not None:
-        scan_num, scan_den = parse_shutter_speed(shutter_str)
-        t_scan = scan_num / scan_den
-    else:
-        t_scan = img.shutter_speed
-
-    # Shutter speed and ISO of film base
-    if film_base_img is not None:
-        t_base = film_base_img.shutter_speed
-        iso_base = film_base_img.iso
-    else:
-        print("[Warning] color_conversion: film_base_img is None. Falling back to profile film_base_shutter and film_base_iso.", file=sys.stdout)
-        sys.stdout.flush()
-        base_num, base_den = parse_shutter_speed(profile.film_base_shutter)
-        t_base = base_num / base_den
-        iso_base = profile.film_base_iso
-
-    iso_scan = img.iso
-
-    # Exposure: t * ISO
-    exposure_profile = t_base * (iso_base / 100.0)
-    exposure_scan = t_scan * (iso_scan / 100.0)
-    exposure_ratio = exposure_profile / exposure_scan if exposure_scan > 0 else 1.0
+    exposure_ratio = compute_exposure_ratio(
+        img=img, profile=profile, film_base_img=film_base_img, shutter_str=shutter_str
+    )
 
     # Scale factors to map film base at current exposure to normalization_target
     target_val = profile.normalization_target

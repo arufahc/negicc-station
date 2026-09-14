@@ -38,8 +38,14 @@ except ImportError:
 
 
 def parse_shutter_speed(shutter_str):
-    """Parses a shutter speed string (e.g. '1/8s', '0.5s') into numerator and denominator."""
-    s = shutter_str.rstrip('s')
+    """Parses a shutter speed string (e.g. '1/8s', '0.5s') or float into numerator and denominator."""
+    if isinstance(shutter_str, (int, float)):
+        val = float(shutter_str)
+        if val.is_integer():
+            return int(val), 1
+        else:
+            return int(round(val * 10000.0)), 10000
+    s = str(shutter_str).strip().rstrip('s')
     if '/' in s:
         parts = s.split('/')
         return int(parts[0]), int(parts[1])
@@ -49,6 +55,106 @@ def parse_shutter_speed(shutter_str):
             return int(val), 1
         else:
             return int(round(val * 10.0)), 10
+
+
+def shutter_to_seconds(shutter):
+    """Converts a shutter speed representation (float seconds, '1/8s', '0.5s', etc.) to float seconds."""
+    if shutter is None:
+        return 1.0
+    if isinstance(shutter, (int, float)):
+        return float(shutter)
+    s = str(shutter).strip().rstrip('s')
+    if '/' in s:
+        parts = s.split('/')
+        return float(parts[0]) / float(parts[1])
+    return float(s)
+
+
+def compute_exposure_ratio(
+    img=None,
+    profile=None,
+    film_base_img=None,
+    shutter_str=None,
+    t_scan=None,
+    iso_scan=None,
+    t_base=None,
+    iso_base=None,
+    return_details=False,
+):
+    """Computes the exposure ratio between film base capture and scanned frame.
+
+    Exposure is defined as: E = t * (ISO / 100.0)
+    Exposure Ratio: exposure_base / exposure_scan
+
+    Parameters:
+        img: CapturedImage or object with .shutter_speed and .iso attributes for the scan.
+        profile: FilmProfile instance or dict containing film base metadata.
+        film_base_img: Optional CapturedImage for the film base.
+        shutter_str: Optional shutter speed string overriding img.shutter_speed.
+        t_scan: Optional explicit scan exposure time in seconds (or shutter string).
+        iso_scan: Optional explicit scan ISO.
+        t_base: Optional explicit film base exposure time in seconds (or shutter string).
+        iso_base: Optional explicit film base ISO.
+        return_details: If True, returns (exposure_ratio, t_base, iso_base, t_scan, iso_scan).
+                        Otherwise, returns exposure_ratio (float).
+
+    Returns:
+        exposure_ratio (float), or (exposure_ratio, t_base, iso_base, t_scan, iso_scan) if return_details=True.
+    """
+    # 1. Resolve scan exposure parameters
+    if t_scan is not None:
+        scan_time = shutter_to_seconds(t_scan)
+    elif shutter_str is not None:
+        scan_time = shutter_to_seconds(shutter_str)
+    elif img is not None and hasattr(img, 'shutter_speed'):
+        scan_time = shutter_to_seconds(img.shutter_speed)
+    else:
+        scan_time = 1.0
+
+    if iso_scan is not None:
+        scan_iso_val = float(iso_scan)
+    elif img is not None and hasattr(img, 'iso'):
+        scan_iso_val = float(img.iso)
+    else:
+        scan_iso_val = 100.0
+
+    # 2. Resolve film base exposure parameters
+    if t_base is not None:
+        base_time = shutter_to_seconds(t_base)
+        if iso_base is not None:
+            base_iso_val = float(iso_base)
+        elif profile is not None:
+            base_iso_val = float(getattr(profile, 'film_base_iso', 100.0))
+        else:
+            base_iso_val = 100.0
+    elif film_base_img is not None:
+        base_time = shutter_to_seconds(film_base_img.shutter_speed)
+        base_iso_val = float(iso_base) if iso_base is not None else float(film_base_img.iso)
+    elif profile is not None:
+        if hasattr(profile, 'film_base_shutter'):
+            base_time = shutter_to_seconds(profile.film_base_shutter)
+            base_iso_val = float(iso_base) if iso_base is not None else float(getattr(profile, 'film_base_iso', 100.0))
+        elif isinstance(profile, dict):
+            fb = profile.get('film_base', {})
+            fb_shutter = fb.get('shutter', profile.get('film_base_shutter', '1/8s'))
+            base_time = shutter_to_seconds(fb_shutter)
+            base_iso_val = float(iso_base) if iso_base is not None else float(fb.get('iso', profile.get('film_base_iso', 100.0)))
+        else:
+            fb_shutter = getattr(profile, 'film_base_shutter', '1/8s')
+            base_time = shutter_to_seconds(fb_shutter)
+            base_iso_val = float(iso_base) if iso_base is not None else float(getattr(profile, 'film_base_iso', 100.0))
+    else:
+        base_time = 0.125
+        base_iso_val = float(iso_base) if iso_base is not None else 100.0
+
+    exposure_base = base_time * (base_iso_val / 100.0)
+    exposure_scan = scan_time * (scan_iso_val / 100.0)
+    exposure_ratio = exposure_base / exposure_scan if exposure_scan > 0 else 1.0
+
+    if return_details:
+        return exposure_ratio, base_time, base_iso_val, scan_time, scan_iso_val
+    return exposure_ratio
+
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +259,19 @@ class FilmProfile:
         return (self.film_base['r_avg'],
                 self.film_base['g_avg'],
                 self.film_base['b_avg'])
+
+    def get_exposure_ratio(self, img=None, film_base_img=None, shutter_str=None,
+                           t_scan=None, iso_scan=None, return_details=False):
+        """Compute exposure ratio relative to this profile's film base exposure."""
+        return compute_exposure_ratio(
+            img=img,
+            profile=self,
+            film_base_img=film_base_img,
+            shutter_str=shutter_str,
+            t_scan=t_scan,
+            iso_scan=iso_scan,
+            return_details=return_details,
+        )
 
     def build_training_dataframe(self, ref_xyz_path):
         """Create a pandas DataFrame matching negicc's build_prof.py format.
@@ -520,17 +639,11 @@ def build_icc_profile(profile, ref_xyz_path, output_dir,
     log("Step 1: Loading profile and reference data...")
     
     # 1. Compute exposure ratio between film base capture and target capture
-    base_num, base_den = parse_shutter_speed(profile.film_base_shutter)
-    t_base = base_num / base_den
-    iso_base = profile.film_base_iso
-
-    target_num, target_den = parse_shutter_speed(profile.target_shutter)
-    t_target = target_num / target_den
-    iso_target = profile.target_iso
-
-    exposure_profile_fb = t_base * (iso_base / 100.0)
-    exposure_target = t_target * (iso_target / 100.0)
-    exposure_ratio = exposure_profile_fb / exposure_target if exposure_target > 0 else 1.0
+    exposure_ratio = compute_exposure_ratio(
+        profile=profile,
+        t_scan=profile.target_shutter,
+        iso_scan=profile.target_iso,
+    )
 
     # 2. Scale factors to map film base (at target exposure) to normalization_target
     fb_r = profile.film_base['r_avg']
@@ -1041,27 +1154,9 @@ def convert_raw_image(img, profile, clut_path=None, shutter_str=None, exposure_c
     sys.stdout.flush()
 
     # 2. Compute exposure ratio
-    if shutter_str is not None:
-        scan_num, scan_den = parse_shutter_speed(shutter_str)
-        t_scan = scan_num / scan_den
-    else:
-        t_scan = img.shutter_speed
-
-    # Shutter speed and ISO of film base (use film_base_img if provided, otherwise fallback to profile metadata)
-    if film_base_img is not None:
-        t_base = film_base_img.shutter_speed
-        iso_base = film_base_img.iso
-    else:
-        base_num, base_den = parse_shutter_speed(profile.film_base_shutter)
-        t_base = base_num / base_den
-        iso_base = profile.film_base_iso
-
-    iso_scan = img.iso
-
-    # Exposure: t * ISO
-    exposure_profile = t_base * (iso_base / 100.0)
-    exposure_scan = t_scan * (iso_scan / 100.0)
-    exposure_ratio = exposure_profile / exposure_scan if exposure_scan > 0 else 1.0
+    exposure_ratio = compute_exposure_ratio(
+        img=img, profile=profile, film_base_img=film_base_img, shutter_str=shutter_str
+    )
 
     # Scale factors to map film base at current exposure to normalization_target
     target_val = profile.normalization_target
@@ -1203,27 +1298,9 @@ def convert_raw_to_tiff(img, profile, output_path, colorspace="srgb", clut_path=
         fb_b = profile.film_base['b_avg']
 
     # 2. Compute exposure ratio
-    if shutter_str is not None:
-        scan_num, scan_den = parse_shutter_speed(shutter_str)
-        t_scan = scan_num / scan_den
-    else:
-        t_scan = img.shutter_speed
-
-    # Shutter speed and ISO of film base
-    if film_base_img is not None:
-        t_base = film_base_img.shutter_speed
-        iso_base = film_base_img.iso
-    else:
-        base_num, base_den = parse_shutter_speed(profile.film_base_shutter)
-        t_base = base_num / base_den
-        iso_base = profile.film_base_iso
-
-    iso_scan = img.iso
-
-    # Exposure: t * ISO
-    exposure_profile = t_base * (iso_base / 100.0)
-    exposure_scan = t_scan * (iso_scan / 100.0)
-    exposure_ratio = exposure_profile / exposure_scan if exposure_scan > 0 else 1.0
+    exposure_ratio, t_base, iso_base, t_scan, iso_scan = compute_exposure_ratio(
+        img=img, profile=profile, film_base_img=film_base_img, shutter_str=shutter_str, return_details=True
+    )
 
     # Scale factors to map film base at current exposure to normalization_target
     target_val = profile.normalization_target
@@ -1302,25 +1379,9 @@ def convert_raw_to_numpy(img, profile, colorspace="srgb", clut_path=None, shutte
         fb_g = profile.film_base['g_avg']
         fb_b = profile.film_base['b_avg']
 
-    if shutter_str is not None:
-        scan_num, scan_den = parse_shutter_speed(shutter_str)
-        t_scan = scan_num / scan_den
-    else:
-        t_scan = img.shutter_speed
-
-    if film_base_img is not None:
-        t_base = film_base_img.shutter_speed
-        iso_base = film_base_img.iso
-    else:
-        base_num, base_den = parse_shutter_speed(profile.film_base_shutter)
-        t_base = base_num / base_den
-        iso_base = profile.film_base_iso
-
-    iso_scan = img.iso
-
-    exposure_profile = t_base * (iso_base / 100.0)
-    exposure_scan = t_scan * (iso_scan / 100.0)
-    exposure_ratio = exposure_profile / exposure_scan if exposure_scan > 0 else 1.0
+    exposure_ratio, t_base, iso_base, t_scan, iso_scan = compute_exposure_ratio(
+        img=img, profile=profile, film_base_img=film_base_img, shutter_str=shutter_str, return_details=True
+    )
 
     target_val = profile.normalization_target
     scale_r = (target_val / fb_r) * exposure_ratio if fb_r > 0 else 1.0

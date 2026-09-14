@@ -58,16 +58,14 @@ def main():
     p_fb_r = profile.film_base['r_avg']
     p_fb_g = profile.film_base['g_avg']
     p_fb_b = profile.film_base['b_avg']
-    base_num, base_den = film_profiling.parse_shutter_speed(profile.film_base_shutter)
-    t_base = base_num / base_den
-    iso_base = profile.film_base_iso
-
     # Scanned image parameters
     t_scan = 0.125
     iso_scan = 100
-    exposure_profile = t_base * (iso_base / 100.0)
-    exposure_scan = t_scan * (iso_scan / 100.0)
-    exposure_ratio = exposure_profile / exposure_scan
+    exposure_ratio = film_profiling.compute_exposure_ratio(
+        profile=profile,
+        t_scan=t_scan,
+        iso_scan=iso_scan
+    )
 
     target_val = profile.normalization_target
     scale_r = (target_val / p_fb_r) * exposure_ratio
