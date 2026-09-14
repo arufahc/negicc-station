@@ -519,6 +519,9 @@ When optimizing the conventional profiled pipeline against target photographic a
 | **Portra400_raw_0005** (Low-key night) | `Target 4` | $0.6226$ | $0.80$ | $0.80$ | **12.60** |
 | **test_capture_ref** (Dense scan) | `Target 3` | $26.7722$ | $0.78$ | $1.61$ | **39.04** |
 
+![Multi-Frame Inversion Comparison Matrix](test_imgs/all_frames_ps_cascade_comparison.jpg)
+*Multi-frame comparison across Portra 400 roll (Frames 0001–0005) showing direct physical sensitometric inversion vs. bootstrapped preview curves.*
+
 The **Predictive Appearance Model** eliminates manual target selection and gain-tuning:
 - It computes physical optical density $D = -\log_{10}(T)$ normalized to the unexposed film base via [`compute_exposure_ratio`](src/film_profiling.py).
 - A two-stage cascade (Pass 0 Photoshop Auto-WB preview bootstrap $\to$ Stage 2 physical sensitometric fixed-point solver) converges in $\sim 19$s on CPU without requiring GPU acceleration or proprietary SDKs.
