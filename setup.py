@@ -20,6 +20,7 @@ if not nvcc_path:
 has_cuda = False
 extra_objects = []
 extra_compile_args = ['-std=c++17', '-Wall', '-Wextra', '-fsigned-char']
+extra_compile_args.append(f"-idirafter{os.path.join(project_dir, '3rd_party')}")
 libraries = ['Cr_Core', 'raw', 'lcms2', 'pthread']
 library_dirs = [sdk_lib_dir]
 

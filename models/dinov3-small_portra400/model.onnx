@@ -1,0 +1,699 @@
+
+pytorch
+2.14.0+cpu:ø¸
+◊
+tokens
+val_0val_1node_MatMul_1"MatMulJw
+	namespacej: src.models.PhotographicIntentAdapter/in_proj: torch.nn.modules.linear.Linear/linear: aten.linear.defaultJÉ
+pkg.torch.onnx.class_hierarchya['src.models.PhotographicIntentAdapter', 'torch.nn.modules.linear.Linear', 'aten.linear.default']J¶
+pkg.torch.onnx.fx_nodeã%linear : [num_users=1] = call_function[target=torch.ops.aten.linear.default](args = (%z, %p_in_proj_weight, %p_in_proj_bias), kwargs = {})J7
+pkg.torch.onnx.name_scopes['', 'in_proj', 'linear']J∆
+pkg.torch.onnx.stack_traceßFile "/home/alpha/Projects/FilmModels/src/models.py", line 98, in forward
+    h = self.act1(self.norm1(self.in_proj(z)))
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/linear.py", line 134, in forward
+    return F.linear(input, self.weight, self.bias)
+Ÿ
+val_1
+in_proj.biaslinearnode_linear"AddJw
+	namespacej: src.models.PhotographicIntentAdapter/in_proj: torch.nn.modules.linear.Linear/linear: aten.linear.defaultJÉ
+pkg.torch.onnx.class_hierarchya['src.models.PhotographicIntentAdapter', 'torch.nn.modules.linear.Linear', 'aten.linear.default']J¶
+pkg.torch.onnx.fx_nodeã%linear : [num_users=1] = call_function[target=torch.ops.aten.linear.default](args = (%z, %p_in_proj_weight, %p_in_proj_bias), kwargs = {})J7
+pkg.torch.onnx.name_scopes['', 'in_proj', 'linear']J∆
+pkg.torch.onnx.stack_traceßFile "/home/alpha/Projects/FilmModels/src/models.py", line 98, in forward
+    h = self.act1(self.norm1(self.in_proj(z)))
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/linear.py", line 134, in forward
+    return F.linear(input, self.weight, self.bias)
+Â
+linear
+norm1.weight
+
+norm1.bias
+layer_normnode_layer_norm"LayerNormalization*
+
+stash_type†*
+epsilon¨≈'7†*
+axisˇˇˇˇˇˇˇˇˇ†Já
+	namespacez: src.models.PhotographicIntentAdapter/norm1: torch.nn.modules.normalization.LayerNorm/layer_norm: aten.layer_norm.defaultJë
+pkg.torch.onnx.class_hierarchyo['src.models.PhotographicIntentAdapter', 'torch.nn.modules.normalization.LayerNorm', 'aten.layer_norm.default']Jƒ
+pkg.torch.onnx.fx_node©%layer_norm : [num_users=1] = call_function[target=torch.ops.aten.layer_norm.default](args = (%linear, [384], %p_norm1_weight, %p_norm1_bias, 1e-05, False), kwargs = {})J9
+pkg.torch.onnx.name_scopes['', 'norm1', 'layer_norm']J≥
+pkg.torch.onnx.stack_traceîFile "/home/alpha/Projects/FilmModels/src/models.py", line 98, in forward
+    h = self.act1(self.norm1(self.in_proj(z)))
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/normalization.py", line 228, in forward
+    return F.layer_norm(
+¥
+
+layer_norm
+val_4val_5
+node_Div_3"DivJr
+	namespacee: src.models.PhotographicIntentAdapter/act1: torch.nn.modules.activation.GELU/gelu: aten.gelu.defaultJÉ
+pkg.torch.onnx.class_hierarchya['src.models.PhotographicIntentAdapter', 'torch.nn.modules.activation.GELU', 'aten.gelu.default']Já
+pkg.torch.onnx.fx_nodem%gelu : [num_users=2] = call_function[target=torch.ops.aten.gelu.default](args = (%layer_norm,), kwargs = {})J2
+pkg.torch.onnx.name_scopes['', 'act1', 'gelu']JŒ
+pkg.torch.onnx.stack_traceØFile "/home/alpha/Projects/FilmModels/src/models.py", line 98, in forward
+    h = self.act1(self.norm1(self.in_proj(z)))
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/activation.py", line 817, in forward
+    return F.gelu(input, approximate=self.approximate)
+®
+val_5val_6
+node_Erf_4"ErfJr
+	namespacee: src.models.PhotographicIntentAdapter/act1: torch.nn.modules.activation.GELU/gelu: aten.gelu.defaultJÉ
+pkg.torch.onnx.class_hierarchya['src.models.PhotographicIntentAdapter', 'torch.nn.modules.activation.GELU', 'aten.gelu.default']Já
+pkg.torch.onnx.fx_nodem%gelu : [num_users=2] = call_function[target=torch.ops.aten.gelu.default](args = (%layer_norm,), kwargs = {})J2
+pkg.torch.onnx.name_scopes['', 'act1', 'gelu']JŒ
+pkg.torch.onnx.stack_traceØFile "/home/alpha/Projects/FilmModels/src/models.py", line 98, in forward
+    h = self.act1(self.norm1(self.in_proj(z)))
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/activation.py", line 817, in forward
+    return F.gelu(input, approximate=self.approximate)
+Ø
+val_6
+val_7val_8
+node_Add_6"AddJr
+	namespacee: src.models.PhotographicIntentAdapter/act1: torch.nn.modules.activation.GELU/gelu: aten.gelu.defaultJÉ
+pkg.torch.onnx.class_hierarchya['src.models.PhotographicIntentAdapter', 'torch.nn.modules.activation.GELU', 'aten.gelu.default']Já
+pkg.torch.onnx.fx_nodem%gelu : [num_users=2] = call_function[target=torch.ops.aten.gelu.default](args = (%layer_norm,), kwargs = {})J2
+pkg.torch.onnx.name_scopes['', 'act1', 'gelu']JŒ
+pkg.torch.onnx.stack_traceØFile "/home/alpha/Projects/FilmModels/src/models.py", line 98, in forward
+    h = self.act1(self.norm1(self.in_proj(z)))
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/activation.py", line 817, in forward
+    return F.gelu(input, approximate=self.approximate)
+∞
+val_9
+val_8val_10
+node_Mul_8"MulJr
+	namespacee: src.models.PhotographicIntentAdapter/act1: torch.nn.modules.activation.GELU/gelu: aten.gelu.defaultJÉ
+pkg.torch.onnx.class_hierarchya['src.models.PhotographicIntentAdapter', 'torch.nn.modules.activation.GELU', 'aten.gelu.default']Já
+pkg.torch.onnx.fx_nodem%gelu : [num_users=2] = call_function[target=torch.ops.aten.gelu.default](args = (%layer_norm,), kwargs = {})J2
+pkg.torch.onnx.name_scopes['', 'act1', 'gelu']JŒ
+pkg.torch.onnx.stack_traceØFile "/home/alpha/Projects/FilmModels/src/models.py", line 98, in forward
+    h = self.act1(self.norm1(self.in_proj(z)))
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/activation.py", line 817, in forward
+    return F.gelu(input, approximate=self.approximate)
+≥
+
+layer_norm
+val_10gelu	node_gelu"MulJr
+	namespacee: src.models.PhotographicIntentAdapter/act1: torch.nn.modules.activation.GELU/gelu: aten.gelu.defaultJÉ
+pkg.torch.onnx.class_hierarchya['src.models.PhotographicIntentAdapter', 'torch.nn.modules.activation.GELU', 'aten.gelu.default']Já
+pkg.torch.onnx.fx_nodem%gelu : [num_users=2] = call_function[target=torch.ops.aten.gelu.default](args = (%layer_norm,), kwargs = {})J2
+pkg.torch.onnx.name_scopes['', 'act1', 'gelu']JŒ
+pkg.torch.onnx.stack_traceØFile "/home/alpha/Projects/FilmModels/src/models.py", line 98, in forward
+    h = self.act1(self.norm1(self.in_proj(z)))
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/activation.py", line 817, in forward
+    return F.gelu(input, approximate=self.approximate)
+Ô
+gelu
+val_11val_12node_MatMul_10"MatMulJØ
+	namespace°: src.models.PhotographicIntentAdapter/res_block: torch.nn.modules.container.Sequential/res_block.0: torch.nn.modules.linear.Linear/linear_1: aten.linear.defaultJ≠
+pkg.torch.onnx.class_hierarchyä['src.models.PhotographicIntentAdapter', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.linear.Linear', 'aten.linear.default']J≥
+pkg.torch.onnx.fx_nodeò%linear_1 : [num_users=1] = call_function[target=torch.ops.aten.linear.default](args = (%gelu, %p_res_block_0_weight, %p_res_block_0_bias), kwargs = {})JJ
+pkg.torch.onnx.name_scopes,['', 'res_block', 'res_block.0', 'linear_1']J⁄
+pkg.torch.onnx.stack_traceªFile "/home/alpha/Projects/FilmModels/src/models.py", line 99, in forward
+    h = self.norm2(h + self.res_block(h))
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/linear.py", line 134, in forward
+    return F.linear(input, self.weight, self.bias)
+˘
+val_12
+res_block.0.biaslinear_1node_linear_1"AddJØ
+	namespace°: src.models.PhotographicIntentAdapter/res_block: torch.nn.modules.container.Sequential/res_block.0: torch.nn.modules.linear.Linear/linear_1: aten.linear.defaultJ≠
+pkg.torch.onnx.class_hierarchyä['src.models.PhotographicIntentAdapter', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.linear.Linear', 'aten.linear.default']J≥
+pkg.torch.onnx.fx_nodeò%linear_1 : [num_users=1] = call_function[target=torch.ops.aten.linear.default](args = (%gelu, %p_res_block_0_weight, %p_res_block_0_bias), kwargs = {})JJ
+pkg.torch.onnx.name_scopes,['', 'res_block', 'res_block.0', 'linear_1']J⁄
+pkg.torch.onnx.stack_traceªFile "/home/alpha/Projects/FilmModels/src/models.py", line 99, in forward
+    h = self.norm2(h + self.res_block(h))
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/linear.py", line 134, in forward
+    return F.linear(input, self.weight, self.bias)
+î
+
+linear_1
+res_block.1.weight
+res_block.1.biaslayer_norm_1node_layer_norm_1"LayerNormalization*
+
+stash_type†*
+epsilon¨≈'7†*
+axisˇˇˇˇˇˇˇˇˇ†J¡
+	namespace≥: src.models.PhotographicIntentAdapter/res_block: torch.nn.modules.container.Sequential/res_block.1: torch.nn.modules.normalization.LayerNorm/layer_norm_1: aten.layer_norm.defaultJª
+pkg.torch.onnx.class_hierarchyò['src.models.PhotographicIntentAdapter', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.normalization.LayerNorm', 'aten.layer_norm.default']J‘
+pkg.torch.onnx.fx_nodeπ%layer_norm_1 : [num_users=1] = call_function[target=torch.ops.aten.layer_norm.default](args = (%linear_1, [384], %p_res_block_1_weight, %p_res_block_1_bias, 1e-05, False), kwargs = {})JN
+pkg.torch.onnx.name_scopes0['', 'res_block', 'res_block.1', 'layer_norm_1']J«
+pkg.torch.onnx.stack_trace®File "/home/alpha/Projects/FilmModels/src/models.py", line 99, in forward
+    h = self.norm2(h + self.res_block(h))
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/normalization.py", line 228, in forward
+    return F.layer_norm(
+Ã
+layer_norm_1
+val_4val_16node_Div_12"DivJ≠
+	namespaceü: src.models.PhotographicIntentAdapter/res_block: torch.nn.modules.container.Sequential/res_block.2: torch.nn.modules.activation.GELU/gelu_1: aten.gelu.defaultJ≠
+pkg.torch.onnx.class_hierarchyä['src.models.PhotographicIntentAdapter', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.GELU', 'aten.gelu.default']Jã
+pkg.torch.onnx.fx_nodeq%gelu_1 : [num_users=1] = call_function[target=torch.ops.aten.gelu.default](args = (%layer_norm_1,), kwargs = {})JH
+pkg.torch.onnx.name_scopes*['', 'res_block', 'res_block.2', 'gelu_1']J‚
+pkg.torch.onnx.stack_trace√File "/home/alpha/Projects/FilmModels/src/models.py", line 99, in forward
+    h = self.norm2(h + self.res_block(h))
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/activation.py", line 817, in forward
+    return F.gelu(input, approximate=self.approximate)
+ø
+val_16val_17node_Erf_13"ErfJ≠
+	namespaceü: src.models.PhotographicIntentAdapter/res_block: torch.nn.modules.container.Sequential/res_block.2: torch.nn.modules.activation.GELU/gelu_1: aten.gelu.defaultJ≠
+pkg.torch.onnx.class_hierarchyä['src.models.PhotographicIntentAdapter', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.GELU', 'aten.gelu.default']Jã
+pkg.torch.onnx.fx_nodeq%gelu_1 : [num_users=1] = call_function[target=torch.ops.aten.gelu.default](args = (%layer_norm_1,), kwargs = {})JH
+pkg.torch.onnx.name_scopes*['', 'res_block', 'res_block.2', 'gelu_1']J‚
+pkg.torch.onnx.stack_trace√File "/home/alpha/Projects/FilmModels/src/models.py", line 99, in forward
+    h = self.norm2(h + self.res_block(h))
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/activation.py", line 817, in forward
+    return F.gelu(input, approximate=self.approximate)
+∆
+val_17
+val_7val_19node_Add_15"AddJ≠
+	namespaceü: src.models.PhotographicIntentAdapter/res_block: torch.nn.modules.container.Sequential/res_block.2: torch.nn.modules.activation.GELU/gelu_1: aten.gelu.defaultJ≠
+pkg.torch.onnx.class_hierarchyä['src.models.PhotographicIntentAdapter', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.GELU', 'aten.gelu.default']Jã
+pkg.torch.onnx.fx_nodeq%gelu_1 : [num_users=1] = call_function[target=torch.ops.aten.gelu.default](args = (%layer_norm_1,), kwargs = {})JH
+pkg.torch.onnx.name_scopes*['', 'res_block', 'res_block.2', 'gelu_1']J‚
+pkg.torch.onnx.stack_trace√File "/home/alpha/Projects/FilmModels/src/models.py", line 99, in forward
+    h = self.norm2(h + self.res_block(h))
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/activation.py", line 817, in forward
+    return F.gelu(input, approximate=self.approximate)
+∆
+val_9
+val_19val_21node_Mul_17"MulJ≠
+	namespaceü: src.models.PhotographicIntentAdapter/res_block: torch.nn.modules.container.Sequential/res_block.2: torch.nn.modules.activation.GELU/gelu_1: aten.gelu.defaultJ≠
+pkg.torch.onnx.class_hierarchyä['src.models.PhotographicIntentAdapter', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.GELU', 'aten.gelu.default']Jã
+pkg.torch.onnx.fx_nodeq%gelu_1 : [num_users=1] = call_function[target=torch.ops.aten.gelu.default](args = (%layer_norm_1,), kwargs = {})JH
+pkg.torch.onnx.name_scopes*['', 'res_block', 'res_block.2', 'gelu_1']J‚
+pkg.torch.onnx.stack_trace√File "/home/alpha/Projects/FilmModels/src/models.py", line 99, in forward
+    h = self.norm2(h + self.res_block(h))
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/activation.py", line 817, in forward
+    return F.gelu(input, approximate=self.approximate)
+Õ
+layer_norm_1
+val_21gelu_1node_gelu_1"MulJ≠
+	namespaceü: src.models.PhotographicIntentAdapter/res_block: torch.nn.modules.container.Sequential/res_block.2: torch.nn.modules.activation.GELU/gelu_1: aten.gelu.defaultJ≠
+pkg.torch.onnx.class_hierarchyä['src.models.PhotographicIntentAdapter', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.GELU', 'aten.gelu.default']Jã
+pkg.torch.onnx.fx_nodeq%gelu_1 : [num_users=1] = call_function[target=torch.ops.aten.gelu.default](args = (%layer_norm_1,), kwargs = {})JH
+pkg.torch.onnx.name_scopes*['', 'res_block', 'res_block.2', 'gelu_1']J‚
+pkg.torch.onnx.stack_trace√File "/home/alpha/Projects/FilmModels/src/models.py", line 99, in forward
+    h = self.norm2(h + self.res_block(h))
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/activation.py", line 817, in forward
+    return F.gelu(input, approximate=self.approximate)
+Û
+gelu_1
+val_22val_23node_MatMul_19"MatMulJØ
+	namespace°: src.models.PhotographicIntentAdapter/res_block: torch.nn.modules.container.Sequential/res_block.3: torch.nn.modules.linear.Linear/linear_2: aten.linear.defaultJ≠
+pkg.torch.onnx.class_hierarchyä['src.models.PhotographicIntentAdapter', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.linear.Linear', 'aten.linear.default']Jµ
+pkg.torch.onnx.fx_nodeö%linear_2 : [num_users=1] = call_function[target=torch.ops.aten.linear.default](args = (%gelu_1, %p_res_block_3_weight, %p_res_block_3_bias), kwargs = {})JJ
+pkg.torch.onnx.name_scopes,['', 'res_block', 'res_block.3', 'linear_2']J⁄
+pkg.torch.onnx.stack_traceªFile "/home/alpha/Projects/FilmModels/src/models.py", line 99, in forward
+    h = self.norm2(h + self.res_block(h))
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/linear.py", line 134, in forward
+    return F.linear(input, self.weight, self.bias)
+˚
+val_23
+res_block.3.biaslinear_2node_linear_2"AddJØ
+	namespace°: src.models.PhotographicIntentAdapter/res_block: torch.nn.modules.container.Sequential/res_block.3: torch.nn.modules.linear.Linear/linear_2: aten.linear.defaultJ≠
+pkg.torch.onnx.class_hierarchyä['src.models.PhotographicIntentAdapter', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.linear.Linear', 'aten.linear.default']Jµ
+pkg.torch.onnx.fx_nodeö%linear_2 : [num_users=1] = call_function[target=torch.ops.aten.linear.default](args = (%gelu_1, %p_res_block_3_weight, %p_res_block_3_bias), kwargs = {})JJ
+pkg.torch.onnx.name_scopes,['', 'res_block', 'res_block.3', 'linear_2']J⁄
+pkg.torch.onnx.stack_traceªFile "/home/alpha/Projects/FilmModels/src/models.py", line 99, in forward
+    h = self.norm2(h + self.res_block(h))
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/linear.py", line 134, in forward
+    return F.linear(input, self.weight, self.bias)
+¶
+gelu
+linear_2add_28node_add_28"AddJK
+	namespace>: src.models.PhotographicIntentAdapter/add_28: aten.add.TensorJ]
+pkg.torch.onnx.class_hierarchy;['src.models.PhotographicIntentAdapter', 'aten.add.Tensor']Jã
+pkg.torch.onnx.fx_nodeq%add_28 : [num_users=1] = call_function[target=torch.ops.aten.add.Tensor](args = (%gelu, %linear_2), kwargs = {})J,
+pkg.torch.onnx.name_scopes['', 'add_28']Jë
+pkg.torch.onnx.stack_tracesFile "/home/alpha/Projects/FilmModels/src/models.py", line 99, in forward
+    h = self.norm2(h + self.res_block(h))
+Í
+add_28
+norm2.weight
+
+norm2.biaslayer_norm_2node_layer_norm_2"LayerNormalization*
+
+stash_type†*
+epsilon¨≈'7†*
+axisˇˇˇˇˇˇˇˇˇ†Jâ
+	namespace|: src.models.PhotographicIntentAdapter/norm2: torch.nn.modules.normalization.LayerNorm/layer_norm_2: aten.layer_norm.defaultJë
+pkg.torch.onnx.class_hierarchyo['src.models.PhotographicIntentAdapter', 'torch.nn.modules.normalization.LayerNorm', 'aten.layer_norm.default']J∆
+pkg.torch.onnx.fx_node´%layer_norm_2 : [num_users=2] = call_function[target=torch.ops.aten.layer_norm.default](args = (%add_28, [384], %p_norm2_weight, %p_norm2_bias, 1e-05, False), kwargs = {})J;
+pkg.torch.onnx.name_scopes['', 'norm2', 'layer_norm_2']JÆ
+pkg.torch.onnx.stack_traceèFile "/home/alpha/Projects/FilmModels/src/models.py", line 99, in forward
+    h = self.norm2(h + self.res_block(h))
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/normalization.py", line 228, in forward
+    return F.layer_norm(
+Ê
+layer_norm_2
+val_26val_27node_MatMul_21"MatMulJ{
+	namespacen: src.models.PhotographicIntentAdapter/mean_head: torch.nn.modules.linear.Linear/linear_3: aten.linear.defaultJÉ
+pkg.torch.onnx.class_hierarchya['src.models.PhotographicIntentAdapter', 'torch.nn.modules.linear.Linear', 'aten.linear.default']J∑
+pkg.torch.onnx.fx_nodeú%linear_3 : [num_users=1] = call_function[target=torch.ops.aten.linear.default](args = (%layer_norm_2, %p_mean_head_weight, %p_mean_head_bias), kwargs = {})J;
+pkg.torch.onnx.name_scopes['', 'mean_head', 'linear_3']J≥
+pkg.torch.onnx.stack_traceîFile "/home/alpha/Projects/FilmModels/src/models.py", line 101, in forward
+    mu = self.mean_head(h)
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/linear.py", line 134, in forward
+    return F.linear(input, self.weight, self.bias)
+‡
+val_27
+mean_head.biasmunode_linear_3"AddJ{
+	namespacen: src.models.PhotographicIntentAdapter/mean_head: torch.nn.modules.linear.Linear/linear_3: aten.linear.defaultJÉ
+pkg.torch.onnx.class_hierarchya['src.models.PhotographicIntentAdapter', 'torch.nn.modules.linear.Linear', 'aten.linear.default']J∑
+pkg.torch.onnx.fx_nodeú%linear_3 : [num_users=1] = call_function[target=torch.ops.aten.linear.default](args = (%layer_norm_2, %p_mean_head_weight, %p_mean_head_bias), kwargs = {})J;
+pkg.torch.onnx.name_scopes['', 'mean_head', 'linear_3']J≥
+pkg.torch.onnx.stack_traceîFile "/home/alpha/Projects/FilmModels/src/models.py", line 101, in forward
+    mu = self.mean_head(h)
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/linear.py", line 134, in forward
+    return F.linear(input, self.weight, self.bias)
+Ü
+layer_norm_2
+val_28val_29node_MatMul_23"MatMulJz
+	namespacem: src.models.PhotographicIntentAdapter/var_head: torch.nn.modules.linear.Linear/linear_4: aten.linear.defaultJÉ
+pkg.torch.onnx.class_hierarchya['src.models.PhotographicIntentAdapter', 'torch.nn.modules.linear.Linear', 'aten.linear.default']Jµ
+pkg.torch.onnx.fx_nodeö%linear_4 : [num_users=1] = call_function[target=torch.ops.aten.linear.default](args = (%layer_norm_2, %p_var_head_weight, %p_var_head_bias), kwargs = {})J:
+pkg.torch.onnx.name_scopes['', 'var_head', 'linear_4']J◊
+pkg.torch.onnx.stack_trace∏File "/home/alpha/Projects/FilmModels/src/models.py", line 102, in forward
+    log_var = torch.clamp(self.var_head(h), min=-2.5, max=5.0)
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/linear.py", line 134, in forward
+    return F.linear(input, self.weight, self.bias)
+Ö
+val_29
+var_head.biaslinear_4node_linear_4"AddJz
+	namespacem: src.models.PhotographicIntentAdapter/var_head: torch.nn.modules.linear.Linear/linear_4: aten.linear.defaultJÉ
+pkg.torch.onnx.class_hierarchya['src.models.PhotographicIntentAdapter', 'torch.nn.modules.linear.Linear', 'aten.linear.default']Jµ
+pkg.torch.onnx.fx_nodeö%linear_4 : [num_users=1] = call_function[target=torch.ops.aten.linear.default](args = (%layer_norm_2, %p_var_head_weight, %p_var_head_bias), kwargs = {})J:
+pkg.torch.onnx.name_scopes['', 'var_head', 'linear_4']J◊
+pkg.torch.onnx.stack_trace∏File "/home/alpha/Projects/FilmModels/src/models.py", line 102, in forward
+    log_var = torch.clamp(self.var_head(h), min=-2.5, max=5.0)
+  File "/home/alpha/Projects/FilmModels/venv/lib/python3.12/site-packages/torch/nn/modules/linear.py", line 134, in forward
+    return F.linear(input, self.weight, self.bias)
+“
+linear_4
+val_31
+val_33log_var
+node_clamp"ClipJM
+	namespace@: src.models.PhotographicIntentAdapter/clamp: aten.clamp.defaultJ`
+pkg.torch.onnx.class_hierarchy>['src.models.PhotographicIntentAdapter', 'aten.clamp.default']Jë
+pkg.torch.onnx.fx_nodew%clamp : [num_users=2] = call_function[target=torch.ops.aten.clamp.default](args = (%linear_4, -2.5, 5.0), kwargs = {})J+
+pkg.torch.onnx.name_scopes['', 'clamp']J®
+pkg.torch.onnx.stack_traceâFile "/home/alpha/Projects/FilmModels/src/models.py", line 102, in forward
+    log_var = torch.clamp(self.var_head(h), min=-2.5, max=5.0)
+ù
+log_var
+val_9mul_36node_mul_36"MulJK
+	namespace>: src.models.PhotographicIntentAdapter/mul_36: aten.mul.TensorJ]
+pkg.torch.onnx.class_hierarchy;['src.models.PhotographicIntentAdapter', 'aten.mul.Tensor']JÜ
+pkg.torch.onnx.fx_nodel%mul_36 : [num_users=1] = call_function[target=torch.ops.aten.mul.Tensor](args = (%clamp, 0.5), kwargs = {})J,
+pkg.torch.onnx.name_scopes['', 'mul_36']Jç
+pkg.torch.onnx.stack_traceoFile "/home/alpha/Projects/FilmModels/src/models.py", line 103, in forward
+    sigma = torch.exp(0.5 * log_var)
+à
+mul_36sigmanode_exp"ExpJI
+	namespace<: src.models.PhotographicIntentAdapter/exp: aten.exp.defaultJ^
+pkg.torch.onnx.class_hierarchy<['src.models.PhotographicIntentAdapter', 'aten.exp.default']JÅ
+pkg.torch.onnx.fx_nodeg%exp : [num_users=1] = call_function[target=torch.ops.aten.exp.default](args = (%mul_36,), kwargs = {})J)
+pkg.torch.onnx.name_scopes['', 'exp']Jç
+pkg.torch.onnx.stack_traceoFile "/home/alpha/Projects/FilmModels/src/models.py", line 103, in forward
+    sigma = torch.exp(0.5 * log_var)
+main_graph*OÄBin_proj.biasj
+locationmodel.onnx.dataj
+offset0j
+length1536p*RÄBnorm1.weightj
+locationmodel.onnx.dataj
+offset1536j
+length1536p*PÄB
+norm1.biasj
+locationmodel.onnx.dataj
+offset3072j
+length1536p*VÄBres_block.0.biasj
+locationmodel.onnx.dataj
+offset4608j
+length1536p*XÄBres_block.1.weightj
+locationmodel.onnx.dataj
+offset6144j
+length1536p*VÄBres_block.1.biasj
+locationmodel.onnx.dataj
+offset7680j
+length1536p*VÄBres_block.3.biasj
+locationmodel.onnx.dataj
+offset9216j
+length1536p*SÄBnorm2.weightj
+locationmodel.onnx.dataj
+offset10752j
+length1536p*QÄB
+norm2.biasj
+locationmodel.onnx.dataj
+offset12288j
+length1536p*"Bmean_head.biasJÛ*HB¨∞Q∫ç|Ò<*!Bvar_head.biasJ&Ñ @b5Å?ﬂVÅ?*TÄÄBval_0j
+locationmodel.onnx.dataj
+offset1245184j
+length1179648p*RÄÄBval_11j
+locationmodel.onnx.dataj
+offset23040j
+length589824p*SÄÄBval_22j
+locationmodel.onnx.dataj
+offset612864j
+length589824p*OÄBval_26j
+locationmodel.onnx.dataj
+offset13824j
+length4608p*OÄBval_28j
+locationmodel.onnx.dataj
+offset18432j
+length4608p*Bval_31J   ¿*Bval_33J  †@*Bval_4JÛµ?*Bval_7J  Ä?*Bval_9J   ?Zÿ
+tokens(
+&"
+
+batch_size
+num_patches
+Ä"=
+/pkg.torch.export.graph_signature.InputSpec.kind
+USER_INPUT"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"&
+!pkg.torch.onnx.original_node_namezbù
+mu'
+%!
+
+batch_size
+num_patches
+"?
+0pkg.torch.export.graph_signature.OutputSpec.kindUSER_OUTPUT"-
+!pkg.torch.onnx.original_node_namelinear_3bõ
+sigma'
+%!
+
+batch_size
+num_patches
+"?
+0pkg.torch.export.graph_signature.OutputSpec.kindUSER_OUTPUT"(
+!pkg.torch.onnx.original_node_nameexpbü
+log_var'
+%!
+
+batch_size
+num_patches
+"?
+0pkg.torch.export.graph_signature.OutputSpec.kindUSER_OUTPUT"*
+!pkg.torch.onnx.original_node_nameclampjÕ
+in_proj.bias
+	
+Ä"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"3
+!pkg.torch.onnx.original_node_namep_in_proj_biasjÕ
+norm1.weight
+	
+Ä"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"3
+!pkg.torch.onnx.original_node_namep_norm1_weightj…
+
+norm1.bias
+	
+Ä"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"1
+!pkg.torch.onnx.original_node_namep_norm1_biasj’
+res_block.0.bias
+	
+Ä"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"7
+!pkg.torch.onnx.original_node_namep_res_block_0_biasjŸ
+res_block.1.weight
+	
+Ä"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"9
+!pkg.torch.onnx.original_node_namep_res_block_1_weightj’
+res_block.1.bias
+	
+Ä"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"7
+!pkg.torch.onnx.original_node_namep_res_block_1_biasj’
+res_block.3.bias
+	
+Ä"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"7
+!pkg.torch.onnx.original_node_namep_res_block_3_biasjÕ
+norm2.weight
+	
+Ä"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"3
+!pkg.torch.onnx.original_node_namep_norm2_weightj…
+
+norm2.bias
+	
+Ä"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"1
+!pkg.torch.onnx.original_node_namep_norm2_biasj–
+mean_head.bias
+
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"5
+!pkg.torch.onnx.original_node_namep_mean_head_biasjŒ
+var_head.bias
+
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"4
+!pkg.torch.onnx.original_node_namep_var_head_biasjU
+val_0
+
+
+Ä
+Ä":
+$pkg.onnxscript.optimizer.folded_from['in_proj.weight']jZ
+val_11
+
+
+Ä
+Ä">
+$pkg.onnxscript.optimizer.folded_from['res_block.0.weight']jZ
+val_22
+
+
+Ä
+Ä">
+$pkg.onnxscript.optimizer.folded_from['res_block.3.weight']jW
+val_26
+	
+Ä
+"<
+$pkg.onnxscript.optimizer.folded_from['mean_head.weight']jV
+val_28
+	
+Ä
+";
+$pkg.onnxscript.optimizer.folded_from['var_head.weight']jD
+val_31
+ "2
+$pkg.onnxscript.optimizer.folded_from
+['val_30']jD
+val_33
+ "2
+$pkg.onnxscript.optimizer.folded_from
+['val_32']j
+val_4
+ j
+val_7
+ j
+val_9
+ j1
+val_1(
+&"
+
+batch_size
+num_patches
+Äj2
+linear(
+&"
+
+batch_size
+num_patches
+Äj6
+
+layer_norm(
+&"
+
+batch_size
+num_patches
+Äj1
+val_5(
+&"
+
+batch_size
+num_patches
+Äj1
+val_6(
+&"
+
+batch_size
+num_patches
+Äj1
+val_8(
+&"
+
+batch_size
+num_patches
+Äj2
+val_10(
+&"
+
+batch_size
+num_patches
+Äj0
+gelu(
+&"
+
+batch_size
+num_patches
+Äj2
+val_12(
+&"
+
+batch_size
+num_patches
+Äj4
+linear_1(
+&"
+
+batch_size
+num_patches
+Äj8
+layer_norm_1(
+&"
+
+batch_size
+num_patches
+Äj2
+val_16(
+&"
+
+batch_size
+num_patches
+Äj2
+val_17(
+&"
+
+batch_size
+num_patches
+Äj2
+val_19(
+&"
+
+batch_size
+num_patches
+Äj2
+val_21(
+&"
+
+batch_size
+num_patches
+Äj2
+gelu_1(
+&"
+
+batch_size
+num_patches
+Äj2
+val_23(
+&"
+
+batch_size
+num_patches
+Äj4
+linear_2(
+&"
+
+batch_size
+num_patches
+Äj2
+add_28(
+&"
+
+batch_size
+num_patches
+Äj8
+layer_norm_2(
+&"
+
+batch_size
+num_patches
+Äj1
+val_27'
+%!
+
+batch_size
+num_patches
+j1
+val_29'
+%!
+
+batch_size
+num_patches
+j3
+linear_4'
+%!
+
+batch_size
+num_patches
+j1
+mul_36'
+%!
+
+batch_size
+num_patches
+Çﬁ
+0pkg.torch.export.ExportedProgram.graph_signature©
+# inputs
+p_in_proj_weight: PARAMETER target='in_proj.weight'
+p_in_proj_bias: PARAMETER target='in_proj.bias'
+p_norm1_weight: PARAMETER target='norm1.weight'
+p_norm1_bias: PARAMETER target='norm1.bias'
+p_res_block_0_weight: PARAMETER target='res_block.0.weight'
+p_res_block_0_bias: PARAMETER target='res_block.0.bias'
+p_res_block_1_weight: PARAMETER target='res_block.1.weight'
+p_res_block_1_bias: PARAMETER target='res_block.1.bias'
+p_res_block_3_weight: PARAMETER target='res_block.3.weight'
+p_res_block_3_bias: PARAMETER target='res_block.3.bias'
+p_norm2_weight: PARAMETER target='norm2.weight'
+p_norm2_bias: PARAMETER target='norm2.bias'
+p_mean_head_weight: PARAMETER target='mean_head.weight'
+p_mean_head_bias: PARAMETER target='mean_head.bias'
+p_var_head_weight: PARAMETER target='var_head.weight'
+p_var_head_bias: PARAMETER target='var_head.bias'
+z: USER_INPUT
+
+# outputs
+linear_3: USER_OUTPUT
+exp: USER_OUTPUT
+clamp: USER_OUTPUT
+Ç^
+2pkg.torch.export.ExportedProgram.range_constraints({s68: VR[0, int_oo], s32: VR[0, int_oo]}B
+ 

@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -fsigned-char -I3rd_party/CrSDK/include -I3rd_party -Isrc
+CXXFLAGS = -std=c++17 -Wall -Wextra -fsigned-char -I3rd_party/CrSDK/include -idirafter 3rd_party -Isrc
 LDFLAGS = -L3rd_party/CrSDK/lib -lCr_Core -Wl,-rpath,'$$ORIGIN' -lraw -llcms2 -lpthread
 
 BIN_OUT = build
@@ -10,6 +10,13 @@ TIFF_SRC = src/cpp_test_tiff.cpp src/image_capture.cpp src/raw_processor.cpp src
 
 # Detect nvcc CUDA compiler
 NVCC := $(shell which nvcc 2>/dev/null)
+ifeq ($(NVCC),)
+    ifneq ($(wildcard /usr/local/cuda/bin/nvcc),)
+        NVCC := /usr/local/cuda/bin/nvcc
+    else ifneq ($(wildcard /usr/local/cuda-12.6/bin/nvcc),)
+        NVCC := /usr/local/cuda-12.6/bin/nvcc
+    endif
+endif
 CUDA_OBJ :=
 
 ifneq ($(NVCC),)
@@ -20,11 +27,15 @@ ifneq ($(NVCC),)
     LDFLAGS += $(CUDA_LIBS)
 endif
 
-all: $(CUDA_OBJ) $(BIN_OUT)/$(TARGET) $(BIN_OUT)/$(TIFF_TARGET) python_lib
+all: $(CUDA_OBJ) $(BIN_OUT)/$(TARGET) $(BIN_OUT)/$(TIFF_TARGET) python_lib models
+
+models: python_lib
+	@echo "Checking/downloading DINOv3 backbone to models/dinov3-small..."
+	@./venv/bin/python3 -c "import os; from transformers import AutoModel; out='models/dinov3-small'; os.makedirs(out, exist_ok=True); AutoModel.from_pretrained('Tooony133/dinov3-vits16-pretrain-lvd1689m').save_pretrained(out) if not os.path.isfile(os.path.join(out, 'model.safetensors')) else print('DINOv3 backbone already present.'); print('DINOv3 backbone ready at models/dinov3-small.')"
 
 $(BIN_OUT)/color_conversion_cuda.o: src/color_conversion.cu src/color_conversion.h
 	mkdir -p $(BIN_OUT)
-	nvcc -c src/color_conversion.cu -o $(BIN_OUT)/color_conversion_cuda.o -O3 -std=c++17 -Xcompiler -fPIC
+	$(NVCC) -c src/color_conversion.cu -o $(BIN_OUT)/color_conversion_cuda.o -O3 -std=c++17 -Xcompiler -fPIC
 
 $(BIN_OUT)/$(TARGET): $(SRC) $(CUDA_OBJ)
 	mkdir -p $(BIN_OUT)
@@ -88,4 +99,4 @@ clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	if [ -d "venv" ]; then ./venv/bin/pip uninstall -y negicc_station || true; fi
 
-.PHONY: all clean python_lib test_parity test_live profile_gen_dry_run profile_gen_dry_run_graph profile_gen_and_convert compare_pipelines benchmark_cache
+.PHONY: all clean python_lib models test_parity test_live profile_gen_dry_run profile_gen_dry_run_graph profile_gen_and_convert compare_pipelines benchmark_cache

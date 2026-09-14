@@ -8,6 +8,8 @@ bin_out/
 # Python Virtual Environment and Build Artifacts
 venv/
 build/
+dist/
+scratch/
 negicc_station.egg-info/
 __pycache__/
 *.pyc
@@ -21,4 +23,11 @@ __pycache__/
 *.tiff
 *.tif
 
-
+# Large model caches and downloaded backbones
+models/*cache*.pt
+models/dinov3-small/
+training/cache/
+training/test_output/
+*.safetensors
+*.engine
+benchmark_results/*.jpg
