@@ -20,11 +20,13 @@ This repository contains the software for a negative film scanning station desig
     * [film_profiling.py](src/film_profiling.py): ArgyllCMS TI3 generation, profile building, and conversion wrapper.
     * [target_selection.py](src/target_selection.py): Mid-grey distance selection algorithm for multi-exposure target calibration.
     * [color_conversion.py](src/color_conversion.py): Python-based vectorized tetrahedral interpolation pipeline prototype.
+    * [appearance_model_film_conversion.py](src/appearance_model_film_conversion.py): Standalone DINOv3 + Sensitometric appearance model negative conversion utility.
   * *GTK UI Modules*:
     * [ui_main.py](src/ui_main.py): Central launcher window for scanning, crosstalk, and film profiling modules.
     * [ui_capture.py](src/ui_capture.py): Scanner capture, live-preview, and focus utility UI module.
     * [ui_crosstalk_correction.py](src/ui_crosstalk_correction.py): Camera/light source crosstalk calibration UI module.
     * [ui_film_profiling.py](src/ui_film_profiling.py): IT8 target detection, patch parsing, and profiling UI module.
+* **[models/](models/)**: Trained photographic appearance models (e.g. `models/dinov3-small_portra400`) and model metadata.
 * **[profiles/](profiles/)**: Pre-compiled and captured calibration profiles (e.g. camera crosstalk correction matrices, film stock target JSON files).
 * **[tests/](tests/)**: Directory containing integration tests, offline parity tests, and live capture verifications.
 * **[test_imgs/](test_imgs/)**: Folder with compressed reference raw images (e.g. `test_capture_ref.ARW.xz`) and scan workflow visuals.
@@ -480,3 +482,74 @@ To clean and neutralize the film base's orange tint, you must record a reference
 3. The application will convert the full-size raw capture using the active film base reference and profile correction, writing out a 16-bit linear RGB TIFF.
 4. The orientation you specified is appended directly to the output file's EXIF metadata tags in-place, preserving your rotation preference without rewriting the raw pixel buffer.
 5. In case of camera disconnects, hardware timeouts, or capture errors during the scan loop, the traceback and exception message will be logged cleanly to the console's standard output (`stdout`) instead of interrupting your session with a modal error dialog.
+
+---
+
+## 8. Experimental: Predictive Appearance Model (DINOv3 + Sensitometric Inversion)
+
+> [!NOTE]
+> **Experimental Status**: The predictive appearance model approach is an active research experiment and is **not merged into the main GTK UI**. It is currently accessible via the standalone command-line tool [`src/appearance_model_film_conversion.py`](src/appearance_model_film_conversion.py) or `make predict`.
+
+### Overview and Motivation
+
+Traditional film negative inversion relies on multi-exposure IT8 color calibration targets to construct empirical 3D color lookup tables (cLUTs). While effective under controlled studio illumination, IT8 calibration exhibits key real-world challenges:
+1. **Scene Context Blindness**: An IT8 profile cannot infer whether a real-world photo was taken in direct midday sunlight, golden hour shade, or tungsten light.
+2. **Discrete Bracket Quantization**: Target selection snaps to discrete bracket steps (e.g., Target 1 through Target 5), which can introduce tonal shifts between adjacent exposures.
+3. **Boundary Extrapolation**: Uncalibrated negatives with highlight burn-in or shadow underexposure risk severe out-of-gamut clipping when mapped through fixed 3D cLUT grids.
+
+The **Predictive Appearance Model** addresses these limitations by pairing **DINOv3 vision foundation features** (trained on 1.68B images) with a **rigorous physical Hurter & Driffield (H&D) sensitometric solver**. Rather than relying on discrete 3D cLUTs, it predicts continuous sensitometric inversion curves and photographic intent directly from the negative's optical density characteristics.
+
+### Side-by-Side Comparison: Profiled Method vs. Predictive Appearance Model
+
+The visual comparison below demonstrates negative conversion on Kodak Portra 400 (`sample.ARW`):
+
+![Profiled Method vs Predictive Appearance Model](test_imgs/sample_profiled_vs_appearance.jpg)
+*Left: Profiled Method (CFA de-crosstalk + ArgyllCMS 3D cLUT). Right: Predictive Appearance Model (DINOv3 + Sensitometric Fixed-Point Inversion).*
+
+### Comparison with Optimal Profiled Conversion Arguments
+
+When optimizing the conventional profiled pipeline against target photographic appearance across challenging negatives (from optimization experiments recorded in `/tmp/optimization_results.json`), conventional profiles require significant channel gain adjustments to counteract density variations:
+
+| Negative Frame | Selected Target | Optimal Exposure Gain $E$ | Optimal Green Gain $g$ | Optimal Blue Gain $b$ | Intent Residual ($\Delta E_{00}$) |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Portra400_raw_0001** (Daylight) | `Target 3` | $1.0446$ | $1.54$ | $1.43$ | **2.85** |
+| **Portra400_raw_0002** (High-key) | `Target 3` | $0.4764$ | $1.36$ | $1.04$ | **6.51** |
+| **Portra400_raw_0003** (Sunset) | `Target 4` | $0.6344$ | $1.06$ | $1.08$ | **6.55** |
+| **Portra400_raw_0004** (Shade) | `Target 4` | $0.6158$ | $0.90$ | $0.88$ | **12.52** |
+| **Portra400_raw_0005** (Low-key night) | `Target 4` | $0.6226$ | $0.80$ | $0.80$ | **12.60** |
+| **test_capture_ref** (Dense scan) | `Target 3` | $26.7722$ | $0.78$ | $1.61$ | **39.04** |
+
+The **Predictive Appearance Model** eliminates manual target selection and gain-tuning:
+- It computes physical optical density $D = -\log_{10}(T)$ normalized to the unexposed film base via [`compute_exposure_ratio`](src/film_profiling.py).
+- A two-stage cascade (Pass 0 Photoshop Auto-WB preview bootstrap $\to$ Stage 2 physical sensitometric fixed-point solver) converges in $\sim 19$s on CPU without requiring GPU acceleration or proprietary SDKs.
+
+### Standalone CLI Usage
+
+#### Basic Conversion
+```bash
+# Convert a raw negative using the bundled Portra 400 appearance model
+./venv/bin/python3 src/appearance_model_film_conversion.py \
+    --raw sample.ARW \
+    --output build/sample_dinov3_converted.jpg
+```
+
+#### Shortcut via Makefile
+```bash
+# Decompresses reference sample.ARW (if needed) and runs the appearance model conversion
+make predict
+```
+
+#### Advanced Parameters
+```bash
+# Full resolution conversion with custom film base and fixed-point solver tuning
+./venv/bin/python3 src/appearance_model_film_conversion.py \
+    --raw /path/to/scan.ARW \
+    --base /path/to/unexposed_film_base.ARW \
+    --model models/dinov3-small_portra400 \
+    --output build/converted_positive.png \
+    --full \
+    --max-iters 10 \
+    --tolerance 0.50 \
+    --device cpu
+```
+

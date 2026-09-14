@@ -29,7 +29,7 @@ endif
 
 all: $(CUDA_OBJ) $(BIN_OUT)/$(TARGET) $(BIN_OUT)/$(TIFF_TARGET) python_lib models
 
-models: python_lib
+models:
 	@echo "Checking/downloading DINOv3 backbone to models/dinov3-small..."
 	@./venv/bin/python3 -c "import os; from transformers import AutoModel; out='models/dinov3-small'; os.makedirs(out, exist_ok=True); AutoModel.from_pretrained('Tooony133/dinov3-vits16-pretrain-lvd1689m').save_pretrained(out) if not os.path.isfile(os.path.join(out, 'model.safetensors')) else print('DINOv3 backbone already present.'); print('DINOv3 backbone ready at models/dinov3-small.')"
 
@@ -94,9 +94,20 @@ benchmark_cache: all
 	fi
 	./venv/bin/python3 src/sample_cuda_bench.py
 
+predict: models
+	@if [ ! -f "sample.ARW" ] && [ -f "test_imgs/sample_portra400.ARW.xz" ]; then \
+		echo "Decompressing reference sample from test_imgs..."; \
+		xz -d -c test_imgs/sample_portra400.ARW.xz > sample.ARW; \
+	elif [ -f "sample.ARW" ] && [ ! -f "test_imgs/sample_portra400.ARW.xz" ]; then \
+		echo "Creating compressed copy in test_imgs..."; \
+		mkdir -p test_imgs; \
+		cp sample.ARW test_imgs/sample_portra400.ARW && xz -z -f test_imgs/sample_portra400.ARW; \
+	fi
+	./venv/bin/python3 src/appearance_model_film_conversion.py --raw sample.ARW --output build/sample_dinov3_converted.jpg
+
 clean:
 	rm -rf $(BIN_OUT) negicc_station.egg-info src/color_conversion_cuda.o
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	if [ -d "venv" ]; then ./venv/bin/pip uninstall -y negicc_station || true; fi
 
-.PHONY: all clean python_lib models test_parity test_live profile_gen_dry_run profile_gen_dry_run_graph profile_gen_and_convert compare_pipelines benchmark_cache
+.PHONY: all clean python_lib models test_parity test_live profile_gen_dry_run profile_gen_dry_run_graph profile_gen_and_convert compare_pipelines benchmark_cache predict
