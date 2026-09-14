@@ -499,13 +499,6 @@ Traditional film negative inversion relies on multi-exposure IT8 color calibrati
 
 The **Predictive Appearance Model** addresses these limitations by pairing **DINOv3 vision foundation features** (trained on 1.68B images) with a **rigorous physical Hurter & Driffield (H&D) sensitometric solver**. Rather than relying on discrete 3D cLUTs, it predicts continuous sensitometric inversion curves and photographic intent directly from the negative's optical density characteristics.
 
-### Side-by-Side Comparison: Profiled Method vs. Predictive Appearance Model
-
-The visual comparison below demonstrates negative conversion on Kodak Portra 400 (`sample.ARW`):
-
-![Profiled Method vs Predictive Appearance Model](test_imgs/sample_profiled_vs_appearance.jpg)
-*Left: Profiled Method (CFA de-crosstalk + ArgyllCMS 3D cLUT). Right: Predictive Appearance Model (DINOv3 + Sensitometric Fixed-Point Inversion).*
-
 ### Comparison with Optimal Profiled Conversion Arguments
 
 When optimizing the conventional profiled pipeline against target photographic appearance across challenging negatives (from optimization experiments recorded in `/tmp/optimization_results.json`), conventional profiles require significant channel gain adjustments to counteract density variations:
